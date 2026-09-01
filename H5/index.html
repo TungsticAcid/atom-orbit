@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0b1020" />
+  <title>原子轨道三维可视化 · Hydrogen Orbital Visualizer</title>
+  <link rel="stylesheet" href="libs/katex.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚛</span>
+      <h1>原子轨道三维可视化</h1>
+      <span class="subtitle">Hydrogen Orbital Visualizer</span>
+    </div>
+    <div class="top-meta">
+      <span id="orbitTitle" class="orbit-title">1s</span>
+      <span id="modeBadge" class="badge">实函数</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 3D 视图 + 控制面板 -->
+    <section class="grid-main">
+      <div class="card viewer-card">
+        <div class="card-head">
+          <span class="card-title">三维轨道</span>
+          <div class="card-head-right">
+            <button id="resetView" class="btn btn-ghost" title="重置视角">⟳ 复位</button>
+            <label class="chk"><input type="checkbox" id="autoRotate" checked /> 自动旋转</label>
+          </div>
+        </div>
+        <div id="viewer" class="viewer"></div>
+      </div>
+
+      <aside class="card panel">
+        <div class="card-head"><span class="card-title">量子数 / 显示模式</span></div>
+
+        <div class="set">
+          <div class="row"><label for="nSlider">主量子数 n</label><output id="nVal" class="val">3</output></div>
+          <input type="range" id="nSlider" min="1" max="6" step="1" value="3" />
+        </div>
+        <div class="set">
+          <div class="row"><label for="lSlider">角量子数 l</label><output id="lVal" class="val">1</output></div>
+          <input type="range" id="lSlider" min="0" max="2" step="1" value="1" />
+        </div>
+        <div class="set">
+          <div class="row"><label for="mSlider">磁量子数 m</label><output id="mVal" class="val">0</output></div>
+          <input type="range" id="mSlider" min="-1" max="1" step="1" value="0" />
+        </div>
+
+        <div class="divider"><span>波函数形式</span></div>
+        <div class="seg" id="modeSeg">
+          <button class="seg-btn active" data-mode="real">实函数</button>
+          <button class="seg-btn" data-mode="complex">复函数</button>
+        </div>
+
+        <div class="divider"><span>三维渲染</span></div>
+        <div class="seg" id="renderSeg">
+          <button class="seg-btn active" data-mode="points">粒子云</button>
+          <button class="seg-btn" data-mode="surface">等值面</button>
+        </div>
+
+        <div class="set" id="levelSet" style="display:none">
+          <div class="row"><label for="levelSlider">等值面阈值</label><output id="levelVal" class="val">0.08</output></div>
+          <input type="range" id="levelSlider" min="0.004" max="0.30" step="0.002" value="0.08" />
+        </div>
+        <div class="set" id="pointSet">
+          <div class="row"><label for="pointCountSlider">粒子数</label><output id="pointCountVal" class="val">5 万</output></div>
+          <input type="range" id="pointCountSlider" min="8000" max="80000" step="1000" value="50000" />
+        </div>
+
+        <div class="card-head" style="margin-top:16px"><span class="card-title">截面着色</span></div>
+        <div class="seg" id="phaseSeg">
+          <button class="seg-btn active" data-mode="intensity">密度着色</button>
+          <button class="seg-btn" data-mode="phase">相位着色</button>
+          <button class="seg-btn" data-mode="contour">等高线</button>
+        </div>
+      </aside>
+    </section>
+
+    <!-- 公式 -->
+    <section class="card formula-card">
+      <div class="formula-head">
+        <span class="card-title" id="formulaTitle">3p 轨道 · 实函数波函数</span>
+      </div>
+      <div id="formulaBox" class="formula-box"></div>
+      <div id="formulaNote" class="formula-note"></div>
+    </section>
+
+    <!-- 2D 图表 -->
+    <section class="grid-charts">
+      <div class="card chart-card">
+        <div class="card-head">
+          <span class="card-title">径向分布</span>
+          <div class="seg small" id="radialSeg">
+            <button class="seg-btn active" data-k="R">R</button>
+            <button class="seg-btn active" data-k="R2">R²</button>
+            <button class="seg-btn active" data-k="D">D</button>
+            <button class="seg-btn active" data-k="D2">D²</button>
+          </div>
+        </div>
+        <canvas id="radialChart" class="chart"></canvas>
+      </div>
+
+      <div class="card chart-card">
+        <div class="card-head">
+          <span class="card-title">角度分布</span>
+          <div class="seg small" id="angSeg">
+            <button class="seg-btn active" data-k="Y">|Y|</button>
+            <button class="seg-btn" data-k="Y2">|Y|²</button>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:2px">从原点沿 (θ,φ) 引射线，长度 = 角度函数值；拖拽旋转</div>
+        <div id="angularView" class="chart"></div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="card-head">
+          <span class="card-title">截面密度</span>
+          <div class="seg small" id="planeSeg">
+            <button class="seg-btn" data-p="xy">xy</button>
+            <button class="seg-btn active" data-p="xz">xz</button>
+            <button class="seg-btn" data-p="yz">yz</button>
+          </div>
+        </div>
+        <canvas id="sectionChart" class="chart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">按 |ψ|²·r²·|Y|² 重要性采样 · 粒子云与等值面可切换 · 手机 / 平板 / 桌面自适配</footer>
+
+  <!-- 依赖（全局构建，file:// 可离线运行） -->
+  <script src="libs/three.min.js"></script>
+  <script src="libs/OrbitControls.js"></script>
+  <script src="libs/katex.min.js"></script>
+  <!-- 业务模块 -->
+  <script src="js/math.js"></script>
+  <script src="js/render3d.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/formula.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

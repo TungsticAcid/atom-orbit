@@ -1,0 +1,257 @@
+/* style.css — 原子轨道可视化工具 · 暗色主题 + 响应式
+
+   色彩体系：
+     - 背景：深蓝黑 (#0b1020)，点缀蓝紫，强调青/橙。
+     - 轨道类型配色由 js/math.js 提供（s 蓝 / p 绿 / d 橙 / f 紫）。
+   布局：
+     - 桌面（≥1024px）：顶部栏 + 两列主区（3D + 控制面板）+ 公式 + 三列图表。
+     - 平板 / 手机：纵向堆叠，3D 视图占主视口高度。
+   字体：系统字体 + KaTeX 内嵌数学字体。 */
+
+:root {
+  --bg: #0b1020;
+  --bg-2: #101629;
+  --card: #151c33;
+  --card-2: #1a2340;
+  --line: #2a3558;
+  --line-soft: #202b48;
+  --text: #e8ecf7;
+  --text-dim: #9aa7c6;
+  --accent: #55c2ff;
+  --accent-2: #7a9bff;
+  --active: #2b3d6b;
+  --border-radius: 14px;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(1200px 700px at 30% -10%, #1a2d54 0%, #0b1020 55%);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line-soft);
+  background: rgba(12, 17, 34, 0.7);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 26px; }
+.brand h1 { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: 0.5px; }
+.subtitle { font-size: 12px; color: var(--text-dim); align-self: flex-end; margin-bottom: 3px; }
+.top-meta { display: flex; align-items: center; gap: 12px; }
+.orbit-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px; font-weight: 700; color: var(--accent);
+  min-width: 78px; text-align: right;
+}
+.badge {
+  background: linear-gradient(135deg, #2b3d6b, #3b2f6b);
+  border: 1px solid #4a5a96;
+  color: #dde6ff;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+/* ---------- 布局 ---------- */
+.layout { max-width: 1500px; margin: 0 auto; padding: 18px 22px 40px; }
+.grid-main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 18px;
+}
+.grid-charts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: linear-gradient(180deg, var(--card), var(--card-2));
+  border: 1px solid var(--line);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.card-head-right { display: flex; align-items: center; gap: 14px; }
+.card-title { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: 0.3px; }
+
+/* ---------- 3D 视图 ---------- */
+.viewer-card { display: flex; flex-direction: column; min-height: 520px; }
+.viewer {
+  position: relative;
+  flex: 1;
+  min-height: 460px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: radial-gradient(600px 400px at 50% 40%, #16223f 0%, #0b1020 70%);
+  border: 1px solid var(--line-soft);
+}
+.viewer canvas { display: block; width: 100% !important; height: 100% !important; }
+
+/* ---------- 控制面板 ---------- */
+.panel { align-self: start; }
+.set { margin: 12px 0; }
+.set.tight { margin: 4px 0 6px; }
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.row label { color: var(--text-dim); }
+.val {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--active);
+  border-radius: 8px;
+  padding: 2px 10px;
+  min-width: 44px;
+  text-align: center;
+  font-size: 14px;
+}
+/* 提示文字（如 φ 无影响时的说明） */
+.hint { color: var(--text-dim); font-size: 12px; margin-top: 6px; line-height: 1.5; }
+/* 禁用的滑块组（φ 不生效时置灰） */
+.set.dim { opacity: 0.45; }
+.set.dim input[type="range"] { cursor: not-allowed; }
+.set.dim .val { color: var(--text-dim); }
+.divider {
+  display: flex;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 14px 0 10px;
+  gap: 10px;
+}
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+
+/* ---------- 滑块 ---------- */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 6px;
+  background: var(--active);
+  outline: none;
+  margin: 0;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: 2px solid #dbeaff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: 2px solid #dbeaff; cursor: pointer;
+}
+
+/* ---------- 分段控件（按钮组） ---------- */
+.seg { display: inline-flex; background: var(--active); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg.small .seg-btn { font-size: 12px; padding: 5px 10px; }
+.seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #0b1224;
+  font-weight: 700;
+}
+
+.btn {
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-ghost { background: transparent; }
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); cursor: pointer; }
+.chk input { accent-color: var(--accent); }
+
+/* ---------- 公式 ---------- */
+.formula-card { margin-top: 18px; }
+.formula-box {
+  overflow-x: auto;
+  padding: 8px 4px;
+  min-height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.formula-box .katex { font-size: 1.18em; }
+.formula-note { color: var(--text-dim); font-size: 13px; margin-top: 6px; text-align: center; }
+
+/* ---------- 图表卡片 ---------- */
+.chart-card { min-height: 260px; }
+.chart { width: 100%; height: 200px; display: block; margin-top: 8px; border-radius: 8px; }
+
+/* ---------- 页脚 ---------- */
+.foot { text-align: center; color: var(--text-dim); font-size: 12px; padding: 14px; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 1024px) {
+  .grid-main { grid-template-columns: 1fr; }
+  .panel { order: 2; }
+  .grid-charts { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 640px) {
+  .topbar { flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 16px; }
+  .brand h1 { font-size: 17px; }
+  .subtitle { display: none; }
+  .layout { padding: 12px 12px 30px; }
+  .card { padding: 12px; }
+  .viewer-card { min-height: 420px; }
+  .viewer { min-height: 380px; }
+  .grid-charts { grid-template-columns: 1fr; }
+  .chart { height: 210px; }
+  .orbit-title { font-size: 19px; }
+}
