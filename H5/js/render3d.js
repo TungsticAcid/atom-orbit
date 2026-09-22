@@ -3,7 +3,8 @@
  *
  * 设计要点：
  *   - 使用 Three.js r147 全局构建（window.THREE），通过 <script> 引入。
- *   - 化学约定：z 轴为量化轴（竖直），通过 camera.up=(0,0,1) 让屏幕上方向 = 世界 z。
+ *   - 化学约定：z 轴为量化轴（竖直）。相机朝向由四元数直接描述（初始朝向用
+ *     z 向上的 lookAt 矩阵求得），不再依赖 camera.up，从根本上规避万向节锁。
  *   - 粒子云：按 |ψ|² 重要性采样（由 math.samplePoints 生成），透明点云。
  *   - 等值面：在 [-extent, extent]³ 网格上求 |ψ|² 标量场，用四面体行进提取
  *     |ψ|² = level 的等值面。相比经典 marching cubes（需 256×16 巨型查找表），
@@ -25,15 +26,186 @@ window.Orbit3D = (function () {
   ];
   const TET_EDGES = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
 
-  let scene = null, camera = null, renderer = null, controls = null;
+  // ---------------------------------------------------------------------------
+  // 四元数轨道控制器（取代 THREE.OrbitControls）
+  //
+  // 为什么换掉 OrbitControls：它用"球坐标(r, θ, φ) + up 向量"描述相机朝向，
+  // 当视线与 up 平行时（本工具 z 轴向上，俯视/仰视到极点）方位角失去意义，
+  // 即万向节锁，表现为转到极点附近时突然翻转或卡住。
+  //
+  // 这里改为用四元数累积旋转，全程不经过欧拉角，故不存在奇异点：
+  //   · 偏航 yaw   —— 绕【世界 Z 轴】旋转（世界系 → 左乘 premultiply）
+  //   · 俯仰 pitch —— 绕【相机自身 X 轴（右向量）】旋转（局部系 → 右乘 multiply）
+  // 相机朝向 q 直接决定位置：position = target + (q·(0,0,1)) · distance，
+  // 即相机局部 +Z 由注视点指向相机，与 Three.js 相机沿 -Z 观察的约定一致。
+  // ---------------------------------------------------------------------------
+  function createQuatOrbit(camera, dom, opts) {
+    opts = opts || {};
+    const rotateSpeed = opts.rotateSpeed != null ? opts.rotateSpeed : 1.0;
+    const zoomSpeed = opts.zoomSpeed != null ? opts.zoomSpeed : 1.0;
+    const damping = opts.damping != null ? opts.damping : 0.18;
+    const autoRotateStep = opts.autoRotateSpeed != null ? opts.autoRotateSpeed : 0.0035;
+
+    const quat = new THREE.Quaternion();         // 当前相机朝向
+    const quatTarget = new THREE.Quaternion();   // 阻尼目标朝向
+    const target = new THREE.Vector3(0, 0, 0);   // 注视点
+    const homeEye = new THREE.Vector3(0, -4, 3);
+    const homeLook = new THREE.Vector3(0, 0, 0);
+    let distance = opts.distance || 5;
+    let minDistance = 0.05, maxDistance = 500;
+    let autoRotate = false, enabled = true;
+
+    const AXIS_Z = new THREE.Vector3(0, 0, 1);   // 世界竖直轴（仅初始 lookAt 用）
+    const AXIS_X = new THREE.Vector3(1, 0, 0);   // 相机局部 X（屏幕水平）
+    const AXIS_Y = new THREE.Vector3(0, 1, 0);   // 相机局部 Y（屏幕竖直）
+    const _v = new THREE.Vector3();
+    const _right = new THREE.Vector3();
+    const _up = new THREE.Vector3();
+    const _qYaw = new THREE.Quaternion();
+    const _qPitch = new THREE.Quaternion();
+
+    /** 把当前 quat/distance/target 应用到相机 */
+    function apply() {
+      camera.quaternion.copy(quat);
+      _v.set(0, 0, 1).applyQuaternion(quat).multiplyScalar(distance);
+      camera.position.copy(target).add(_v);
+      camera.updateMatrixWorld();
+    }
+
+    /** 由"眼睛位置 + 注视点"设定朝向（z 向上） */
+    function setView(eye, look) {
+      homeEye.copy(eye); homeLook.copy(look);
+      target.copy(look);
+      distance = eye.distanceTo(look);
+      const m = new THREE.Matrix4().lookAt(eye, look, AXIS_Z);
+      quat.setFromRotationMatrix(m);
+      quatTarget.copy(quat);
+      apply();
+    }
+
+    /**
+     * 拖拽旋转 —— 纯相机局部系（trackball）。
+     *
+     * 偏航绕【相机自身 Y（屏幕竖直）】、俯仰绕【相机自身 X（屏幕水平）】，两者都右乘。
+     * 关键点：**不能**用世界 Z 轴做偏航。若用世界 Z，当相机俯仰到极点附近时，
+     * 世界 Z 恰好与视线重合，"左右拖"就退化成绕视线的滚转，用户会感到左右反向；
+     * 改用局部 Y 后，无论当前朝向如何，左右拖永远绕屏幕竖直轴转，方向始终一致。
+     * 代价是允许累积滚转（真正的自由旋转），这也是 trackball 的固有特性。
+     */
+    function rotate(dx, dy) {
+      const w = dom.clientWidth || 1, h = dom.clientHeight || 1;
+      const yawAngle = -2 * Math.PI * dx / w * rotateSpeed;
+      const pitchAngle = -2 * Math.PI * dy / h * rotateSpeed;
+      _qPitch.setFromAxisAngle(AXIS_X, pitchAngle);
+      _qYaw.setFromAxisAngle(AXIS_Y, yawAngle);
+      quatTarget.multiply(_qPitch).multiply(_qYaw).normalize();
+    }
+
+    /** 拖拽平移：沿相机屏幕平面移动注视点（每像素的世界位移随距离缩放，故"跟手"） */
+    function pan(dx, dy) {
+      const h = dom.clientHeight || 1;
+      const k = 2 * distance * Math.tan((camera.fov * Math.PI / 180) / 2) / h;
+      _right.set(1, 0, 0).applyQuaternion(quat);
+      _up.set(0, 1, 0).applyQuaternion(quat);
+      target.addScaledVector(_right, -dx * k);   // 向右拖 → 场景右移
+      target.addScaledVector(_up, dy * k);       // 向下拖 → 场景下移
+    }
+
+    function zoomBy(factor) {
+      distance = Math.min(maxDistance, Math.max(minDistance, distance * factor));
+    }
+
+    function setDistance(d) {
+      distance = Math.min(maxDistance, Math.max(minDistance, d));
+      apply();
+    }
+
+    // ---- 指针事件（鼠标 + 触摸；双指捏合缩放并平移）----
+    const pointers = new Map();
+    let dragging = false, panMode = false, lastX = 0, lastY = 0, lastPinch = 0, lastMid = null;
+
+    dom.addEventListener('pointerdown', (e) => {
+      if (!enabled) return;
+      dom.setPointerCapture(e.pointerId);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1) {
+        dragging = true;
+        panMode = (e.button === 2) || e.shiftKey;   // 右键 / Shift+拖 = 平移
+        lastX = e.clientX; lastY = e.clientY;
+      } else if (pointers.size === 2) {
+        dragging = false;
+        const p = [...pointers.values()];
+        lastPinch = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        lastMid = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+      }
+    });
+    dom.addEventListener('pointermove', (e) => {
+      if (!enabled || !pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 1 && dragging) {
+        const dx = e.clientX - lastX, dy = e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        if (panMode) pan(dx, dy); else rotate(dx, dy);
+      } else if (pointers.size === 2) {
+        const p = [...pointers.values()];
+        const pinch = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        const mid = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+        if (lastPinch > 0 && pinch > 0) zoomBy(lastPinch / pinch);
+        if (lastMid) pan(mid.x - lastMid.x, mid.y - lastMid.y);
+        lastPinch = pinch; lastMid = mid;
+      }
+    });
+    const onPointerEnd = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size === 0) dragging = false;
+      if (pointers.size < 2) { lastPinch = 0; lastMid = null; }
+    };
+    dom.addEventListener('pointerup', onPointerEnd);
+    dom.addEventListener('pointercancel', onPointerEnd);
+    dom.addEventListener('wheel', (e) => {
+      if (!enabled) return;
+      e.preventDefault();
+      zoomBy(Math.exp(e.deltaY * 0.001 * zoomSpeed));
+    }, { passive: false });
+    dom.addEventListener('contextmenu', (e) => e.preventDefault());   // 右键留给平移
+
+    /** 每帧调用：自动旋转 + 阻尼插值 + 应用到相机 */
+    function update() {
+      if (autoRotate && !dragging) {
+        // 自动旋转同样绕相机局部 Y（屏幕竖直）→ 视觉上始终是水平自转，
+        // 与拖拽行为一致（用世界 Z 的话，俯视极点时会变成原地打转）
+        _qYaw.setFromAxisAngle(AXIS_Y, autoRotateStep);
+        quatTarget.multiply(_qYaw).normalize();
+      }
+      if (quat.angleTo(quatTarget) > 1e-5) {
+        quat.slerp(quatTarget, damping);        // 四元数球面插值 → 平滑且无奇异
+      } else {
+        quat.copy(quatTarget);
+      }
+      apply();
+    }
+
+    return {
+      update, setView, apply, target,
+      setAutoRotate: (v) => { autoRotate = !!v; },
+      setEnabled: (v) => { enabled = !!v; },
+      setDistance,
+      setLimits: (lo, hi) => { minDistance = lo; maxDistance = hi; },
+      resetHome: () => setView(homeEye, homeLook),
+      getDistance: () => distance,
+    };
+  }
+
+  let scene = null, camera = null, renderer = null, viewCtl = null;
   let cloudObj = null;          // THREE.Points
   let surfaceObj = null;        // THREE.Mesh
   let nucleusObj = null;
   let axesObj = null;
   let gridObj = null;
+  let decorGroup = null;        // 坐标轴 + 赤道环（随轨道尺度整体缩放）
 
   // 角度分布 3D 曲面（独立小场景）：r(θ,φ) 从原点沿 (θ,φ) 引射线
-  let angScene = null, angCamera = null, angRenderer = null, angControls = null, angMesh = null, angAxes = null;
+  let angScene = null, angCamera = null, angRenderer = null, angCtl = null, angMesh = null, angAxes = null;
   let angLastKey = '';
   const ANG_RES = 30;           // θ 方向网格数
 
@@ -54,20 +226,18 @@ window.Orbit3D = (function () {
 
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(50, width / height, 0.001, 200);
-    camera.up.set(0, 0, 1);                       // 量化轴 z 朝上
-    camera.position.set(0, -4, 3);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     container.appendChild(renderer.domElement);
 
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.screenSpacePanning = true;
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.9;
+    // 四元数轨道控制器（z 竖直，俯视极点也不会万向节锁）
+    viewCtl = createQuatOrbit(camera, renderer.domElement, {
+      distance: 5, rotateSpeed: 1.0, damping: 0.18, autoRotateSpeed: 0.0035,
+    });
+    viewCtl.setView(new THREE.Vector3(0, -4, 3), new THREE.Vector3(0, 0, 0));
+    viewCtl.setAutoRotate(true);
 
     // 灯光（供表面使用）
     const ambient = new THREE.AmbientLight(0xffffff, 0.55);
@@ -79,6 +249,12 @@ window.Orbit3D = (function () {
 
     buildAxes();
     buildGrid();
+    // 坐标轴与赤道环是"装饰性参照"，随当前轨道尺度整体缩放（否则 1s 这类
+    // 小轨道会被固定长度的坐标轴淹掉）。统一放进一个组，fitView 里设缩放。
+    decorGroup = new THREE.Group();
+    if (axesObj) decorGroup.add(axesObj);
+    if (gridObj) decorGroup.add(gridObj);
+    scene.add(decorGroup);
 
     // 原子核（发光小球）
     const nucGeo = new THREE.SphereGeometry(1, 24, 24);
@@ -149,10 +325,16 @@ window.Orbit3D = (function () {
   // ---------------------------------------------------------------------------
   /**
    * 计算 |ψ|² 标量场（缓存在模块级），供 buildSurface / setSurfaceLevel 复用。
-   * res 为每轴网格点数（立方）。返回 { maxVal }。
+   * res 为每轴网格点数（立方）；level 为绝对值阈值，用于自适应网格范围。
+   *
+   * 网格范围 = 该阈值下等值面的实际外延（而非波函数渐近尾部）。这一步很关键：
+   * 例如 2p_z 按尾部取需 ±23.5，而阈值 8% 时等值面只在 ±8 内，同样 68³ 节点
+   * 的格距会相差 3 倍——格距过粗时，节面附近两瓣之间约 1 a₀ 的缝只有一两个格子宽，
+   * 行进算法无法分辨，会把两瓣连成一体并被切出"平底贴合"的丑陋形状。
    */
-  function computeField(n, l, m, mode, res) {
-    const extent = OM.rExtent(n, l) * 1.15;
+  function computeField(n, l, m, mode, res, level) {
+    const iso = (level > 0) ? level : 0;
+    const extent = Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2);
     nGrid = res;
     gridExtent = extent;
     const NN = nGrid * nGrid * nGrid;      // 节点总数
@@ -303,16 +485,84 @@ window.Orbit3D = (function () {
     return geo;
   }
 
-  function setSurfaceLevel(fraction) {
+  /**
+   * 仅调整等值面阈值或着色方式：
+   *   · 阈值变了 → 需重新提取网格
+   *   · 只有着色变了 → 复用已有网格，仅重涂顶点色（快得多）
+   */
+  /**
+   * 把"占峰值的比例"换算成 |ψ|² 的绝对阈值。
+   *
+   * 两种判据给出的是同一族曲面（|ψ| = c ⟺ |ψ|² = c²），差别只在**读数的含义**：
+   *   · 按 |ψ|² 计：|ψ|² = f·|ψ|²max
+   *   · 按 |ψ|  计：|ψ|  = f·|ψ|max  ⟹  |ψ|² = f²·|ψ|²max
+   * 故同一读数下（f<1），|ψ| 判据对应 f²·峰值，比 |ψ|² 判据更小 → 得到**更大**的表面。
+   * 这正是切换按钮能被看出来差别的原因。
+   */
+  function levelAbsFor(P, fraction, psiCrit) {
+    const peak = OM.maxDensity(P.n, P.l, P.m, P.mode);
+    return (psiCrit === 'psi') ? fraction * fraction * peak : fraction * peak;
+  }
+
+  function setSurfaceLevel(fraction, colorMode, psiCrit) {
+    if (!field || !surfaceParams) return;
+    const P = surfaceParams;
+    const colorChanged = (colorMode != null && colorMode !== currentColorMode);
+    const critChanged = (psiCrit != null && psiCrit !== surfaceParams.psiCrit);
+    if (psiCrit != null) surfaceParams.psiCrit = psiCrit;
+    const levelChanged = Math.abs(fraction - surfaceLevelFraction) > 1e-9;
     surfaceLevelFraction = fraction;
-    if (!field) return;
-    rebuildSurface();
+    if (colorMode != null) currentColorMode = colorMode;
+    if (levelChanged || critChanged || !surfaceObj) {
+      // 阈值变化会改变等值面外延：范围变化超过 12% 才重建标量场，
+      // 否则复用已缓存的场（拖动阈值滑块时多数步都走这条路，保持流畅）
+      const levelAbs = levelAbsFor(P, fraction, P.psiCrit);
+      const newExtent = Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, levelAbs) * 1.12, 1.2);
+      if (!surfaceObj || critChanged || Math.abs(newExtent - gridExtent) / gridExtent > 0.12) {
+        computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs);
+      }
+      rebuildSurface();
+    } else if (colorChanged && surfaceGeoRef) {
+      paintSurfaceColors(surfaceGeoRef);
+    }
   }
 
   function buildSurface(levelFraction) {
     if (!field) return;
     surfaceLevelFraction = levelFraction;
     rebuildSurface();
+  }
+
+  /**
+   * 为等值面顶点着色（与点云共用同一套配色）：
+   *   'phase'   —— 按相位着色：复函数取 arg ψ（彩虹相位缠绕）；实函数取符号（± 双色）
+   *   'orbital' —— 按支壳层 l 的轨道基础色
+   * 等值面上 |ψ|² 恒等于阈值，故强度取固定值，让相位/轨道色本身成为主要视觉信息。
+   */
+  function paintSurfaceColors(geo) {
+    const posAttr = geo.getAttribute('position');
+    const cnt = posAttr.count;
+    const colors = new Float32Array(cnt * 3);
+    const base = OM.lColor(currentL || 0);
+    const P = surfaceParams;
+    if (currentColorMode === 'phase' && P) {
+      for (let i = 0; i < cnt; i++) {
+        const x = posAttr.getX(i), y = posAttr.getY(i), z = posAttr.getZ(i);
+        const r = Math.hypot(x, y, z);
+        const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
+        const ph = Math.atan2(y, x);
+        const col = (P.mode === 'real')
+          ? OM.phaseColor(OM.angularReal(P.l, P.m, th, ph) >= 0 ? 0 : Math.PI, 0.62)
+          : OM.phaseColor(OM.angularComplex(P.l, P.m, th, ph).arg(), 0.62);
+        colors[3 * i] = col[0]; colors[3 * i + 1] = col[1]; colors[3 * i + 2] = col[2];
+      }
+    } else {
+      for (let i = 0; i < cnt; i++) {
+        colors[3 * i] = base[0]; colors[3 * i + 1] = base[1]; colors[3 * i + 2] = base[2];
+      }
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    if (geo.getAttribute('normal')) geo.getAttribute('normal').needsUpdate = true;
   }
 
   // 顶点平滑（Taubin λ-μ 迭代）：松弛行进四面体产生的离散凹凸，使表面光滑且体积基本不变
@@ -391,6 +641,7 @@ window.Orbit3D = (function () {
       surfaceObj.material.dispose();
       surfaceObj = null;
     }
+    surfaceGeoRef = null;
     const iso = Math.max(1e-9, surfaceLevelFraction * fieldMax);
     const geo = extractSurface(iso);
     if (!geo.getAttribute('position').count) return;
@@ -401,32 +652,61 @@ window.Orbit3D = (function () {
       geo.getIndex().array
     );
     const nv = welded.positions.length / 3;
-    if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 4);
+    if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 2);
 
     const geo2 = new THREE.BufferGeometry();
     geo2.setAttribute('position', new THREE.BufferAttribute(welded.positions, 3));
     geo2.setAttribute('normal', new THREE.BufferAttribute(welded.normals, 3));
     geo2.setIndex(new THREE.BufferAttribute(welded.indices, 1));
     geo2.computeBoundingSphere();
+    paintSurfaceColors(geo2);          // 顶点着色（相位色 / 轨道色）
+    surfaceGeoRef = geo2;
 
-    const baseColor = OM.lColor(currentL || 0);
-    const color = new THREE.Color(baseColor[0], baseColor[1], baseColor[2]);
-    // 不透明实体 + 中等粗糙度 + 梯度法线（朝外）→ 平滑实心
+    // 基色置白，实际颜色全部来自顶点色；不透明实体 + 朝外梯度法线 → 平滑实心
     const mat = new THREE.MeshStandardMaterial({
-      color: color,
+      color: 0xffffff,
+      vertexColors: true,
       roughness: 0.5,
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
     surfaceObj = new THREE.Mesh(geo2, mat);
     scene.add(surfaceObj);
-    fitView(gridExtent);
+    const refExt = refExtentFor(surfaceParams);
+    fitView(Math.max(refExt, gridExtent), refExt);
+  }
+
+  /**
+   * 取景与"标尺"范围。
+   *
+   * 用两套范围，是为了让**阈值/判据的变化真正看得见**：
+   *   · refExt  —— 固定参考（恒按 |ψ|² 的 30% 算，与当前阈值、判据无关），
+   *                用作坐标轴/赤道环的"标尺"，故它不随阈值变化而缩放；
+   *   · frameExt = max(refExt, 当前实际外延)，用于相机距离，保证表面永不溢出画面。
+   * 于是：抬高阈值 → 表面缩进标尺环内；降低阈值或切到 |ψ| 判据 → 表面涨出环外，
+   * 两种情况都肉眼可辨。若两套范围混用（相机跟着表面走），变化就会被完全抵消。
+   */
+  const FRAME_REF_LEVEL = 0.30;
+  function refExtentFor(P) {
+    if (!P) return gridExtent;
+    const refAbs = FRAME_REF_LEVEL * OM.maxDensity(P.n, P.l, P.m, P.mode);   // 恒按 |ψ|² 记
+    return Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, refAbs) * 1.12, 1.2);
   }
 
   let currentL = 0;
-  function updateSurface(n, l, m, mode, res, levelFraction) {
+  let currentColorMode = 'phase';      // 'phase' | 'orbital'
+  let surfaceGeoRef = null;            // 当前等值面几何（供"只改着色"时快速重涂）
+  let surfaceParams = null;            // 当前等值面对应的 (n,l,m,mode)，供重涂/重算时用
+  let lastRes = 68;                    // 上次使用的网格分辨率
+
+  function updateSurface(n, l, m, mode, res, levelFraction, colorMode, psiCrit) {
     currentL = l;
-    computeField(n, l, m, mode, res);
+    currentColorMode = colorMode || 'phase';
+    lastRes = res;
+    surfaceParams = { n: n, l: l, m: m, mode: mode, psiCrit: psiCrit || 'psi2' };
+    // 先把"占峰值的比例"（按当前判据）换算成 |ψ|² 绝对值，才能定出随阈值自适应的网格范围
+    const levelAbs = levelAbsFor(surfaceParams, levelFraction, surfaceParams.psiCrit);
+    computeField(n, l, m, mode, res, levelAbs);
     buildSurface(levelFraction);
   }
 
@@ -439,19 +719,19 @@ window.Orbit3D = (function () {
     if (nucleusObj) nucleusObj.visible = true;
   }
 
-  // 相机取景：保持当前朝向，按轨道尺度调整距离
-  function fitView(extent) {
-    if (!camera || !controls) return;
-    const dir = camera.position.clone().sub(controls.target);
-    if (dir.lengthSq() < 1e-8) dir.set(0, -1, 0.5);
-    dir.normalize();
+  // 相机取景：保持当前朝向（四元数不变），只按轨道尺度调整距离与裁剪面。
+  // decorExt 为"标尺"（坐标轴/赤道环）的固定尺度，与当前阈值无关，见 refExtentFor 注释。
+  function fitView(extent, decorExt) {
+    if (!camera || !viewCtl) return;
     const dist = Math.max(extent * 2.8, 3);
-    camera.position.copy(controls.target).add(dir.multiplyScalar(dist));
-    camera.near = extent * 0.02;
+    camera.near = Math.max(extent * 0.02, 1e-3);
     camera.far = extent * 60;
     camera.updateProjectionMatrix();
-    controls.minDistance = extent * 0.15;
-    controls.maxDistance = extent * 40;
+    viewCtl.setLimits(extent * 0.15, extent * 40);
+    viewCtl.setDistance(dist);
+    // 装饰参照（坐标轴 ±12、赤道环 r=12）缩放为固定标尺
+    const de = decorExt || extent;
+    if (decorGroup) decorGroup.scale.setScalar(Math.max(de * 1.12 / 12, 0.02));
     // 更新原子核与参考尺寸
     if (nucleusObj) {
       nucleusObj.scale.setScalar(Math.max(extent * 0.02, 0.04));
@@ -465,7 +745,7 @@ window.Orbit3D = (function () {
   // ---------------------------------------------------------------------------
   function render() {
     if (renderer && scene && camera) {
-      controls.update();
+      if (viewCtl) viewCtl.update();
       renderer.render(scene, camera);
     }
   }
@@ -475,11 +755,10 @@ window.Orbit3D = (function () {
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
   }
-  function setAutoRotate(v) { if (controls) controls.autoRotate = !!v; }
+  function setAutoRotate(v) { if (viewCtl) viewCtl.setAutoRotate(v); }
   function resetView() {
-    camera.up.set(0, 0, 1);
-    camera.position.set(0, -4, 3);
-    controls.target.set(0, 0, 0);
+    if (!viewCtl) return;
+    viewCtl.resetHome();                       // 回到初始朝向（z 向上）
     if (gridExtent) fitView(gridExtent);
   }
   function disposeGrid() {           // 释放等值面缓存的标量场
@@ -495,18 +774,17 @@ window.Orbit3D = (function () {
     const w = container.clientWidth || 300, h = container.clientHeight || 200;
     angScene = new THREE.Scene();
     angCamera = new THREE.PerspectiveCamera(45, w / h, 0.01, 40);
-    angCamera.up.set(0, 0, 1);
-    angCamera.position.set(0, -2.6, 2.2);
     angRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     angRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     angRenderer.setSize(w, h);
     container.appendChild(angRenderer.domElement);
-    angControls = new THREE.OrbitControls(angCamera, angRenderer.domElement);
-    angControls.enableDamping = true;
-    angControls.dampingFactor = 0.08;
-    angControls.enablePan = false;
-    angControls.autoRotate = true;
-    angControls.autoRotateSpeed = 1.2;
+    // 同样使用四元数控制器（小场景不需要平移，旋转 + 缩放即可）
+    angCtl = createQuatOrbit(angCamera, angRenderer.domElement, {
+      distance: 3.4, rotateSpeed: 1.0, damping: 0.2, autoRotateSpeed: 0.006,
+    });
+    angCtl.setView(new THREE.Vector3(0, -2.6, 2.2), new THREE.Vector3(0, 0, 0));
+    angCtl.setLimits(1.2, 12);
+    angCtl.setAutoRotate(true);
     buildAngularAxes();
   }
 
@@ -619,7 +897,7 @@ window.Orbit3D = (function () {
 
   function renderAngular() {
     if (angRenderer && angScene && angCamera) {
-      angControls.update();
+      if (angCtl) angCtl.update();
       angRenderer.render(angScene, angCamera);
     }
   }

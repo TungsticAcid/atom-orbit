@@ -40,15 +40,18 @@
         <div class="card-head"><span class="card-title">量子数 / 显示模式</span></div>
 
         <div class="set">
-          <div class="row"><label for="nSlider">主量子数 n</label><output id="nVal" class="val">3</output></div>
+          <div class="row"><label for="nInput">主量子数 n</label>
+            <input type="number" id="nInput" class="num-val" min="1" max="6" step="1" value="3" /></div>
           <input type="range" id="nSlider" min="1" max="6" step="1" value="3" />
         </div>
         <div class="set">
-          <div class="row"><label for="lSlider">角量子数 l</label><output id="lVal" class="val">1</output></div>
+          <div class="row"><label for="lInput">角量子数 l</label>
+            <input type="number" id="lInput" class="num-val" min="0" max="2" step="1" value="1" /></div>
           <input type="range" id="lSlider" min="0" max="2" step="1" value="1" />
         </div>
         <div class="set">
-          <div class="row"><label for="mSlider">磁量子数 m</label><output id="mVal" class="val">0</output></div>
+          <div class="row"><label for="mInput">磁量子数 m</label>
+            <input type="number" id="mInput" class="num-val" min="-1" max="1" step="1" value="0" /></div>
           <input type="range" id="mSlider" min="-1" max="1" step="1" value="0" />
         </div>
 
@@ -60,24 +63,30 @@
 
         <div class="divider"><span>三维渲染</span></div>
         <div class="seg" id="renderSeg">
-          <button class="seg-btn active" data-mode="points">粒子云</button>
-          <button class="seg-btn" data-mode="surface">等值面</button>
+          <button class="seg-btn" data-mode="points">粒子云</button>
+          <button class="seg-btn active" data-mode="surface">等值面</button>
         </div>
 
-        <div class="set" id="levelSet" style="display:none">
-          <div class="row"><label for="levelSlider">等值面阈值</label><output id="levelVal" class="val">0.08</output></div>
-          <input type="range" id="levelSlider" min="0.004" max="0.30" step="0.002" value="0.08" />
+        <div class="set" id="levelSet">
+          <div class="row"><label>等值面判据</label>
+            <div class="seg small" id="psiSeg">
+              <button class="seg-btn active" data-mode="psi2">|ψ|²</button>
+              <button class="seg-btn" data-mode="psi">|ψ|</button>
+            </div>
+          </div>
+          <div class="row"><label for="levelSlider">等值面阈值</label><output id="levelVal" class="val">30.0%</output></div>
+          <input type="range" id="levelSlider" min="0.005" max="0.80" step="0.005" value="0.30" />
+          <div class="hint" id="psiHint">阈值＝占 |ψ|² 峰值的比例（30% |ψ|² ⟺ 55% |ψ|）</div>
         </div>
-        <div class="set" id="pointSet">
+        <div class="set" id="pointSet" style="display:none">
           <div class="row"><label for="pointCountSlider">粒子数</label><output id="pointCountVal" class="val">5 万</output></div>
           <input type="range" id="pointCountSlider" min="8000" max="80000" step="1000" value="50000" />
         </div>
 
-        <div class="card-head" style="margin-top:16px"><span class="card-title">截面着色</span></div>
-        <div class="seg" id="phaseSeg">
-          <button class="seg-btn active" data-mode="intensity">密度着色</button>
-          <button class="seg-btn" data-mode="phase">相位着色</button>
-          <button class="seg-btn" data-mode="contour">等高线</button>
+        <div class="divider"><span>三维着色</span></div>
+        <div class="seg" id="colorSeg">
+          <button class="seg-btn" data-mode="orbital">轨道色</button>
+          <button class="seg-btn active" data-mode="phase">相位色</button>
         </div>
       </aside>
     </section>
@@ -127,6 +136,11 @@
             <button class="seg-btn" data-p="yz">yz</button>
           </div>
         </div>
+        <div class="seg small" id="phaseSeg" style="margin:2px 0 6px">
+          <button class="seg-btn active" data-mode="intensity">密度着色</button>
+          <button class="seg-btn" data-mode="phase">相位着色</button>
+          <button class="seg-btn" data-mode="contour">等高线</button>
+        </div>
         <canvas id="sectionChart" class="chart"></canvas>
       </div>
     </section>
@@ -136,7 +150,6 @@
 
   <!-- 依赖（全局构建，file:// 可离线运行） -->
   <script src="libs/three.min.js"></script>
-  <script src="libs/OrbitControls.js"></script>
   <script src="libs/katex.min.js"></script>
   <!-- 业务模块 -->
   <script src="js/math.js"></script>
