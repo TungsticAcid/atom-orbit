@@ -287,15 +287,19 @@ window.OM = (function () {
    * 采样 N 个三维点，返回 { positions, colors, extent }。
    * positions/colors 为 Float32Array（position 长度 3N，color 长度 3N）。
    * extent 为坐标内最大绝对半径（用于相机取景）。
+   * colorMode：'phase' 相位着色（实函数 → ±红/青双色，复函数 → 彩虹相位）；
+   *            'orbital' 轨道色（按 l 的支壳层基础色，亮度随密度）。
    */
-  function samplePoints(n, l, m, mode, N) {
+  function samplePoints(n, l, m, mode, N, colorMode) {
+    const usePhase = (colorMode !== 'orbital');
     const { rMax, maxD } = samplingRadius(n, l);
     const maxAng = samplingAngleMax(l, m, mode);
     const extent = rMax * 1.05;
 
-    // 先采样位置与原始强度（两遍：收集后求最大强度用于归一化着色）
+    // 先采样位置、强度与相位（相位在采样时顺手算出，避免二次遍历重算）
     const pos = new Float32Array(N * 3);
     const tmpDensity = new Float32Array(N);
+    const tmpPhase = usePhase ? new Float32Array(N) : null;
     let maxShiftDensity = 0;
     let count = 0, guard = 0;
     while (count < N && guard < N * 200) {
@@ -308,9 +312,13 @@ window.OM = (function () {
       const cosTheta = 2 * Math.random() - 1;
       const theta = Math.acos(cosTheta);
       const phi = 2 * Math.PI * Math.random();
-      const ang2 = (mode === 'real')
-        ? (() => { const v = angularReal(l, m, theta, phi); return v * v; })()
-        : angularComplex(l, m, theta, phi).abs2();
+      let Yre = 0, ang2 = 0;
+      if (mode === 'real') {
+        Yre = angularReal(l, m, theta, phi);
+        ang2 = Yre * Yre;
+      } else {
+        ang2 = angularComplex(l, m, theta, phi).abs2();
+      }
       if (ang2 < maxAng * Math.random()) continue;
 
       const x = r * Math.sin(theta) * Math.cos(phi);
@@ -323,6 +331,12 @@ window.OM = (function () {
       const density = r > 1e-9 ? (d / (r * r)) * ang2 : 0;
       tmpDensity[count] = density;
       if (density > maxShiftDensity) maxShiftDensity = density;
+      if (usePhase) {
+        // 相位：复函数取 arg ψ（R≥0，故等于 arg Y）；实函数取符号 → 0 或 π
+        tmpPhase[count] = (mode === 'real')
+          ? (Yre >= 0 ? 0 : Math.PI)
+          : angularComplex(l, m, theta, phi).arg();
+      }
       count++;
     }
     const nUsed = count;
@@ -331,16 +345,12 @@ window.OM = (function () {
     const base = lColor(l);
     for (let i = 0; i < nUsed; i++) {
       const t = maxShiftDensity > 0 ? tmpDensity[i] / maxShiftDensity : 0;
-      if (mode === 'complex') {
-        // 复模式：按相位着色（相位 = arg ψ；R≥0，故取决于 Y）
-        const theta = Math.acos(Math.max(-1, Math.min(1, pos[3 * i + 2] /
-          (Math.hypot(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]) || 1))));
-        const phi = Math.atan2(pos[3 * i + 1], pos[3 * i]);
-        const col = phaseColor(angularComplex(l, m, theta, phi).arg(), Math.pow(t, 0.7));
+      const k = Math.pow(t, 0.7);
+      if (usePhase) {
+        const col = phaseColor(tmpPhase[i], k);
         colors[3 * i] = col[0]; colors[3 * i + 1] = col[1]; colors[3 * i + 2] = col[2];
       } else {
-        // 实模式：基础色 + 亮度随密度增强（下限稍高，避免稀疏点过暗）
-        const k = Math.pow(t, 0.7);
+        // 轨道色：基础色 + 亮度随密度增强（下限稍高，避免稀疏点过暗）
         colors[3 * i] = 0.50 + (base[0] - 0.50) * k;
         colors[3 * i + 1] = 0.50 + (base[1] - 0.50) * k;
         colors[3 * i + 2] = 0.52 + (base[2] - 0.52) * k;
@@ -354,6 +364,15 @@ window.OM = (function () {
     };
   }
 
+  /**
+   * 相位 → 颜色（供三维着色复用：点云 / 等值面共用同一套配色）。
+   * 实函数传入 0 或 π，即得青/红双色。
+   */
+  function phaseColorFor(mode, realVal, cplx, intensity) {
+    const phase = (mode === 'real') ? (realVal >= 0 ? 0 : Math.PI) : cplx.arg();
+    return phaseColor(phase, intensity);
+  }
+
   // ---------------------------------------------------------------------------
   // 快捷工具：轨道标签 / 取景范围 / 直角→球坐标
   // ---------------------------------------------------------------------------
@@ -363,6 +382,49 @@ window.OM = (function () {
   }
   function rExtent(n, l) {
     return samplingRadius(n, l).rMax;
+  }
+
+  /**
+   * |ψ|² 的全局峰值 = max_r R(r)² × max|Y|²。
+   * 有了它，"阈值占峰值的比例"才能先于标量场被换算成绝对值，
+   * 进而决定网格范围（否则峰值↔范围↔阈值会循环依赖）。
+   */
+  function maxDensity(n, l, m, mode) {
+    const Ymax2 = samplingAngleMax(l, m, mode);
+    const scanMax = 2 * n * n + 14;
+    const steps = 900;
+    let maxR2 = 0;
+    for (let i = 0; i <= steps; i++) {
+      const r = (scanMax * i) / steps;
+      const R = radialR(n, l, r);
+      if (R * R > maxR2) maxR2 = R * R;
+    }
+    return maxR2 * Ymax2;
+  }
+
+  /**
+   * 给定阈值 level（|ψ|² 的绝对值，非比值）下，等值面的最外延半径。
+   *
+   * 原理：|ψ|² = R(r)²·|Y(θ,φ)|²，而 |Y| 在球面上的最大值为 Ymax，
+   * 故半径 r 的球面上 |ψ|² 的最大值为 R(r)²·Ymax²。只需沿 r 扫描
+   * R(r)²·Ymax² ≥ level 的最外层交点即可。
+   *
+   * 用途：把行进四面体的网格范围收紧到"等值面实际所在区域"，
+   * 而不是按波函数的渐近尾部（后者可能大出数倍）。同分辨率下格距
+   * 可因此细数倍——这对 p 轨道节面附近两瓣之间的窄缝尤其关键。
+   */
+  function isoRadius(n, l, m, mode, level) {
+    if (!(level > 0)) return rExtent(n, l);
+    const Ymax2 = samplingAngleMax(l, m, mode);
+    const scanMax = 2 * n * n + 14;      // 足够覆盖任何可达的等值面外沿
+    const steps = 900;
+    let rOuter = 0;
+    for (let i = 0; i <= steps; i++) {
+      const r = (scanMax * i) / steps;
+      const R = radialR(n, l, r);
+      if (R * R * Ymax2 >= level) rOuter = r;
+    }
+    return Math.max(rOuter, 0.5);
   }
   function cartToSpherical(x, y, z) {
     const r = Math.hypot(x, y, z);
@@ -378,8 +440,8 @@ window.OM = (function () {
     psiComplex, psiDensity,
     samplingRadius, samplingAngleMax,
     samplePoints,
-    lColor, phaseColor, hslToRgb,
-    orbitLabel, rExtent, cartToSpherical,
+    lColor, phaseColor, phaseColorFor, hslToRgb,
+    orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     SUBSHELL, SUBSHELL_COLOR,
   };
 })();

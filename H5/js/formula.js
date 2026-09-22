@@ -28,31 +28,61 @@ window.Formula = (function () {
     const g = gcd(Math.abs(num), den);
     return { num: num / g, den: den / g };
   }
-  // 把 cosθ 多项式系数（从高次到 0 次）格式化为 LaTeX
-  function formatCosPoly(coeffs) {
-    const terms = [];
+  // 通用多项式格式化：coeffs[p] 为 x^p 的系数，term(p) 返回 x^p（p≥1）的 LaTeX。
+  // 系数为 ±1 时省略数字（如 -cosθ 而非 -1cosθ）。
+  function formatPoly(coeffs, term) {
+    const parts = [];
     for (let p = coeffs.length - 1; p >= 0; p--) {
       const c = coeffs[p];
       if (Math.abs(c) < 1e-12) continue;
       const { num, den } = toFraction(c);
-      const sign = num < 0 ? '-' : '+';
       const absNum = Math.abs(num);
-      const one = den === 1 && absNum === 1;
-      const coefStr = one ? '' : (den === 1 ? String(absNum) : '\\frac{' + absNum + '}{' + den + '}');
       let s;
-      if (p === 0) s = den === 1 ? String(absNum) : '\\frac{' + absNum + '}{' + den + '}';
-      else s = coefStr + (p === 1 ? '\\cos\\theta' : '\\cos^{' + p + '}\\theta');
-      terms.push({ sign, s });
+      if (p === 0) {
+        s = den === 1 ? String(absNum) : '\\frac{' + absNum + '}{' + den + '}';
+      } else {
+        const coefStr = (den === 1 && absNum === 1)
+          ? '' : (den === 1 ? String(absNum) : '\\frac{' + absNum + '}{' + den + '}');
+        s = coefStr + term(p);
+      }
+      parts.push({ sign: num < 0 ? '-' : '+', s: s });
     }
-    if (!terms.length) return '0';
+    if (!parts.length) return '0';
     let out = '';
-    terms.forEach((t, i) => {
-      out += (i === 0)
-        ? (t.sign === '-' ? '-' : '') + t.s
-        : (t.sign === '-' ? ' - ' : ' + ') + t.s;
+    parts.forEach((t, i) => {
+      out += (i === 0) ? (t.sign === '-' ? '-' : '') + t.s : (t.sign === '-' ? ' - ' : ' + ') + t.s;
     });
     return out;
   }
+
+  /** 多项式非零项个数（用于决定是否加括号） */
+  function termCount(coeffs) {
+    return coeffs.reduce((a, c) => a + (Math.abs(c) > 1e-12 ? 1 : 0), 0);
+  }
+
+  const cosTerm = (p) => (p === 1) ? '\\cos\\theta' : '\\cos^{' + p + '}\\theta';
+  const rhoTerm = (p) => (p === 1) ? '\\rho' : '\\rho^{' + p + '}';
+  /** cosθ 多项式（关联勒让德展开用） */
+  function formatCosPoly(coeffs) { return formatPoly(coeffs, cosTerm); }
+
+  // ---- 广义拉盖尔 L_k^α 的显式展开 ---------------------------------------------
+  /** 二项式系数 C(a,b)（a、b 为非负整数） */
+  function binom(a, b) {
+    if (b < 0 || b > a) return 0;
+    let r = 1;
+    for (let i = 0; i < b; i++) r = r * (a - i) / (i + 1);
+    return Math.round(r);
+  }
+  /** L_k^α(x) 的系数：L_k^α(x) = Σ_i (-1)^i C(k+α, k-i) x^i / i! */
+  function laguerreCoeffs(k, alpha) {
+    const c = [];
+    for (let i = 0; i <= k; i++) {
+      c.push(((i % 2 === 0) ? 1 : -1) * binom(k + alpha, k - i) / OM.factorial(i));
+    }
+    return c;
+  }
+  /** L_k^α(ρ) 的 LaTeX（k=0 时恒为 1，调用方应自行省略） */
+  function laguerreExp(k, alpha) { return formatPoly(laguerreCoeffs(k, alpha), rhoTerm); }
 
   /**
    * 返回 P_l^m(cosθ) 展开式的 cosθ 多项式系数（已乘 (-1)^m，不含 sin^mθ 因子）。
@@ -88,15 +118,18 @@ window.Formula = (function () {
   function legendreExp(l, m) {
     const a = Math.abs(m);
     const c = legendreCoeffs(l, m);
-    const deg = c.length - 1;
     const sinStr = (a === 1) ? '\\sin\\theta' : '\\sin^{' + a + '}\\theta';
-    if (a === 0) return formatCosPoly(c);               // m=0：纯 Legendre 多项式
-    if (deg === 0) {                                     // 多项式为常数 → K·sin^mθ
-      const { num, den } = toFraction(c[0]);
-      if (den === 1 && num === 1) return sinStr;
-      if (den === 1 && num === -1) return '-' + sinStr;
-      const k = den === 1 ? String(Math.abs(num)) : '\\frac{' + Math.abs(num) + '}{' + den + '}';
-      return (num < 0 ? '-' : '') + k + '\\,' + sinStr;
+    if (a === 0) return formatCosPoly(c);                // m=0：纯 Legendre 多项式
+    if (termCount(c) === 1) {
+      // 单项：系数并入，得 ±K·sinᵃθ·cosᵖθ，且不加括号（如 -3sinθcosθ）
+      let p = 0;
+      for (let i = c.length - 1; i >= 0; i--) if (Math.abs(c[i]) > 1e-12) { p = i; break; }
+      const { num, den } = toFraction(c[p]);
+      const absNum = Math.abs(num);
+      const coefStr = (den === 1 && absNum === 1)
+        ? '' : (den === 1 ? String(absNum) : '\\frac{' + absNum + '}{' + den + '}');
+      const cosStr = (p === 0) ? '' : (p === 1 ? '\\cos\\theta' : '\\cos^{' + p + '}\\theta');
+      return (num < 0 ? '-' : '') + coefStr + sinStr + cosStr;
     }
     return sinStr + '\\left(' + formatCosPoly(c) + '\\right)';
   }
@@ -107,69 +140,96 @@ window.Formula = (function () {
   function buildPsi(n, l, m, mode) {
     const am = Math.abs(m);
     const sub = SUBSHELL[Math.min(l, SUBSHELL.length - 1)];
+    const k = n - l - 1;                 // 拉盖尔次数（k=0 时 L_0≡1，可整体省略）
 
     // 归一化常数数值
-    const Nrad = Math.sqrt((4 * OM.factorial(n - l - 1)) / (Math.pow(n, 4) * OM.factorial(n + l)));
-    let Nang = Math.sqrt(((2 * l + 1) / (4 * Math.PI)) * (OM.factorial(l - am) / OM.factorial(l + am)));
-
-    // 径向部分
-    // (2r/na₀)^l：l=1 省略指数 1；N 下标用逗号形式 N_{n,l}
-    const rhoPow = (l === 1)
-      ? '\\left(\\frac{2r}{n a_0}\\right)'
-      : '\\left(\\frac{2r}{n a_0}\\right)^{' + l + '}';
-    const radial =
-      'R_{' + n + ',' + l + '}(r) &= ' +
-      'N_{' + n + ',' + l + '}\\,' + rhoPow +
-      'e^{-r/(n a_0)}\\,L_{' + (n - l - 1) + '}^{' + (2 * l + 1) + '}' +
-      '\\!\\left(\\frac{2r}{n a_0}\\right),\\qquad ' +
-      "N_{" + n + "," + l + "}=\\sqrt{\\frac{4\\,(n-l-1)!}{n^{4}(n+l)!}}\\approx " + f4(Nrad);
-
-    // 角度部分（P 直接展开为显式多项式）
-    const pExp = legendreExp(l, am);
-    let ang;
-    if (mode === 'complex') {
-      ang = 'Y_{' + l + '}^{' + m + '}(\\theta,\\phi) &= ' +
-        'N_{' + l + ',' + m + '}\\, ' + pExp + '\\,e^{' + mExponent(m) + '},\\qquad ' +
-        'N_{' + l + ',' + m + '}=\\sqrt{\\frac{2l+1}{4\\pi}\\frac{(l-|m|)!}{(l+|m|)!}}' +
-        '\\approx ' + f4(Nang);
-    } else if (am === 0) {
-      ang = 'Y_{' + l + ',0}(\\theta) &= ' +
-        'N\\, ' + pExp + ',\\qquad ' +
-        'N=\\sqrt{\\frac{2l+1}{4\\pi}}\\approx ' + f4(Nang);
-    } else {
-      const trig = (m > 0)
-        ? '\\cos(' + am + '\\phi)'
-        : '\\sin(' + am + '\\phi)';
-      const shown = Math.SQRT2 * Nang;
-      ang = 'Y_{' + l + ',' + m + '}(\\theta,\\phi) &= ' +
-        '\\sqrt{2}\\,N\\, ' + pExp + '\\,' + trig + ',\\qquad ' +
-        '\\sqrt{2}N\\approx ' + f4(shown);
-    }
+    const Nrad = Math.sqrt((4 * OM.factorial(k)) / (Math.pow(n, 4) * OM.factorial(n + l)));
+    const Nang = Math.sqrt(((2 * l + 1) / (4 * Math.PI)) * (OM.factorial(l - am) / OM.factorial(l + am)));
 
     // 实/复使用不同记法：复球谐 Y_l^m（m 上标）+ 复 ψ_{n,l}^m；
     // 实球谐 Y_{l,m}（逗号下标）+ 实 ψ_{n,l,m}
     const psiTag = (mode === 'complex')
       ? '\\psi_{' + n + ',' + l + '}^{' + m + '}'
       : '\\psi_{' + n + ',' + l + ',' + m + '}';
-    const yRealTag = (mode === 'complex')
+    const yTag = (mode === 'complex')
       ? 'Y_{' + l + '}^{' + m + '}'
       : 'Y_{' + l + ',' + m + '}';
 
-    const latex =
-      '\\begin{aligned} ' +
-      psiTag + '(r,\\theta,\\phi) &= R_{' + n + ',' + l + '}(r)\\,' + yRealTag + '(\\theta,\\phi)\\\\[4pt] ' +
-      radial + '\\\\[4pt] ' + ang +
-      '\\end{aligned}';
+    const rows = [];
+    rows.push(psiTag + '(r,\\theta,\\phi) &= R_{' + n + ',' + l + '}(r)\\,' + yTag + '(\\theta,\\phi)');
+
+    // ---- 径向：教科书形式 R = N ρˡ e^{-ρ/2} L_k^{2l+1}(ρ)，ρ = 2r/(na₀) ----
+    const rParts = ['N_{' + n + ',' + l + '}'];
+    if (l >= 1) rParts.push(l === 1 ? '\\rho' : '\\rho^{' + l + '}');     // ρ⁰ ≡ 1，省略
+    rParts.push('e^{-\\rho/2}');
+    if (k > 0) rParts.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho)'); // L₀ ≡ 1，省略
+    rows.push('R_{' + n + ',' + l + '}(r) &= ' + rParts.join('\\,') + ',\\qquad \\rho=\\frac{2r}{n a_0}');
+    rows.push('N_{' + n + ',' + l + '} &= \\sqrt{\\frac{4\\cdot ' + k + '!}{' + n + '^{4}\\cdot ' + (n + l) + '!}}\\approx ' + f4(Nrad));
+    if (k > 0) {
+      rows.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho) &= ' + laguerreExp(k, 2 * l + 1));
+    }
+
+    // ---- 角度：P 展开为显式多项式，并清理所有冗余的 1 ----
+    const pExp = legendreExp(l, am);
+    const factors = [];
+    if (pExp !== '1') factors.push(pExp);                                // P₀⁰ ≡ 1，省略
+    let coef, coefRow;
+    if (mode === 'complex') {
+      coef = 'N_{' + l + ',' + m + '}';
+      if (m !== 0) factors.push('e^{' + mExponent(m) + '}');             // m=0 时 e⁰ ≡ 1，省略
+      coefRow = 'N_{' + l + ',' + m + '} &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}\\cdot' +
+        '\\frac{' + (l - am) + '!}{' + (l + am) + '!}}\\approx ' + f4(Nang);
+    } else if (am === 0) {
+      coef = 'N';
+      coefRow = 'N &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}}\\approx ' + f4(Nang);
+    } else {
+      coef = '\\sqrt{2}\\,N';
+      // m=±1 时省略三角函数内的系数 1（写 cosφ 而非 cos(1φ)）
+      factors.push(am === 1
+        ? (m > 0 ? '\\cos\\phi' : '\\sin\\phi')
+        : (m > 0 ? '\\cos(' + am + '\\phi)' : '\\sin(' + am + '\\phi)'));
+      coefRow = 'N &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}\\cdot\\frac{' + (l - am) + '!}{' + (l + am) + '!}}' +
+        '\\approx ' + f4(Nang) + ',\\qquad \\sqrt{2}N\\approx ' + f4(Math.SQRT2 * Nang);
+    }
+    // 把因子开头的负号提到整项最前：避免 "√2N −3sinθcosθ" 被误读为减法
+    let leadSign = '';
+    const posFactors = factors.map((f) => {
+      if (f.charAt(0) === '-') { leadSign = (leadSign === '-') ? '' : '-'; return f.slice(1); }
+      return f;
+    });
+    const yRhs = posFactors.length
+      ? (leadSign + coef + '\\,' + posFactors.join('\\,'))
+      : (leadSign + coef);
+    rows.push(yTag + '(\\theta,\\phi) &= ' + yRhs);
+    rows.push(coefRow);
+
+    const latex = '\\begin{aligned} ' + rows.join('\\\\[3pt] ') + '\\end{aligned}';
 
     const modeName = mode === 'real' ? '实函数波函数' : '复函数波函数';
+    const mLabel = 'm=' + (m > 0 ? '+' + m : m);
+    const realName = (mode === 'real') ? realOrbitalName(l, m) : '';
     const note = buildNote(n, l, m, mode);
 
     return {
       latex: latex,
-      title: n + sub + ' 轨道 · ' + modeName,
+      title: n + sub + ' 轨道（' + mLabel + (realName ? ' · ' + realName : '') + '） · ' + modeName,
+      mLabel: mLabel,
       modeName: modeName,
       note: note,
     };
+  }
+
+  /**
+   * 实轨道的化学惯用名（d_z²、d_xz…），仅 l ≤ 2 有公认命名。
+   * 与 angularReal 的组合约定一致：m>0 → cos(|m|φ) 型，m<0 → sin(|m|φ) 型。
+   */
+  function realOrbitalName(l, m) {
+    if (l === 0) return 's';
+    if (l === 1) return ['p_z', 'p_x', 'p_y'][m === 0 ? 0 : (m > 0 ? 1 : 2)];
+    if (l === 2) {
+      return { '0': 'd_{z^2}', '1': 'd_{xz}', '-1': 'd_{yz}', '2': 'd_{x^2-y^2}', '-2': 'd_{xy}' }[String(m)] || '';
+    }
+    return '';
   }
 
   /** 针对常见情况给出教育性解说 */
@@ -187,5 +247,5 @@ window.Formula = (function () {
     return '径向节点 ' + radialNodes + ' 个、角节点 ' + angularNodes + ' 个；' + orient;
   }
 
-  return { buildPsi, legendreCoeffs };
+  return { buildPsi, legendreCoeffs, laguerreCoeffs, realOrbitalName };
 })();
