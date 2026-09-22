@@ -238,11 +238,23 @@ window.Orbit3D = (function () {
             gradZ[idA] + t * (gradZ[idB] - gradZ[idA])],
       };
     };
+    // 推入一个三角形并强制"一致朝外"绕向：几何法线与梯度法线(朝外)对齐，否则交换顶点序。
+    // 否则绕向随机会让 DoubleSide 按 gl_FrontFacing 乱翻法线 → 面片明暗不均。
     const pushTri = (pts) => {
       if (!pts || pts.length < 3) return;
-      for (const pt of pts) {
-        positions.push(pt.p[0], pt.p[1], pt.p[2]);
-        normals.push(pt.n[0], pt.n[1], pt.n[2]);
+      const [p0, p1, p2] = [pts[0].p, pts[1].p, pts[2].p];
+      // 几何法线 = (p1-p0) × (p2-p0)
+      const ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
+      const bx = p2[0] - p0[0], by = p2[1] - p0[1], bz = p2[2] - p0[2];
+      const gnx = ay * bz - az * by, gny = az * bx - ax * bz, gnz = ax * by - ay * bx;
+      // 朝外法线 = 各顶点梯度法线平均值
+      const onx = (pts[0].n[0] + pts[1].n[0] + pts[2].n[0]) / 3;
+      const ony = (pts[0].n[1] + pts[1].n[1] + pts[2].n[1]) / 3;
+      const onz = (pts[0].n[2] + pts[1].n[2] + pts[2].n[2]) / 3;
+      const order = (gnx * onx + gny * ony + gnz * onz) >= 0 ? [0, 1, 2] : [0, 2, 1];
+      for (const k of order) {
+        positions.push(pts[k].p[0], pts[k].p[1], pts[k].p[2]);
+        normals.push(pts[k].n[0], pts[k].n[1], pts[k].n[2]);
       }
       const base = positions.length / 3 - 3;   // 本三角形首顶点的索引
       indices.push(base, base + 1, base + 2);
@@ -282,7 +294,7 @@ window.Orbit3D = (function () {
       }
     }
 
-    // 构建几何（法线来自梯度，无需 computeVertexNormals，绕序不影响明暗）
+    // 构建几何（法线来自梯度、方向朝外；三角形绕向已在 pushTri 中强制一致）
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
