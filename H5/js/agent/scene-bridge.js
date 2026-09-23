@@ -7,7 +7,7 @@
  *   1. **不重构渲染层**：动画用 requestAnimationFrame 对现有 setter 做插值调用；
  *      render3d.js 的 setter 保持瞬时语义不变。
  *   2. **每个动作绑定一个知识点**（concept）：使动作可解释、可教学、可复现。
- *   3. **校验与限流**：参数类型/范围校验、单轮动作数上限、动画总时长上限。
+ *   3. **校验与限流**：参数类型/范围校验、单轮动作数上限（**只有步数上限，没有时长上限**）。
  *   4. **可中断**：任何时刻可停止当前序列，并丢弃未执行的动作。
  *   5. **分镜节奏（pacing）**：每个动作之间强制留出"停留时间"，并把它对应的
  *      speech 旁白打出来——否则十几个动作会在几十毫秒内播完，用户根本看不清
@@ -17,7 +17,6 @@ window.SceneBridge = (function () {
   'use strict';
 
   const MAX_ACTIONS_PER_TURN = 12;     // 单轮动作数上限
-  const MAX_TOTAL_MS = 25000;          // 单轮动作总时长上限（含停留时间）
 
   // ---- 分镜节奏 ----
   // 瞬时动作：改完立刻返回，但**必须停一下**让肉眼跟上；否则等于没演示。
@@ -790,7 +789,12 @@ window.SceneBridge = (function () {
     const executed = [];
     const failed = [];
     const dead = () => gen !== generation;
-    const t0 = performance.now();
+    // ★ 这里**刻意不设"总时长上限"**。曾经有过一条 25 秒的单轮上限（超时即丢弃剩余
+    //   队列），但它在自动连播下必然误伤：24 步 × 1.2 秒本来就 > 25 秒，一段正常的
+    //   长演示会被从中间砍掉，学生看到"演示中断"却不知道是时间到了。
+    //   现在只保留**动作数**上限（MAX_ACTIONS_PER_TURN / MAX_QUEUE），能用步数表达
+    //   的约束就不用挂钟表达——步数是确定的，时长取决于设备与动画时长，不可预期。
+    //   要提前结束，用户点「停止」即可。
     // ★ 闸门放在**执行之前**（而不是执行完之后）。两种写法在"逐步前进"时完全等价，
     //   但"先闸门"让循环可以从任意一步恢复：用户从已结束的状态点「上一步」时，
     //   重新起一个循环并 parkImmediately=true，就会先停在闸门上而不会立刻执行。
@@ -798,14 +802,6 @@ window.SceneBridge = (function () {
 
     while (qIndex < queue.length) {
       if (dead()) return { executed, failed, aborted: true };
-      // 只在自动连播下计时：手动模式里用户想停多久都行，
-      // 拿时钟卡它会把队列无故丢掉
-      if (!manual && performance.now() - t0 > MAX_TOTAL_MS) {
-        const drop = queue.length - qIndex;
-        queue = []; qIndex = 0; playing = false;
-        emitProgress({ phase: 'done', total: qTotal, timeout: true });
-        return { executed, failed, aborted: false, timeout: true, dropped: drop };
-      }
 
       // ★ `&& manual` 这个判断不能少：自动连播时**绝不能**进闸门，
       //   否则第二步就会停在那里永远等一个没人会点的「下一步」——整个演示挂死。

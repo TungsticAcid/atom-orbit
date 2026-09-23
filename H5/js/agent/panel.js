@@ -712,7 +712,7 @@ window.Panel = (function () {
     demoBar.classList.remove('hidden');
     setBarMode('done');
     demoPrev.disabled = !(evt.canPrev !== false && evt.total > 0);
-    demoIdx.textContent = evt.timeout ? '演示中断（超出时长上限）' : '演示完成';
+    demoIdx.textContent = '演示完成';
     demoText.textContent = '共 ' + ((evt && evt.total) || 0) + ' 步 · 可重新演示，或退回去重看某一步';
     demoText.classList.add('muted');
   }
