@@ -890,7 +890,11 @@ window.Orbit3D = (function () {
       soup.getIndex().array
     );
     const nv = welded.positions.length / 3;
-    if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 2);
+    // ★ 这里**刻意不做 Taubin 平滑**（粗网格那一步要做）。
+    //   平滑的作用尺度正比于网格间距：粗网格 0.82a₀ 间距下 2 轮只抹掉行进四面体的
+    //   锯齿（正是设计意图），但细网格是 0.11a₀ 间距，同样 2 轮会抹平 0.2a₀ 尺度的
+    //   东西 —— 那恰好就是细颈的尺寸，于是真实的喇叭口被抹成弯月面（"像有表面张力"、
+    //   曲率符号翻转）。而细网格的锯齿在正常缩放下不到 1 像素，本来也不需要平滑。
     fineObj = meshFromWelded(welded);
     scene.add(fineObj);
     return { verts: nv, res: plan.res, radius: plan.radius, gap: plan.gap };
