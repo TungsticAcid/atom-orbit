@@ -364,17 +364,19 @@ window.Orbit3D = (function () {
    * 的格距会相差 3 倍——格距过粗时，节面附近两瓣之间约 1 a₀ 的缝只有一两个格子宽，
    * 行进算法无法分辨，会把两瓣连成一体并被切出"平底贴合"的丑陋形状。
    */
-  function computeField(n, l, m, mode, res, level, terms, relPhase) {
+  function computeField(n, l, m, mode, res, level, terms, relPhase, extentOverride) {
     const iso = (level > 0) ? level : 0;
     // 叠加态：范围取各分量外延的最大值；否则按单一本征态
     const useSuper = !!(terms && terms.length);
-    const extent = useSuper
-      ? Math.max(
+    const extent = (extentOverride > 0)
+      ? extentOverride            // 局部精细化的细网格：盒子必须正好等于节点球半径
+      : (useSuper
+        ? Math.max(
           OM.superpositionRefExtent(terms) * 1.15,          // 取景基准（与阈值无关，保证常见阈值下盒子稳定）
           OM.superpositionIsoRadius(terms, iso) * 1.12,     // ★ 还要装得下当前阈值对应的等值面
           //    （阈值越低面越大；少了这一项，低阈值下曲面会被盒子切出平边）
           1.5)
-      : Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2);
+        : Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2));
     nGrid = res;
     gridExtent = extent;
     const NN = nGrid * nGrid * nGrid;      // 节点总数
@@ -456,10 +458,35 @@ window.Orbit3D = (function () {
   }
 
   // 提取等值面，返回 BufferGeometry
-  function extractSurface(iso) {
+  /**
+   * 行进四面体抽取等值面。
+   *
+   * @param {number} iso          等值面的绝对值（|ψ|²）
+   * @param {number} [maskR]      >0 时启用球形掩膜（半径，世界单位）
+   * @param {boolean} [keepInside] true=只处理**整格都在球内**的单元；
+   *                              false=跳过这些单元（其余照常）。
+   *
+   * ★ 掩膜用来做"局部精细化"：粗网格跳过节点球内的单元，细网格只填球内。
+   *   两边的单元集合互斥且完整覆盖，因此两片曲面既不重叠也不留缝
+   *   （球面正好取在径向节点上，那里 |ψ|²=0、本来就没有曲面）。
+   *   判据取"单元里离原点最远的那个角"——整格都在球内 ⇔ 最远角在球内。
+   */
+  function extractSurface(iso, maskR, keepInside) {
     const n = nGrid;
     const n2 = n * n;
     const step = (2 * gridExtent) / (nGrid - 1);
+    // 掩膜：每个单元在各轴上"离原点最远的坐标绝对值"（三轴公式相同，共用一张表）
+    const useMask = maskR > 0;
+    const maskR2 = maskR * maskR;
+    let mxArr = null;
+    if (useMask) {
+      mxArr = new Float64Array(n);
+      for (let t = 0; t < n; t++) {
+        const a = Math.abs(-gridExtent + t * step);
+        const b = Math.abs(-gridExtent + (t + 1) * step);
+        mxArr[t] = Math.max(a, b);
+      }
+    }
 
     // ★ 性能关键：本函数在 68³ 网格上要处理约 1.8M 个四面体。
     //   原实现每个四面体都在 map / filter / findIndex 里分配数组，
@@ -510,9 +537,16 @@ window.Orbit3D = (function () {
 
     for (let k = 0; k < n - 1; k++) {
       const kBase = k * n2;
+      const kz2 = useMask ? mxArr[k] * mxArr[k] : 0;
       for (let j = 0; j < n - 1; j++) {
         const jBase = kBase + j * n;
+        const jy2 = useMask ? kz2 + mxArr[j] * mxArr[j] : 0;
         for (let i = 0; i < n - 1; i++) {
+          if (useMask) {
+            // 整格都在球内 ⇔ 离原点最远的那个角在球内
+            const inside = (jy2 + mxArr[i] * mxArr[i]) <= maskR2;
+            if (inside !== !!keepInside) continue;
+          }
           const p = jBase + i;
           // 8 个角点的全局 id：直接算，不再每格 map 一次
           cIds[0] = p;              cIds[1] = p + 1;
@@ -624,7 +658,11 @@ window.Orbit3D = (function () {
         //   叠加态"一调阈值体积就变 0"正是这么来的。
         computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs, P.terms, P.relPhase);
       }
-      rebuildSurface(false);   // 仅阈值/着色变化 → 相机不动
+      rebuildSurface(false);   // 仅阈值/着色变化：相机原则上不动
+      // ★ 但阈值低到曲面胀出当前取景时就必须拉远，否则曲面被裁。
+      //   fitViewIfNeeded 只在"尺度真的变了"时才动相机，故常见阈值区间
+      //   （≥30% 参考水平）仍是相机纹丝不动，只有往低调时才逐步拉远。
+      fitViewIfNeeded(currentFrameExtent(), lastDecorExtent);
     } else if (colorChanged && surfaceGeoRef) {
       paintSurfaceColors(surfaceGeoRef);
     }
@@ -744,17 +782,135 @@ window.Orbit3D = (function () {
     return { positions: new Float32Array(wp), normals: new Float32Array(wn), indices: win };
   }
 
+  /** 焊接平滑后的顶点 → 可渲染网格（着色 + 材质）。粗网格与精细化补片共用这一段，
+   *  两片的着色/材质必须完全一致，否则接缝处颜色会对不上。 */
+  function meshFromWelded(welded) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(welded.positions, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(welded.normals, 3));
+    g.setIndex(new THREE.BufferAttribute(welded.indices, 1));
+    g.computeBoundingSphere();
+    paintSurfaceColors(g);
+    const m = new THREE.MeshStandardMaterial({
+      color: 0xffffff, vertexColors: true, roughness: 0.5, metalness: 0.0, side: THREE.DoubleSide,
+    });
+    return new THREE.Mesh(g, m);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 局部精细化（细颈）
+  //
+  // 问题：单个均匀网格要同时装下 ~27a₀ 的外层瓣和 ~0.3a₀ 的窄缝。实测 4p 在 3.5%
+  // 阈值下，最内层壳的赤道缝隙只有 0.274 a₀，而单元格是 0.82 a₀ —— 缝隙比单元格
+  // 还小，网格根本分辨不出，于是把上下两瓣连成一个"花生"。放多大都救不了：把分辨
+  // 率翻倍只把缝隙从 1/3 格变成 2/3 格。
+  //
+  // 做法：**在径向节点球内换一张更细的网格**。
+  //   · 粗网格跳过"整格在节点球内"的单元，细网格只填这些单元 → 两边单元集合互斥
+  //     且完整覆盖，因此不重叠也不留缝；
+  //   · 球面正好取在径向节点上，那里 |ψ|²=0、本来就没有曲面 → **天然无接缝**。
+  //     （这就是不采用"只在切点附近挖个小盒"的原因：小盒边界会横穿曲面，
+  //       粗细两套网格在边界处不共形，会露出细缝。）
+  // ---------------------------------------------------------------------------
+  const FINE_RES_MAX = 112;      // 细网格分辨率上限（112³ ≈ 1.1M 节点 ≈ 18MB）
+  const FINE_SETTLE_MS = 450;    // 距上次重建小于此值视为"用户还在连续调整"
+  let fineObj = null;            // 精细化补出来的那块曲面
+  let lastRebuildAt = 0;
+  let fineRetryTimer = null;
+
+  /**
+   * 拖阈值时每一步都会重建，细网格要多花约 0.7 秒，连续拖动会明显发卡。
+   * 所以：**连续调整期间先跳过精细化，停下来后自动补一次**。
+   * 关键是"补一次"——否则跳过之后就再也没人触发重建，细网格永远不出现。
+   */
+  function scheduleFineRetry() {
+    if (fineRetryTimer) return;
+    fineRetryTimer = setTimeout(function () {
+      fineRetryTimer = null;
+      rebuildSurface(false);
+    }, FINE_SETTLE_MS + 70);
+  }
+
+  function disposeFine() {
+    if (!fineObj) return;
+    scene.remove(fineObj);
+    if (fineObj.geometry) fineObj.geometry.dispose();
+    if (fineObj.material) fineObj.material.dispose();
+    fineObj = null;
+  }
+
+  /**
+   * 判断是否需要局部精细化，并给出细网格的半径与分辨率；不需要则返回 null。
+   * 三个条件同时满足才启用，避免给普通情况白付开销：
+   *   ① 单一本征态（叠加态的外延估计是另一套，暂不处理）
+   *   ② l ≥ 1 且有径向节点——细颈由**角节面**造成，径向节点提供无接缝的分界面
+   *   ③ 细颈比粗网格单元格还窄——粗网格已经分得开就不必精细化
+   */
+  function planFinePatch(iso) {
+    if (window.__ORBIT_PREVIEW__) return null;                 // 拖动中不付这份开销
+    // 连续调整期间跳过（见 scheduleFineRetry）：先保证拖动跟手，停下来再补精细化
+    if (performance.now() - lastRebuildAt < FINE_SETTLE_MS) { scheduleFineRetry(); return null; }
+    const P = surfaceParams;
+    if (!P || (P.terms && P.terms.length)) return null;
+    if (P.l < 1 || P.n - P.l - 1 < 1) return null;
+    const zeros = OM.radialZeros(P.n, P.l);
+    if (!zeros.length) return null;
+    const radius = zeros[0];                                   // 最内层径向节点
+    const half = OM.isoNeckHalf(P.n, P.l, P.m, P.mode, iso, radius);
+    if (!isFinite(half) || !(half > 0)) return null;
+    const gap = 2 * half;
+    const cellCoarse = (2 * gridExtent) / (nGrid - 1);
+    if (gap > 2.5 * cellCoarse) return null;                   // 粗网格分得开，不必精细化
+    // 让缝隙跨约 2.5 个细单元格：盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap
+    let res = Math.ceil((5 * radius) / gap);
+    res = Math.min(Math.max(res, nGrid), FINE_RES_MAX);
+    return { radius: radius, res: res, gap: gap, cellCoarse: cellCoarse };
+  }
+
+  /** 在节点球内用更细的网格重算并抽取那块曲面（需在粗网格建好之后调用） */
+  function buildFinePatch(iso, plan) {
+    if (!plan) return null;
+    const P = surfaceParams;
+    // computeField / extractSurface 都读写模块级的那几个场量，这里先存后还原，
+    // 免得为了"再算一张网格"去把整条管线改成传参式（改动大、风险高）。
+    const saved = { field: field, gx: gradX, gy: gradY, gz: gradZ, n: nGrid, ext: gridExtent, mx: fieldMax };
+    let soup = null;
+    try {
+      computeField(P.n, P.l, P.m, P.mode, plan.res, iso, null, 0, plan.radius);
+      soup = extractSurface(iso, plan.radius, true);           // 只取整格在球内的单元
+    } finally {
+      field = saved.field; gradX = saved.gx; gradY = saved.gy; gradZ = saved.gz;
+      nGrid = saved.n; gridExtent = saved.ext; fieldMax = saved.mx;
+    }
+    if (!soup || !soup.getAttribute('position').count) return null;
+    const welded = weldTriangleSoup(
+      soup.getAttribute('position').array,
+      soup.getAttribute('normal').array,
+      soup.getIndex().array
+    );
+    const nv = welded.positions.length / 3;
+    if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 2);
+    fineObj = meshFromWelded(welded);
+    scene.add(fineObj);
+    return { verts: nv, res: plan.res, radius: plan.radius, gap: plan.gap };
+  }
+
   function rebuildSurface(refit) {
+    // 本次已在重建，作废排队中的那次"补精细化"重试
+    if (fineRetryTimer) { clearTimeout(fineRetryTimer); fineRetryTimer = null; }
     if (surfaceObj) {
       scene.remove(surfaceObj);
       surfaceObj.geometry.dispose();
       surfaceObj.material.dispose();
       surfaceObj = null;
     }
+    disposeFine();
     surfaceGeoRef = null;
     const __t0 = performance.now();
     const iso = Math.max(1e-9, surfaceLevelFraction * fieldMax);
-    const geo = extractSurface(iso);
+    // 先决定要不要精细化：粗网格抽取时就要跳过节点球内的单元
+    const finePlan = planFinePatch(iso);
+    const geo = extractSurface(iso, finePlan ? finePlan.radius : 0, false);
     if (!geo.getAttribute('position').count) {
       // ★ 抽出空面时也要留下现场：否则"体积为 0"这类问题连 fieldMax 是多少、
       //   阈值相对基准高出多少都看不到（下面那个探针在 return 之后，够不着）。
@@ -768,6 +924,7 @@ window.Orbit3D = (function () {
           terms: surfaceParams && surfaceParams.terms ? surfaceParams.terms.length : 0,
         };
       }
+      lastRebuildAt = performance.now();
       return;
     }
     const __tExtract = performance.now();
@@ -781,22 +938,12 @@ window.Orbit3D = (function () {
     if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 2);
     const __tWeld = performance.now();
 
-    const geo2 = new THREE.BufferGeometry();
-    geo2.setAttribute('position', new THREE.BufferAttribute(welded.positions, 3));
-    geo2.setAttribute('normal', new THREE.BufferAttribute(welded.normals, 3));
-    geo2.setIndex(new THREE.BufferAttribute(welded.indices, 1));
-    geo2.computeBoundingSphere();
-    paintSurfaceColors(geo2);          // 顶点着色（相位色 / 轨道色）
+    surfaceObj = meshFromWelded(welded);
+    const geo2 = surfaceObj.geometry;
     surfaceGeoRef = geo2;
 
-    // 基色置白，实际颜色全部来自顶点色；不透明实体 + 朝外梯度法线 → 平滑实心
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      roughness: 0.5,
-      metalness: 0.0,
-      side: THREE.DoubleSide,
-    });
+    // ★ 局部精细化：节点球内那一块改用更细的网格（粗网格已跳过球内单元）
+    const fineInfo = buildFinePatch(iso, finePlan);
     // 诊断探针：仅在 window.__ORBIT_DEBUG__ 为真时记录（默认关闭，不产生开销）。
     // 除耗时外还记下"这一次抽面用的是哪个场、什么阈值"——排查"曲面为空 / 尺寸异常
     // / 换了预设却没变"这类问题时，没有这些数字就只能靠猜。
@@ -829,10 +976,15 @@ window.Orbit3D = (function () {
           }
           return +(Math.max(mx, my, mz) / gridExtent).toFixed(3);
         })(),
+        // ---- 局部精细化 ----
+        fine: fineInfo
+          ? { 触发: true, 细网格: fineInfo.res + '³', 节点球半径: +fineInfo.radius.toFixed(3),
+              细颈缝隙: +fineInfo.gap.toFixed(3), 细网格顶点: fineInfo.verts }
+          : { 触发: false, 粗网格单元格: +((2 * gridExtent) / (nGrid - 1)).toFixed(3) },
       };
     }
-    surfaceObj = new THREE.Mesh(geo2, mat);
     scene.add(surfaceObj);
+    lastRebuildAt = performance.now();     // 供"是否还在连续调整"判断
     // ★ 只在"换轨道 / 复位"时重新取景；切换判据、阈值、渲染方式时相机保持不动
     if (refit) fitViewIfNeeded(currentFrameExtent(), frameExtentFor(surfaceParams));
   }
@@ -887,14 +1039,37 @@ window.Orbit3D = (function () {
     return Math.max(refExtentFor(P) * 1.25, 1.5);
   }
 
-  /** 由当前应用状态取"本轨道"的取景尺度（供粒子云与等值面共用） */
+  /**
+   * 由当前应用状态取"本轨道"的取景尺度（供粒子云与等值面共用）。
+   *
+   * ★ 取景必须同时容纳两件事：
+   *   ① **与阈值无关的基准尺度**（frameExtentFor，按 30% 参考水平算）——
+   *      保证在常见阈值区间里切换阈值时相机不动，便于对照比较；
+   *   ② **当前阈值实际需要的尺度**——阈值越低等值面越大。少了这一项，
+   *      把阈值调低时曲面会胀出画面被裁掉（3p 在 10% 时曲面半径约 12a₀，
+   *      而基准取景半径只有 5.4a₀，胀出 2.2 倍）。
+   *   两项取大值 ⇒ 常见区间行为不变，低于基准水平时才逐步拉远。
+   */
   function currentFrameExtent() {
     const S = (window.OrbitApp && window.OrbitApp.getState()) || null;
     if (!S) return Math.max(gridExtent, 1.5);
-    if (S.terms && S.terms.length) {
-      return Math.max(OM.superpositionRefExtent(S.terms) * 1.25, 1.5);
-    }
-    return frameExtentFor({ n: S.n, l: S.l, m: S.m, mode: S.wavefunction, psiCrit: S.psiCriterion, terms: null });
+    const base = S.terms && S.terms.length
+      ? Math.max(OM.superpositionRefExtent(S.terms) * 1.25, 1.5)
+      : frameExtentFor({ n: S.n, l: S.l, m: S.m, mode: S.wavefunction, psiCrit: S.psiCriterion, terms: null });
+    const levelAbs = levelAbsFor(
+      { n: S.n, l: S.l, m: S.m, mode: S.wavefunction, terms: S.terms },
+      S.levelFraction, S.psiCriterion);
+    const need = frameExtentForLevel(
+      { n: S.n, l: S.l, m: S.m, mode: S.wavefunction, terms: S.terms }, levelAbs);
+    return Math.max(base, need);
+  }
+
+  /** 按"给定绝对阈值"取景的尺度（与 frameExtentFor 同构，只把基准换成实际阈值） */
+  function frameExtentForLevel(P, levelAbs) {
+    const r = (P.terms && P.terms.length)
+      ? OM.superpositionIsoRadius(P.terms, levelAbs)
+      : OM.isoRadius(P.n, P.l, P.m, P.mode, levelAbs);
+    return Math.max(r * 1.12 * 1.25, 1.5);      // 与 refExtentFor × frameExtentFor 的系数保持一致
   }
 
   let currentL = 0;
@@ -990,6 +1165,7 @@ window.Orbit3D = (function () {
   }
   function disposeGrid() {           // 释放等值面缓存的标量场
     field = null; gradX = gradY = gradZ = null; nGrid = 0;
+    disposeFine();                   // 精细化补片同样依赖这个场，一并清掉
   }
 
   // ---------------------------------------------------------------------------

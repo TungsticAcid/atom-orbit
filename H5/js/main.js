@@ -14,7 +14,11 @@
     mode: 'real',            // 'real' | 'complex'
     renderMode: 'surface',   // 'points' | 'surface'（默认等值面）
     colorMode: 'orbital',    // 三维着色：'orbital' 轨道色 | 'phase' 相位色
-    level: 0.30,             // 等值面阈值（占峰值的比值；默认使 p 轨道两瓣明显分离）
+    level: 0.10,             // 等值面阈值（占峰值的比值）
+    // ★ 默认 10% 而不是 30%：径向节点会把等值面切成多层壳，而**外层壳的峰值
+    //   往往很低**（3p 的外层壳只有全局峰值的 11.9%）——按 30% 取阈值时外层壳
+    //   整体落到阈值以下、直接消失，看起来"3p 只有两瓣"。取 10% 才能把多层壳
+    //   都显示出来。注意取景已相应改为"同时装得下当前阈值"，否则低阈值会胀出画面。
     psiCrit: 'psi2',         // 等值面判据：'psi2' 按 |ψ|² 计 | 'psi' 按 |ψ| 计
     pointCount: 50000,
     plane: 'xz',             // 截面平面
@@ -34,8 +38,8 @@
     nSlider: $('#nSlider'), nInput: $('#nInput'),
     lSlider: $('#lSlider'), lInput: $('#lInput'),
     mSlider: $('#mSlider'), mInput: $('#mInput'),
-    levelSlider: $('#levelSlider'), levelVal: $('#levelVal'), levelSet: $('#levelSet'), psiHint: $('#psiHint'),
-    pointCountSlider: $('#pointCountSlider'), pointCountVal: $('#pointCountVal'), pointSet: $('#pointSet'),
+    levelSlider: $('#levelSlider'), levelInput: $('#levelInput'), levelSet: $('#levelSet'), psiHint: $('#psiHint'),
+    pointCountSlider: $('#pointCountSlider'), pointCountInput: $('#pointCountInput'), pointSet: $('#pointSet'),
     angularView: $('#angularView'),
     orbitTitle: $('#orbitTitle'), modeBadge: $('#modeBadge'),
     formulaTitle: $('#formulaTitle'), formulaBox: $('#formulaBox'), formulaNote: $('#formulaNote'),
@@ -63,7 +67,6 @@
       recompute();
     });
   }
-  const fmtCount = (x) => x >= 10000 ? (x / 10000).toFixed(1).replace(/\.0$/, '') + ' 万' : '' + x;
 
   // ---- 从控件读取（并夹紧） -------------------------------------------------
   // 同步依赖滑块的范围：l 上限随 n，m 范围随 l；超界立即夹紧。
@@ -126,13 +129,56 @@
   }
 
   function updateOutputs() {
-    els.levelVal.textContent = (state.level * 100).toFixed(1) + '%';
-    els.pointCountVal.textContent = fmtCount(state.pointCount);
+    // 数字框只是滑块的"另一种呈现"：每次重算都同步一次，智能体通过动作改了
+    // 阈值/粒子数时输入框也会跟着走（正在输入的那只不覆盖，否则会打断键入）。
+    syncNumBox(els.levelInput, state.level * 100);
+    syncNumBox(els.pointCountInput, state.pointCount / 10000);
     // 提示两种判据的换算：|ψ| = f ⟺ |ψ|² = f²（故同一读数下 |ψ| 判据得到更大的面）
     const f = state.level;
     els.psiHint.textContent = (state.psiCrit === 'psi2')
       ? '阈值＝占 |ψ|² 峰值的比例（' + (f * 100).toFixed(1) + '% |ψ|² ⟺ ' + (Math.sqrt(f) * 100).toFixed(1) + '% |ψ|）'
       : '阈值＝占 |ψ| 峰值的比例（' + (f * 100).toFixed(1) + '% |ψ| ⟺ ' + (f * f * 100).toFixed(1) + '% |ψ|²）';
+  }
+
+  /** 把数值写回数字框（正整数一位小数足够：阈值步长 0.5%、粒子数步长 0.1 万） */
+  function syncNumBox(el, v) {
+    if (!el || document.activeElement === el) return;
+    const s = String(Math.round(v * 10) / 10);
+    if (el.value !== s) el.value = s;
+  }
+
+  /**
+   * 把数字框绑到滑块上（lo/hi 是**数字框**的单位，换算函数负责两个方向）。
+   *
+   * ★ 与量子数不同，这两个量键入时必须**防抖**：改阈值会触发等值面重建（约 250ms），
+   *   逐字符重建会让输入卡顿；改粒子数则要重采样数万个点。所以键入中只防抖重算，
+   *   回车/失焦立即提交。
+   */
+  function bindNumToSlider(input, slider, toSlider, lo, hi) {
+    if (!input || !slider) return;
+    const valid = () => {
+      const raw = input.value.trim();
+      const v = Number(raw);
+      if (raw === '' || !Number.isFinite(v) || v < lo || v > hi) { input.classList.add('invalid'); return null; }
+      input.classList.remove('invalid');
+      return v;
+    };
+    input.addEventListener('input', () => {
+      const v = valid();
+      if (v == null) return;
+      setSlider(slider, toSlider(v));
+      scheduleUpdate();                    // 键入中：防抖
+    });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      const v = valid();
+      if (v != null) { setSlider(slider, toSlider(v)); scheduleUpdate(0); }
+      input.blur();
+    });
+    input.addEventListener('blur', () => {
+      const v = valid();
+      if (v != null) { setSlider(slider, toSlider(v)); scheduleUpdate(0); }
+    });
   }
 
   // ---- 主重算 ---------------------------------------------------------------
@@ -228,7 +274,10 @@
     numBind(els.nInput, 'n');
     numBind(els.lInput, 'l');
     numBind(els.mInput, 'm');
-    // 等值阈值 / 粒子数
+    // 等值阈值 / 粒子数：滑块仍是真值来源，数字框用更贴近显示的"人类单位"
+    // （百分比 / 万），换算在绑定时给。
+    bindNumToSlider(els.levelInput, els.levelSlider, (v) => v / 100, 0.5, 80);
+    bindNumToSlider(els.pointCountInput, els.pointCountSlider, (v) => v * 10000, 0.8, 8);
     els.levelSlider.addEventListener('input', () => scheduleUpdate());
     els.pointCountSlider.addEventListener('input', () => scheduleUpdate());
     // 单选分段

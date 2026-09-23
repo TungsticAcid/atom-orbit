@@ -427,6 +427,39 @@ window.OM = (function () {
     return Math.max(rOuter, 0.5);
   }
   /**
+   * 等值面"细颈"的半宽 —— 等值面离**角节面**的最近距离。
+   *
+   * 用途：判断曲面是否出现了网格分辨不出的窄缝。例：4p 在 3.5% 阈值下，最内层壳
+   * 上下两瓣在核附近只隔 0.274 a₀，而网格单元格就有 0.82 a₀ —— 缝隙比单元格还小，
+   * 网格必然把两瓣连成一个"花生"。有这个量才能**提前判断**该不该上细网格。
+   *
+   * 推导：|ψ|² = R(r)²·|Y|² ≥ level ⇒ |Y| ≥ √level/|R(r)|。
+   * 角节面上 |Y| = 0；而"离节面多远"这个几何量正比于 r（角节面都过原点：锥面是
+   * θ=常数、平面是 φ=常数，到原点的距离都随 r 线性增长），于是
+   *   最近距离 = (√level / Ymax) · min_r ( r / |R(r)| )。
+   *
+   * ★ 这是**下界**（推导里对角度取了最宽松的取值），偏保守：宁可多触发一次精细化，
+   *   也不要把真正需要精细化的情况漏掉。
+   * l = 0 没有角节面 → 不存在细颈，返回 Infinity。
+   */
+  function isoNeckHalf(n, l, m, mode, level, rMax) {
+    if (l < 1 || !(level > 0)) return Infinity;
+    const Ymax = Math.sqrt(Math.max(0, samplingAngleMax(l, m, mode || 'real')));
+    if (!(Ymax > 0)) return Infinity;
+    let best = Infinity;
+    const steps = 600;
+    for (let i = 1; i <= steps; i++) {
+      const r = (rMax * i) / steps;
+      const R = Math.abs(radialR(n, l, r));
+      if (R < 1e-12) continue;
+      const v = r / R;
+      if (v < best) best = v;
+    }
+    if (!isFinite(best)) return Infinity;
+    return (Math.sqrt(level) / Ymax) * best;
+  }
+
+  /**
    * 径向节点半径 —— 即 R_{n,l}(r) = 0 的 r 值（个数应为 n-l-1）。
    * 用变号扫描 + 二分细化求根（对多项式×指数形式足够精确）。
    */
@@ -807,6 +840,7 @@ window.OM = (function () {
     lColor, phaseColor, phaseColorFor, hslToRgb,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
+    isoNeckHalf,
     makeRadialLUT, makePsiDensityFast,
     psiSuperposition, densitySuperposition, isStationary, superpositionExtent,
     maxDensitySuperposition, superpositionRefPeak, superpositionRefExtent,

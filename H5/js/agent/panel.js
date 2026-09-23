@@ -330,6 +330,22 @@ window.Panel = (function () {
   // ---------------------------------------------------------------------------
   // 开合
   // ---------------------------------------------------------------------------
+  /**
+   * 抽屉开合会改变主布局宽度（padding-right 过渡 .24s）。
+   *
+   * 主画布与角度分布画布都有 ResizeObserver，会自己跟上；但径向/截面是**手绘
+   * Canvas**——它们只在下次绘制时才按 clientWidth 重设位图尺寸。不触发重绘的话，
+   * 位图还是旧宽度，被 CSS 缩放显示 → 看着发虚。这里复用主控制器已有的
+   * window resize 通路（它会 resize 三维并重绘全部图表）。
+   */
+  function redrawChartsAfterLayout() {
+    clearTimeout(layoutRedrawTimer);
+    layoutRedrawTimer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 280);                              // 略大于 240ms 的过渡时长
+  }
+  let layoutRedrawTimer = null;
+
   function open(opts) {
     drawer.classList.add('show');
     // ★ 让主布局向左压缩，而不是把右侧控制面板盖住
@@ -337,10 +353,12 @@ window.Panel = (function () {
     dot.classList.remove('show');
     // 由演示自动唤出时不要抢焦点——学生此刻的注意力在三维视图上
     if (!opts || opts.focus !== false) inputEl.focus();
+    redrawChartsAfterLayout();
   }
   function close() {
     drawer.classList.remove('show');
     document.body.classList.remove('agent-open');
+    redrawChartsAfterLayout();
   }
   function toggle() { drawer.classList.contains('show') ? close() : open(); }
   function markUnread() { if (!drawer.classList.contains('show')) dot.classList.add('show'); }
