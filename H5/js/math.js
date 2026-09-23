@@ -460,6 +460,41 @@ window.OM = (function () {
   }
 
   /**
+   * 两层壳之间的"空档半径" —— 半径等于该值的球面上**一定没有等值面**。
+   *
+   * 用途：局部精细化需要把粗/细两张网格分开，而分界球面若被曲面穿过，两套网格就会
+   * 在交界处各画一遍（重叠、z-fighting、碎三角片）。放在一个"必然无曲面"的球面上
+   * 才能保证既不重叠也不留缝。
+   *
+   * 依据：|ψ|² = R(r)²·|Y|² ≤ R(r)²·Ymax²，故
+   *   {|ψ|² ≥ level} ⊆ { R(r)²·Ymax² ≥ level }
+   * 后者沿 r 是一串区间（每层径向壳一个）。取第 1、2 个区间之间的中点即可 ——
+   * 在那一整个区间里对所有角度都有 |ψ|² < level。
+   *
+   * ★ 这一步是**严格**的（不依赖任何估计）：区间之外 |ψ|² 必然低于阈值。
+   * 只有一层壳（没有第二个区间）时返回 0，表示"无法分层"。
+   */
+  function shellGapRadius(n, l, m, mode, level) {
+    if (!(level > 0)) return 0;
+    const Ymax2 = samplingAngleMax(l, m, mode || 'real');
+    if (!(Ymax2 > 0)) return 0;
+    const scanMax = 2 * n * n + 14;
+    const steps = 2000;
+    const bands = [];
+    let start = -1;
+    for (let i = 0; i <= steps; i++) {
+      const r = (scanMax * i) / steps;
+      const R = radialR(n, l, r);
+      const ok = R * R * Ymax2 >= level;
+      if (ok && start < 0) start = r;
+      else if (!ok && start >= 0) { bands.push({ from: start, to: r }); start = -1; }
+    }
+    if (start >= 0) bands.push({ from: start, to: scanMax });
+    if (bands.length < 2) return 0;
+    return (bands[0].to + bands[1].from) / 2;
+  }
+
+  /**
    * 径向节点半径 —— 即 R_{n,l}(r) = 0 的 r 值（个数应为 n-l-1）。
    * 用变号扫描 + 二分细化求根（对多项式×指数形式足够精确）。
    */
@@ -840,7 +875,7 @@ window.OM = (function () {
     lColor, phaseColor, phaseColorFor, hslToRgb,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
-    isoNeckHalf,
+    isoNeckHalf, shellGapRadius,
     makeRadialLUT, makePsiDensityFast,
     psiSuperposition, densitySuperposition, isStationary, superpositionExtent,
     maxDensitySuperposition, superpositionRefPeak, superpositionRefExtent,

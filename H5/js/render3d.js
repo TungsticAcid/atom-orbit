@@ -475,17 +475,15 @@ window.Orbit3D = (function () {
     const n = nGrid;
     const n2 = n * n;
     const step = (2 * gridExtent) / (nGrid - 1);
-    // 掩膜：每个单元在各轴上"离原点最远的坐标绝对值"（三轴公式相同，共用一张表）
+    // 掩膜：每个单元**中心**在各轴上离原点的距离（三轴公式相同，共用一张表）。
+    // ★ 用单元中心而不是"最远的角"：用最远的角会把跨界单元整格推给粗网格，
+    //   而那些单元里含有内层壳的曲面 → 细网格又画一遍 → 重叠出碎三角片。
     const useMask = maskR > 0;
     const maskR2 = maskR * maskR;
-    let mxArr = null;
+    let cArr = null;
     if (useMask) {
-      mxArr = new Float64Array(n);
-      for (let t = 0; t < n; t++) {
-        const a = Math.abs(-gridExtent + t * step);
-        const b = Math.abs(-gridExtent + (t + 1) * step);
-        mxArr[t] = Math.max(a, b);
-      }
+      cArr = new Float64Array(n);
+      for (let t = 0; t < n; t++) cArr[t] = Math.abs(-gridExtent + (t + 0.5) * step);
     }
 
     // ★ 性能关键：本函数在 68³ 网格上要处理约 1.8M 个四面体。
@@ -537,14 +535,14 @@ window.Orbit3D = (function () {
 
     for (let k = 0; k < n - 1; k++) {
       const kBase = k * n2;
-      const kz2 = useMask ? mxArr[k] * mxArr[k] : 0;
+      const kz2 = useMask ? cArr[k] * cArr[k] : 0;
       for (let j = 0; j < n - 1; j++) {
         const jBase = kBase + j * n;
-        const jy2 = useMask ? kz2 + mxArr[j] * mxArr[j] : 0;
+        const jy2 = useMask ? kz2 + cArr[j] * cArr[j] : 0;
         for (let i = 0; i < n - 1; i++) {
           if (useMask) {
-            // 整格都在球内 ⇔ 离原点最远的那个角在球内
-            const inside = (jy2 + mxArr[i] * mxArr[i]) <= maskR2;
+            // 单元中心在球内 ⇔ 归细网格；否则归粗网格（两边互斥且完整覆盖）
+            const inside = (jy2 + cArr[i] * cArr[i]) <= maskR2;
             if (inside !== !!keepInside) continue;
           }
           const p = jBase + i;
@@ -853,9 +851,12 @@ window.Orbit3D = (function () {
     const P = surfaceParams;
     if (!P || (P.terms && P.terms.length)) return null;
     if (P.l < 1 || P.n - P.l - 1 < 1) return null;
-    const zeros = OM.radialZeros(P.n, P.l);
-    if (!zeros.length) return null;
-    const radius = zeros[0];                                   // 最内层径向节点
+    // ★ 分界球面必须落在"两层壳之间**必然**没有曲面"的位置（见 shellGapRadius 的推导），
+    //   否则两套网格会在交界处各画一遍 → 重叠、z-fighting、碎三角片。
+    //   放在径向节点上也**不行**：节点虽然 |ψ|²=0，但两侧的曲面都贴着它，跨界的单元
+    //   里照样含曲面。
+    const radius = OM.shellGapRadius(P.n, P.l, P.m, P.mode, iso);
+    if (!(radius > 0)) return null;                            // 只有一层壳 → 无需分层
     const half = OM.isoNeckHalf(P.n, P.l, P.m, P.mode, iso, radius);
     if (!isFinite(half) || !(half > 0)) return null;
     const gap = 2 * half;
