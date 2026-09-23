@@ -220,6 +220,24 @@ window.Orbit3D = (function () {
   // 标量场（由 grid 节点构成），缓存以便调整阈值时不必重算 |ψ|²
   let field = null, gradX = null, gradY = null, gradZ = null;
   let nGrid = 0, gridExtent = 0, fieldMax = 0;
+  // 当前标量场各轴节点的坐标。均匀网格时三轴相同且等距；局部精细化的细网格用
+  // **径向渐变**（核附近密、往外稀）—— 单靠提高分辨率救不了细颈：
+  // 缝隙 0.24a₀ 要在 5.66a₀ 半径的盒子里跨 4 个单元格，均匀网格需要 ~190³ ≈ 108MB。
+  let gridXs = null;
+
+  /**
+   * 生成一维节点坐标。
+   * @param {number} a 0 = 均匀；>0 时用 x = L(a·u + (1−a)·u³)（u∈[−1,1]），
+   *                   u³ 项把节点往中心拉 → 核附近单元格更小，总节点数不变
+   */
+  function makeAxisCoords(n, L, a) {
+    const xs = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const u = -1 + (2 * i) / (n - 1);
+      xs[i] = (a > 0) ? L * (a * u + (1 - a) * u * u * u) : -L + (2 * L * i) / (n - 1);
+    }
+    return xs;
+  }
   let surfaceLevelFraction = 0.08;
 
   // 取景留白系数：需要容纳的半尺寸 = 轨道取景尺度 × FIT_MARGIN。
@@ -364,7 +382,7 @@ window.Orbit3D = (function () {
    * 的格距会相差 3 倍——格距过粗时，节面附近两瓣之间约 1 a₀ 的缝只有一两个格子宽，
    * 行进算法无法分辨，会把两瓣连成一体并被切出"平底贴合"的丑陋形状。
    */
-  function computeField(n, l, m, mode, res, level, terms, relPhase, extentOverride) {
+  function computeField(n, l, m, mode, res, level, terms, relPhase, extentOverride, grading) {
     const iso = (level > 0) ? level : 0;
     // 叠加态：范围取各分量外延的最大值；否则按单一本征态
     const useSuper = !!(terms && terms.length);
@@ -383,7 +401,6 @@ window.Orbit3D = (function () {
     field = new Float32Array(NN);
     gradX = new Float32Array(NN); gradY = new Float32Array(NN); gradZ = new Float32Array(NN);
 
-    const step = (2 * extent) / (nGrid - 1);
     let maxVal = 0;
 
     // ★ 性能：|ψ|² 的主力开销是径向部分（pow + exp + 拉盖尔递推）。
@@ -395,8 +412,8 @@ window.Orbit3D = (function () {
           return function (r, theta, phi) { return OM.densitySuperposition(terms, r, theta, phi, phases); };
         })()
       : OM.makePsiDensityFast(n, l, m, mode, extent * 1.8);
-    const xs = new Float64Array(nGrid);
-    for (let i = 0; i < nGrid; i++) xs[i] = -extent + i * step;
+    const xs = makeAxisCoords(nGrid, extent, grading || 0);
+    gridXs = xs;
 
     for (let k = 0; k < nGrid; k++) {
       const z = xs[k];
@@ -418,13 +435,19 @@ window.Orbit3D = (function () {
       }
     }
     fieldMax = maxVal;
-    computeGradient(step);
+    computeGradient();
     return { maxVal: maxVal, extent: extent };
   }
 
   // 节点梯度：中心差由 field 数组读取（无需额外 psi 计算）
-  function computeGradient(step) {
+  /**
+   * 由标量场算 ∇|ψ|²（取反 → 朝外法线）。
+   * ★ 分母用**实际坐标差**而不是 (i1−i0)·step：细网格用径向渐变，节点间距不等，
+   *   沿用均匀间距会让法线在各轴上的权重不一致（法线歪掉 → 光照看出条纹）。
+   */
+  function computeGradient() {
     const n = nGrid;
+    const X = gridXs;
     const idx = (i, j, k) => k * n * n + j * n + i;
     for (let k = 0; k < n; k++) {
       for (let j = 0; j < n; j++) {
@@ -434,27 +457,12 @@ window.Orbit3D = (function () {
           const j0 = Math.max(0, j - 1), j1 = Math.min(n - 1, j + 1);
           const k0 = Math.max(0, k - 1), k1 = Math.min(n - 1, k + 1);
           // 取反：∇|ψ|² 指向密度增大方向（对成键轨道朝核内），法线应为朝外 → 负梯度
-          gradX[id] = (field[idx(i0, j, k)] - field[idx(i1, j, k)]) / ((i1 - i0) * step);
-          gradY[id] = (field[idx(i, j0, k)] - field[idx(i, j1, k)]) / ((j1 - j0) * step);
-          gradZ[id] = (field[idx(i, j, k0)] - field[idx(i, j, k1)]) / ((k1 - k0) * step);
+          gradX[id] = (field[idx(i0, j, k)] - field[idx(i1, j, k)]) / (X[i1] - X[i0]);
+          gradY[id] = (field[idx(i, j0, k)] - field[idx(i, j1, k)]) / (X[j1] - X[j0]);
+          gradZ[id] = (field[idx(i, j, k0)] - field[idx(i, j, k1)]) / (X[k1] - X[k0]);
         }
       }
     }
-  }
-
-  // 节点 id -> [x,y,z]
-  function nodeCoord(id) {
-    const n = nGrid;
-    const k = Math.floor(id / (n * n));
-    const rem = id - k * n * n;
-    const j = Math.floor(rem / n);
-    const i = rem - j * n;
-    const step = (2 * gridExtent) / (nGrid - 1);
-    return [
-      -gridExtent + i * step,
-      -gridExtent + j * step,
-      -gridExtent + k * step,
-    ];
   }
 
   // 提取等值面，返回 BufferGeometry
@@ -474,7 +482,7 @@ window.Orbit3D = (function () {
   function extractSurface(iso, maskR, keepInside) {
     const n = nGrid;
     const n2 = n * n;
-    const step = (2 * gridExtent) / (nGrid - 1);
+    const X = gridXs;                  // 节点坐标（均匀或径向渐变）
     // 掩膜：每个单元**中心**在各轴上离原点的距离（三轴公式相同，共用一张表）。
     // ★ 用单元中心而不是"最远的角"：用最远的角会把跨界单元整格推给粗网格，
     //   而那些单元里含有内层壳的曲面 → 细网格又画一遍 → 重叠出碎三角片。
@@ -483,7 +491,7 @@ window.Orbit3D = (function () {
     let cArr = null;
     if (useMask) {
       cArr = new Float64Array(n);
-      for (let t = 0; t < n; t++) cArr[t] = Math.abs(-gridExtent + (t + 0.5) * step);
+      for (let t = 0; t < n; t++) cArr[t] = Math.abs((X[t] + X[t + 1]) / 2);
     }
 
     // ★ 性能关键：本函数在 68³ 网格上要处理约 1.8M 个四面体。
@@ -503,8 +511,8 @@ window.Orbit3D = (function () {
 
       const ka = (idA / n2) | 0, ra = idA - ka * n2, ja = (ra / n) | 0, ia = ra - ja * n;
       const kb = (idB / n2) | 0, rb = idB - kb * n2, jb = (rb / n) | 0, ib = rb - jb * n;
-      const ax = -gridExtent + ia * step, ay = -gridExtent + ja * step, az = -gridExtent + ka * step;
-      const bx = -gridExtent + ib * step, by = -gridExtent + jb * step, bz = -gridExtent + kb * step;
+      const ax = X[ia], ay = X[ja], az = X[ka];
+      const bx = X[ib], by = X[jb], bz = X[kb];
 
       const gi = positions.length / 3;
       positions.push(ax + t * (bx - ax), ay + t * (by - ay), az + t * (bz - az));
@@ -863,9 +871,16 @@ window.Orbit3D = (function () {
     const cellCoarse = (2 * gridExtent) / (nGrid - 1);
     if (gap > 2.5 * cellCoarse) return null;                   // 粗网格分得开，不必精细化
     // 让缝隙跨约 2.5 个细单元格：盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap
+    // 让缝隙跨约 2.5 个细单元格：盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap
     let res = Math.ceil((5 * radius) / gap);
     res = Math.min(Math.max(res, nGrid), FINE_RES_MAX);
-    return { radius: radius, res: res, gap: gap, cellCoarse: cellCoarse };
+    // ★ 细网格用**径向渐变**坐标。缝隙要跨 ~4 个单元格才不会被焊在一起：
+    //   均匀网格在半径 radius 的盒子里做到这点需要 res ≈ 4·2·radius/gap ≈ 190³（≈108MB）；
+    //   渐变后同样的节点数足以把核附近的单元格压到 gap/4。
+    //   x = L(a·u + (1−a)u³) 在 u=0 处的间距 = L·a·du，由此反解 a。
+    const du = 2 / (res - 1);
+    const grade = Math.max(0.15, Math.min(1, (gap / 4) / (radius * du)));
+    return { radius: radius, res: res, gap: gap, cellCoarse: cellCoarse, grade: grade };
   }
 
   /** 在节点球内用更细的网格重算并抽取那块曲面（需在粗网格建好之后调用） */
@@ -874,14 +889,18 @@ window.Orbit3D = (function () {
     const P = surfaceParams;
     // computeField / extractSurface 都读写模块级的那几个场量，这里先存后还原，
     // 免得为了"再算一张网格"去把整条管线改成传参式（改动大、风险高）。
-    const saved = { field: field, gx: gradX, gy: gradY, gz: gradZ, n: nGrid, ext: gridExtent, mx: fieldMax };
+    const saved = { field: field, gx: gradX, gy: gradY, gz: gradZ,
+      n: nGrid, ext: gridExtent, mx: fieldMax, xs: gridXs };
     let soup = null;
     try {
-      computeField(P.n, P.l, P.m, P.mode, plan.res, iso, null, 0, plan.radius);
-      soup = extractSurface(iso, plan.radius, true);           // 只取整格在球内的单元
+      computeField(P.n, P.l, P.m, P.mode, plan.res, iso, null, 0, plan.radius, plan.grade);
+      soup = extractSurface(iso, plan.radius, true);           // 只取中心在球内的单元
     } finally {
       field = saved.field; gradX = saved.gx; gradY = saved.gy; gradZ = saved.gz;
       nGrid = saved.n; gridExtent = saved.ext; fieldMax = saved.mx;
+      // ★ gridXs 也必须还原：粗网格后续的抽取（如换阈值时复用缓存场）仍要用它。
+      //   漏了这一步，粗网格会用细网格的渐变坐标去解释自己的场 → 形状整体错乱。
+      gridXs = saved.xs;
     }
     if (!soup || !soup.getAttribute('position').count) return null;
     const welded = weldTriangleSoup(
@@ -897,7 +916,7 @@ window.Orbit3D = (function () {
     //   曲率符号翻转）。而细网格的锯齿在正常缩放下不到 1 像素，本来也不需要平滑。
     fineObj = meshFromWelded(welded);
     scene.add(fineObj);
-    return { verts: nv, res: plan.res, radius: plan.radius, gap: plan.gap };
+    return { verts: nv, res: plan.res, radius: plan.radius, gap: plan.gap, grade: plan.grade };
   }
 
   function rebuildSurface(refit) {
@@ -983,7 +1002,8 @@ window.Orbit3D = (function () {
         })(),
         // ---- 局部精细化 ----
         fine: fineInfo
-          ? { 触发: true, 细网格: fineInfo.res + '³', 节点球半径: +fineInfo.radius.toFixed(3),
+          ? { 触发: true, 细网格: fineInfo.res + '³', 渐变系数: fineInfo.grade,
+              节点球半径: +fineInfo.radius.toFixed(3),
               细颈缝隙: +fineInfo.gap.toFixed(3), 细网格顶点: fineInfo.verts }
           : { 触发: false, 粗网格单元格: +((2 * gridExtent) / (nGrid - 1)).toFixed(3) },
       };
