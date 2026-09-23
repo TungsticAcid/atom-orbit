@@ -674,7 +674,48 @@ window.OM = (function () {
   }
 
   /**
-   * 叠加态 |ψ|² 的峰值估计（粗网格扫描）。
+   * 叠加态在给定绝对阈值 level（|ψ|²）下的等值面外延半径 —— 用于定标量场的网格范围。
+   *
+   * 原理与 isoRadius 相同，只是把"单一分量"换成"叠加态的上界"：
+   *   |ψ|² = |Σ cᵢψᵢ|² ≤ ( Σ |cᵢ|·Rᵢ(r)·Ymaxᵢ )²  ≡ S(r)²
+   * （三角不等式。Rᵢ、Ymaxᵢ 分别是第 i 个分量的径向函数与球面最大角向值。）
+   * 于是沿 r 扫描 S(r) ≥ √level 的最外层交点即可。
+   *
+   * ★ 这是**严格上界**，用它定网格绝不会把曲面裁掉。
+   *   反过来，"各分量各自外延取最大"在叠加态里会**低估**——相长干涉会把密度
+   *   抬高，实际的等值面伸得比任何单个分量都远，低阈值下就会被网格盒子切出
+   *   平的边缘（这正是叠加态低阈值出现"平切面"的原因）。
+   */
+  function superpositionIsoRadius(terms, level) {
+    if (!terms || !terms.length) return 1.2;
+    if (!(level > 0)) return superpositionExtent(terms);
+    const need = Math.sqrt(level);
+    let nMax = 1;
+    const parts = terms.map(function (t) {
+      if (t.n > nMax) nMax = t.n;
+      return {
+        c: Math.sqrt(t.c.re * t.c.re + t.c.im * t.c.im),     // |cᵢ|
+        n: t.n, l: t.l,
+        y: Math.sqrt(Math.max(0, samplingAngleMax(t.l, t.m, t.mode || 'real'))),  // √(max|Y|²)
+      };
+    });
+    const scanMax = 2 * nMax * nMax + 14;
+    const steps = 900;
+    let rOuter = 0;
+    for (let i = 0; i <= steps; i++) {
+      const r = (scanMax * i) / steps;
+      let s = 0;
+      for (let k = 0; k < parts.length; k++) {
+        const p = parts[k];
+        s += p.c * Math.abs(radialR(p.n, p.l, r)) * p.y;
+      }
+      if (s >= need) rOuter = r;
+    }
+    return Math.max(rOuter, 0.5);
+  }
+
+  /**
+   * 叠加态的 |ψ|² 的峰值估计（粗网格扫描）。
    * 不能简单用各分量峰值之和——分量之间可能**相长干涉**，峰值会更高，
    * 也可能相消。扫描一遍最可靠（几千次求值，代价可忽略）。
    */
@@ -769,6 +810,7 @@ window.OM = (function () {
     makeRadialLUT, makePsiDensityFast,
     psiSuperposition, densitySuperposition, isStationary, superpositionExtent,
     maxDensitySuperposition, superpositionRefPeak, superpositionRefExtent,
+    superpositionIsoRadius,
     samplePointsSuperposition,
     SUBSHELL, SUBSHELL_COLOR,
   };

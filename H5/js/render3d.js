@@ -369,7 +369,11 @@ window.Orbit3D = (function () {
     // 叠加态：范围取各分量外延的最大值；否则按单一本征态
     const useSuper = !!(terms && terms.length);
     const extent = useSuper
-      ? Math.max(OM.superpositionRefExtent(terms) * 1.15, 1.5)   // 按等值面实际外延，而非渐近尾部
+      ? Math.max(
+          OM.superpositionRefExtent(terms) * 1.15,          // 取景基准（与阈值无关，保证常见阈值下盒子稳定）
+          OM.superpositionIsoRadius(terms, iso) * 1.12,     // ★ 还要装得下当前阈值对应的等值面
+          //    （阈值越低面越大；少了这一项，低阈值下曲面会被盒子切出平边）
+          1.5)
       : Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2);
     nGrid = res;
     gridExtent = extent;
@@ -600,9 +604,25 @@ window.Orbit3D = (function () {
       // 阈值变化会改变等值面外延：范围变化超过 12% 才重建标量场，
       // 否则复用已缓存的场（拖动阈值滑块时多数步都走这条路，保持流畅）
       const levelAbs = levelAbsFor(P, fraction, P.psiCrit);
-      const newExtent = Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, levelAbs) * 1.12, 1.2);
-      if (!surfaceObj || critChanged || Math.abs(newExtent - gridExtent) / gridExtent > 0.12) {
-        computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs);
+      // ★ 这里必须与 computeField 内部的取范围口径**完全一致**，否则判断的是 A 的尺寸、
+      //   重建的是 B 的盒子。两处不一致会同时造成两种故障：该重建时没重建（画面不动），
+      //   不该重建时重建（盒子跳变）。
+      const expectedExtent = (P.terms && P.terms.length)
+        ? Math.max(
+            OM.superpositionRefExtent(P.terms) * 1.15,
+            OM.superpositionIsoRadius(P.terms, levelAbs) * 1.12,
+            1.5)
+        : Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, levelAbs) * 1.12, 1.2);
+      // ★ 增长方向**不留容差**：盒子装不下曲面时，哪怕只差 3% 也会切出平边
+      //   （实测 5% 阈值下差 3.7% 就足以顶到盒边）。缩小方向才留 12% 容差，
+      //   避免阈值来回拖时盒子跟着抖。
+      const needGrow = expectedExtent > gridExtent;
+      const needShrink = expectedExtent < gridExtent * 0.88;
+      if (!surfaceObj || critChanged || needGrow || needShrink) {
+        // ★ terms / relPhase 必须一起传下去。漏了它们，computeField 会把叠加态当成
+        //   单一本征态重算 —— 盒子按单轨道定尺寸（可塌到 1.2 的下限）、内容也不是叠加态。
+        //   叠加态"一调阈值体积就变 0"正是这么来的。
+        computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs, P.terms, P.relPhase);
       }
       rebuildSurface(false);   // 仅阈值/着色变化 → 相机不动
     } else if (colorChanged && surfaceGeoRef) {
@@ -735,7 +755,21 @@ window.Orbit3D = (function () {
     const __t0 = performance.now();
     const iso = Math.max(1e-9, surfaceLevelFraction * fieldMax);
     const geo = extractSurface(iso);
-    if (!geo.getAttribute('position').count) return;
+    if (!geo.getAttribute('position').count) {
+      // ★ 抽出空面时也要留下现场：否则"体积为 0"这类问题连 fieldMax 是多少、
+      //   阈值相对基准高出多少都看不到（下面那个探针在 return 之后，够不着）。
+      if (window.__ORBIT_DEBUG__) {
+        window.__SURF_TIMING__ = {
+          empty: true, verts: 0, total: Math.round(performance.now() - __t0),
+          nGrid: nGrid, gridExtent: +gridExtent.toFixed(4),
+          fieldMax: +fieldMax.toFixed(8), fraction: +surfaceLevelFraction.toFixed(4),
+          isoAbs: +iso.toFixed(8),
+          refPeak: surfaceParams ? +levelAbsFor(surfaceParams, 1, surfaceParams.psiCrit).toFixed(8) : null,
+          terms: surfaceParams && surfaceParams.terms ? surfaceParams.terms.length : 0,
+        };
+      }
+      return;
+    }
     const __tExtract = performance.now();
     // 焊接 → 平滑（消除行进四面体的离散凹凸，轮廓更光滑）
     const welded = weldTriangleSoup(
@@ -763,7 +797,9 @@ window.Orbit3D = (function () {
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
-    // 性能探针：仅在 window.__ORBIT_DEBUG__ 为真时记录（默认关闭，不产生开销）
+    // 诊断探针：仅在 window.__ORBIT_DEBUG__ 为真时记录（默认关闭，不产生开销）。
+    // 除耗时外还记下"这一次抽面用的是哪个场、什么阈值"——排查"曲面为空 / 尺寸异常
+    // / 换了预设却没变"这类问题时，没有这些数字就只能靠猜。
     if (window.__ORBIT_DEBUG__) {
       window.__SURF_TIMING__ = {
         extract: Math.round(__tExtract - __t0),
@@ -771,6 +807,28 @@ window.Orbit3D = (function () {
         build: Math.round(performance.now() - __tWeld),
         total: Math.round(performance.now() - __t0),
         verts: geo2.getAttribute('position').count,
+        // ---- 场与阈值的状态 ----
+        nGrid: nGrid,
+        gridExtent: +gridExtent.toFixed(4),
+        fieldMax: +fieldMax.toFixed(8),
+        fraction: +surfaceLevelFraction.toFixed(4),
+        isoAbs: +(surfaceLevelFraction * fieldMax).toFixed(8),
+        // 阈值"应该"取的基准（无干涉参考峰值 Σ|cᵢ|²·peakᵢ）——与 isoAbs 对照即可看出
+        // 两者是否用了同一个基准
+        refPeak: surfaceParams ? +levelAbsFor(surfaceParams, 1, surfaceParams.psiCrit).toFixed(8) : null,
+        terms: surfaceParams && surfaceParams.terms ? surfaceParams.terms.length : 0,
+        // 曲面最外顶点占网格盒子的比例。盒子按"恰好装下"设计，故接近 1 是正常的；
+        // ≥ 1 才说明顶到盒面、被裁出了平边（配合截图确认）。
+        faceTouch: (function () {
+          const pa = geo2.getAttribute('position');
+          let mx = 0, my = 0, mz = 0;
+          for (let i = 0; i < pa.count; i++) {
+            mx = Math.max(mx, Math.abs(pa.getX(i)));
+            my = Math.max(my, Math.abs(pa.getY(i)));
+            mz = Math.max(mz, Math.abs(pa.getZ(i)));
+          }
+          return +(Math.max(mx, my, mz) / gridExtent).toFixed(3);
+        })(),
       };
     }
     surfaceObj = new THREE.Mesh(geo2, mat);
