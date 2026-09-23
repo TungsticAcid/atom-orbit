@@ -1015,18 +1015,19 @@ window.Orbit3D = (function () {
         rval[i * (NP + 1) + j] = len;
         if (len > maxR) maxR = len;
         if (mode === 'real') {
+          // ★ 着色只由「实函数 / 复函数」决定，与「|Y| 还是 |Y|²」**无关**。
+          //   颜色表达的是相位信息（实函数 → 符号），而相位不因把半径画成 |Y| 还是
+          //   |Y|² 而改变——判据只改径向轮廓。复函数分支本来就是这么做的（两种判据
+          //   同色），这里统一过来，也才与模块注释、README 的描述一致。
+          //   （原先 |Y|² 另走一套强度色标，是全项目唯一一处"颜色随判据变"的地方。）
           const idx = (i * (NP + 1) + j) * 3;
-          if (which === 'Y2') {
-            // |Y|² 暂时填 0，第二遍按密度上色；先存符号无关——此处用密度色
-          } else {
-            const c = (Y >= 0) ? [0.42, 0.8, 1.0] : [1.0, 0.6, 0.25];   // + 青 / − 橙
-            clr[idx] = c[0]; clr[idx + 1] = c[1]; clr[idx + 2] = c[2];
-          }
+          const c = (Y >= 0) ? [0.42, 0.8, 1.0] : [1.0, 0.6, 0.25];   // + 青 / − 橙
+          clr[idx] = c[0]; clr[idx + 1] = c[1]; clr[idx + 2] = c[2];
         }
       }
     }
     if (maxR < 1e-12) maxR = 1e-12;
-    // 第二遍：实函数 |Y|² 的密度着色 + 生成顶点/索引
+    // 第二遍：生成顶点与索引（颜色已在第一遍定好，这里不再改）
     for (let i = 0; i <= NT; i++) {
       const th = Math.PI * i / NT;
       const sT = Math.sin(th), cT = Math.cos(th);
@@ -1035,11 +1036,6 @@ window.Orbit3D = (function () {
         const vid = i * (NP + 1) + j;
         const radius = (rval[vid] / maxR) * 1.0;      // 归一化到最大半径 1（世界单位）
         positions.push(radius * sT * Math.cos(ph), radius * sT * Math.sin(ph), radius * cT);
-        if (mode === 'real' && which === 'Y2') {
-          const t = rval[vid] / maxR;
-          const col = simpleColorScale(t);
-          clr[vid * 3] = col[0]; clr[vid * 3 + 1] = col[1]; clr[vid * 3 + 2] = col[2];
-        }
       }
     }
     for (let i = 0; i < NT; i++) {
@@ -1055,23 +1051,6 @@ window.Orbit3D = (function () {
     const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
     angMesh = new THREE.Mesh(geo, mat);
     angScene.add(angMesh);
-  }
-
-  // 角度曲面用的强度色标（深蓝→青→黄→红），避免依赖 Charts
-  function simpleColorScale(t) {
-    t = Math.max(0, Math.min(1, t));
-    const s = [[0, 10, 40], [0.3, 40, 90, 180], [0.55, 45, 190, 220], [0.8, 255, 200, 80], [1, 255, 80, 80]];
-    for (let i = 1; i < s.length; i++) {
-      if (t <= s[i][0]) {
-        const k = (t - s[i - 1][0]) / (s[i][0] - s[i - 1][0]);
-        return [
-          s[i - 1][1] + (s[i][1] - s[i - 1][1]) * k,
-          s[i - 1][2] + (s[i][2] - s[i - 1][2]) * k,
-          s[i - 1][3] + (s[i][3] - s[i - 1][3]) * k,
-        ].map(x => x / 255);
-      }
-    }
-    return [1, 0.3, 0.3];
   }
 
   function renderAngular() {
