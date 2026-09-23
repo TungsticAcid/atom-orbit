@@ -79,7 +79,47 @@ window.Charts = (function () {
   };
   const RADIAL_NAME = { R: 'R(r)', R2: 'R(r)²', D: 'D(r)', D2: 'D(r)²' };
 
+  // 径向图的特征标注状态（由 scene-bridge 的 highlightRadialFeature 驱动）
+  let radialHighlight = null;
+  let lastRadialArgs = null;
+
+  /**
+   * 求某个径向函数的"特征半径"。
+   *   D 的峰值/零点直接用 math.js 的确定性函数（数值求极值 / 求根）
+   *   R 的零点与 D 相同（R=0 ⟺ r²R²=0），峰值需自行扫描 |R|
+   * 全部由计算层给出，不依赖视觉推断。
+   */
+  function computeFeature(target, feature, n, l) {
+    if (target === 'D') {
+      return feature === 'peak' ? OM.radialPeaks(n, l) : OM.radialZeros(n, l);
+    }
+    if (feature === 'zeros') return OM.radialZeros(n, l);
+    // |R| 的局部极大
+    const rMax = OM.rExtent(n, l);
+    const steps = 1200;
+    const h = rMax / steps;
+    const out = [];
+    let a = Math.abs(OM.radialR(n, l, 1e-9));
+    let b = Math.abs(OM.radialR(n, l, h));
+    for (let i = 2; i <= steps; i++) {
+      const c = Math.abs(OM.radialR(n, l, (rMax * i) / steps));
+      if (b > a && b >= c && b > 1e-12) out.push((rMax * (i - 1)) / steps);
+      a = b; b = c;
+    }
+    return out;
+  }
+
+  /** 设置/清除径向图的特征标注（target=null 表示清除） */
+  function setRadialHighlight(target, feature) {
+    radialHighlight = target ? { target: target, feature: feature } : null;
+    if (lastRadialArgs) {
+      const a = lastRadialArgs;
+      drawRadial(a.canvas, a.n, a.l, a.whichList);
+    }
+  }
+
   function drawRadial(canvas, n, l, whichList) {
+    lastRadialArgs = { canvas: canvas, n: n, l: l, whichList: whichList.slice() };
     const { ctx, w, h } = setup(canvas);
     const pad = { l: 46, r: 16, t: 16, b: 34 };
     drawFrame(ctx, w, h, pad);
@@ -142,6 +182,27 @@ window.Charts = (function () {
       }
       ctx.stroke();
     });
+
+    // 特征标注（峰值 / 零点）—— 辨析 R 与 D 的核心手段
+    if (radialHighlight) {
+      const feat = computeFeature(radialHighlight.target, radialHighlight.feature, n, l);
+      const col = RADIAL_PALETTE[radialHighlight.target] || [255, 255, 255];
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1.6;
+      ctx.strokeStyle = 'rgba(' + col.join(',') + ',0.95)';
+      ctx.fillStyle = 'rgb(' + col.join(',') + ')';
+      ctx.font = '10px system-ui, sans-serif';
+      feat.forEach((r, i) => {
+        if (!(r >= 0) || r > rEnd) return;
+        const gx = pad.l + (iw * r) / rEnd;
+        ctx.beginPath(); ctx.moveTo(gx, pad.t); ctx.lineTo(gx, pad.t + ih); ctx.stroke();
+        const label = r.toFixed(2);
+        const ty = pad.t + 12 + (i % 2) * 12;
+        ctx.fillText(label, Math.min(gx + 3, w - pad.r - 34), ty);
+      });
+      ctx.restore();
+    }
 
     // 图例
     let lx = w - pad.r - 150;
@@ -501,5 +562,5 @@ window.Charts = (function () {
     }
   }
 
-  return { drawRadial, drawAngular, drawSection };
+  return { drawRadial, drawAngular, drawSection, setRadialHighlight };
 })();

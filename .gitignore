@@ -9,3 +9,14 @@ desktop.ini
 *.log
 *.tmp
 node_modules/
+
+# ★ 参赛材料与密钥目录（整个 activity/ 不入库）
+activity/
+# 密钥类文件（双保险）
+*.key
+.env
+.env.*
+apikey/
+
+# 未随仓库分发的静态资源（应用内缺失时会给出提示，不会显示裂图）
+H5/assets/ref/

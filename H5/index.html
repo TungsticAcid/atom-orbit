@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#0b1020" />
   <title>原子轨道三维可视化 · Hydrogen Orbital Visualizer</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
   <link rel="stylesheet" href="libs/katex.min.css" />
   <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/agent.css" />
 </head>
 <body>
   <!-- 顶栏 -->
@@ -153,9 +155,34 @@
   <script src="libs/katex.min.js"></script>
   <!-- 业务模块 -->
   <script src="js/math.js"></script>
+  <script src="js/layout.js"></script>
   <script src="js/render3d.js"></script>
   <script src="js/charts.js"></script>
   <script src="js/formula.js"></script>
   <script src="js/main.js"></script>
+
+  <!-- 智能体层 -->
+  <script src="js/agent/llm-client.js"></script>
+  <script src="js/agent/settings.js"></script>
+  <script src="js/agent/perception-snapshot.js"></script>
+  <script src="js/agent/scene-bridge.js"></script>
+  <script src="js/agent/knowledge.js"></script>
+  <script src="js/agent/skills.js"></script>
+  <script src="js/agent/mastery-model.js"></script>
+  <script src="js/agent/observables.js"></script>
+  <script src="js/agent/question-engine.js"></script>
+  <script src="js/agent/error-diagnosis.js"></script>
+  <script src="js/agent/tool-registry.js"></script>
+  <script src="js/agent/agent-core.js"></script>
+  <script src="js/agent/demo-mode.js"></script>
+  <script src="js/agent/proactive-rules.js"></script>
+  <script src="js/agent/state-editor.js"></script>
+  <script src="js/agent/panel.js"></script>
+  <script src="js/agent/reference-table.js"></script>
+  <script src="js/agent/bootstrap.js"></script>
+
+  <!-- 知识库 / 技能（自注册，离线可用；<script> 加载 ≠ 进 LLM 上下文） -->
+  <script src="knowledge/entries/index.js"></script>
+  <script src="skills/index.js"></script>
 </body>
 </html>

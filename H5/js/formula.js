@@ -137,7 +137,18 @@ window.Formula = (function () {
   /**
    * @returns {{ latex: string, title: string, modeName: string, note: string }}
    */
-  function buildPsi(n, l, m, mode) {
+  /**
+   * @param {Object} [opts]
+   * @param {'R'|'Y'|'L'|'P'|'N'} [opts.highlight] 高亮公式中的某一项。
+   *   ★ 这是「公式—图形—数值 三向联动」的实现基础：高亮某项的同时，
+   *     可联动高亮对应的图表区域与三维特征。
+   *   依赖 KaTeX 的 \htmlClass（渲染时需传 trust:true）。
+   */
+  function buildPsi(n, l, m, mode, opts) {
+    const hl = (opts && opts.highlight) || null;
+    /** 按需把某个片段包进高亮 class */
+    const W = (part, tex) => (hl === part ? '\\htmlClass{hl-term}{' + tex + '}' : tex);
+
     const am = Math.abs(m);
     const sub = SUBSHELL[Math.min(l, SUBSHELL.length - 1)];
     const k = n - l - 1;                 // 拉盖尔次数（k=0 时 L_0≡1，可整体省略）
@@ -159,20 +170,28 @@ window.Formula = (function () {
     rows.push(psiTag + '(r,\\theta,\\phi) &= R_{' + n + ',' + l + '}(r)\\,' + yTag + '(\\theta,\\phi)');
 
     // ---- 径向：教科书形式 R = N ρˡ e^{-ρ/2} L_k^{2l+1}(ρ)，ρ = 2r/(na₀) ----
-    const rParts = ['N_{' + n + ',' + l + '}'];
+    const rParts = [W('N', 'N_{' + n + ',' + l + '}')];
     if (l >= 1) rParts.push(l === 1 ? '\\rho' : '\\rho^{' + l + '}');     // ρ⁰ ≡ 1，省略
     rParts.push('e^{-\\rho/2}');
-    if (k > 0) rParts.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho)'); // L₀ ≡ 1，省略
-    rows.push('R_{' + n + ',' + l + '}(r) &= ' + rParts.join('\\,') + ',\\qquad \\rho=\\frac{2r}{n a_0}');
-    rows.push('N_{' + n + ',' + l + '} &= \\sqrt{\\frac{4\\cdot ' + k + '!}{' + n + '^{4}\\cdot ' + (n + l) + '!}}\\approx ' + f4(Nrad));
+    if (k > 0) rParts.push(W('L', 'L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho)')); // L₀ ≡ 1，省略
+    rows.push('R_{' + n + ',' + l + '}(r) &= ' + W('R', rParts.join('\\,')) + ',\\qquad \\rho=\\frac{2r}{n a_0}');
+    rows.push('N_{' + n + ',' + l + '} &= ' +
+      '\\sqrt{\\frac{4\\cdot ' + k + '!}{' + n + '^{4}\\cdot ' + (n + l) + '!}}\\approx ' + f4(Nrad));
     if (k > 0) {
-      rows.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho) &= ' + laguerreExp(k, 2 * l + 1));
+      rows.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho) &= ' +
+        W('L', laguerreExp(k, 2 * l + 1)));
     }
 
     // ---- 角度：P 展开为显式多项式，并清理所有冗余的 1 ----
-    const pExp = legendreExp(l, am);
+    // ⚠️ 次序很关键：先提取首字符负号，再做高亮包裹。
+    //    否则 \htmlClass{...} 会挡住负号判断，使 "√2N −3sinθcosθ" 被误读为减法。
+    let pExpRaw = legendreExp(l, am);
+    let leadSign = '';
+    if (pExpRaw.charAt(0) === '-') { leadSign = '-'; pExpRaw = pExpRaw.slice(1); }
+    const pExp = W('P', pExpRaw);
+
     const factors = [];
-    if (pExp !== '1') factors.push(pExp);                                // P₀⁰ ≡ 1，省略
+    if (pExpRaw !== '1') factors.push(pExp);                             // P₀⁰ ≡ 1，省略
     let coef, coefRow;
     if (mode === 'complex') {
       coef = 'N_{' + l + ',' + m + '}';
@@ -191,16 +210,11 @@ window.Formula = (function () {
       coefRow = 'N &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}\\cdot\\frac{' + (l - am) + '!}{' + (l + am) + '!}}' +
         '\\approx ' + f4(Nang) + ',\\qquad \\sqrt{2}N\\approx ' + f4(Math.SQRT2 * Nang);
     }
-    // 把因子开头的负号提到整项最前：避免 "√2N −3sinθcosθ" 被误读为减法
-    let leadSign = '';
-    const posFactors = factors.map((f) => {
-      if (f.charAt(0) === '-') { leadSign = (leadSign === '-') ? '' : '-'; return f.slice(1); }
-      return f;
-    });
-    const yRhs = posFactors.length
-      ? (leadSign + coef + '\\,' + posFactors.join('\\,'))
+    // 负号已在上面提取（leadSign）；此处直接拼装，并把整行按需高亮
+    const yRhs = factors.length
+      ? (leadSign + coef + '\\,' + factors.join('\\,'))
       : (leadSign + coef);
-    rows.push(yTag + '(\\theta,\\phi) &= ' + yRhs);
+    rows.push(yTag + '(\\theta,\\phi) &= ' + W('Y', yRhs));
     rows.push(coefRow);
 
     const latex = '\\begin{aligned} ' + rows.join('\\\\[3pt] ') + '\\end{aligned}';

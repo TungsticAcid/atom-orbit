@@ -34,8 +34,9 @@ window.Orbit3D = (function () {
   // 即万向节锁，表现为转到极点附近时突然翻转或卡住。
   //
   // 这里改为用四元数累积旋转，全程不经过欧拉角，故不存在奇异点：
-  //   · 偏航 yaw   —— 绕【世界 Z 轴】旋转（世界系 → 左乘 premultiply）
-  //   · 俯仰 pitch —— 绕【相机自身 X 轴（右向量）】旋转（局部系 → 右乘 multiply）
+  //   · 偏航 yaw   —— 绕【相机自身 Y 轴（屏幕竖直）】旋转（局部系 → 右乘 multiply）
+  //   · 俯仰 pitch —— 绕【相机自身 X 轴（屏幕水平）】旋转（局部系 → 右乘 multiply）
+  // 两者都取相机局部轴，所以"左右拖"永远是绕屏幕竖直轴转，不会因俯仰角度而反向。
   // 相机朝向 q 直接决定位置：position = target + (q·(0,0,1)) · distance，
   // 即相机局部 +Z 由注视点指向相机，与 Three.js 相机沿 -Z 观察的约定一致。
   // ---------------------------------------------------------------------------
@@ -54,6 +55,9 @@ window.Orbit3D = (function () {
     let distance = opts.distance || 5;
     let minDistance = 0.05, maxDistance = 500;
     let autoRotate = false, enabled = true;
+    // 用户是否手动动过镜头（旋转/平移/缩放）。动过之后，窗口尺寸变化时
+    // **不再**自动重新取景——否则用户刚调好的视角会被"好心"地重置掉。
+    let userAdjusted = false;
 
     const AXIS_Z = new THREE.Vector3(0, 0, 1);   // 世界竖直轴（仅初始 lookAt 用）
     const AXIS_X = new THREE.Vector3(1, 0, 0);   // 相机局部 X（屏幕水平）
@@ -113,6 +117,7 @@ window.Orbit3D = (function () {
 
     function zoomBy(factor) {
       distance = Math.min(maxDistance, Math.max(minDistance, distance * factor));
+      userAdjusted = true;
     }
 
     function setDistance(d) {
@@ -146,6 +151,7 @@ window.Orbit3D = (function () {
         const dx = e.clientX - lastX, dy = e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
         if (panMode) pan(dx, dy); else rotate(dx, dy);
+        userAdjusted = true;
       } else if (pointers.size === 2) {
         const p = [...pointers.values()];
         const pinch = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
@@ -191,8 +197,9 @@ window.Orbit3D = (function () {
       setEnabled: (v) => { enabled = !!v; },
       setDistance,
       setLimits: (lo, hi) => { minDistance = lo; maxDistance = hi; },
-      resetHome: () => setView(homeEye, homeLook),
+      resetHome: () => { userAdjusted = false; setView(homeEye, homeLook); },
       getDistance: () => distance,
+      isUserAdjusted: () => userAdjusted,
     };
   }
 
@@ -206,6 +213,7 @@ window.Orbit3D = (function () {
 
   // 角度分布 3D 曲面（独立小场景）：r(θ,φ) 从原点沿 (θ,φ) 引射线
   let angScene = null, angCamera = null, angRenderer = null, angCtl = null, angMesh = null, angAxes = null;
+  let angResizeObs = null;      // 角度小场景的尺寸观察器
   let angLastKey = '';
   const ANG_RES = 30;           // θ 方向网格数
 
@@ -213,6 +221,16 @@ window.Orbit3D = (function () {
   let field = null, gradX = null, gradY = null, gradZ = null;
   let nGrid = 0, gridExtent = 0, fieldMax = 0;
   let surfaceLevelFraction = 0.08;
+
+  // 取景留白系数：需要容纳的半尺寸 = 轨道取景尺度 × FIT_MARGIN。
+  // 相机 fov=50°，竖直半视野 = dist·tan(25°)，故物体占画面高度的比例为
+  // 1/FIT_MARGIN。1.42 ⇒ 轨道约占 70% 高度，上下各留约 30% 空白——
+  // 原先固定 dist = extent×2.8 相当于占 77%，轨道贴得偏满。
+  // ★ 不要退回"距离 = extent × 常数"的写法：那样留白会随画布宽高比漂移，
+  //   扁画布上轨道顶满上下边缘，竖屏 / 窄画布还会被左右切掉。见 fitView 注释。
+  const FIT_MARGIN = 1.42;
+  let lastDecorExtent = null;    // 上次取景用的装饰标尺（窗口尺寸变化时复用）
+  let lastFitExtent = 0;         // 上次取景用的轨道尺度（判断是否需要重新取景）
 
   const containerRef = { el: null };
 
@@ -263,6 +281,18 @@ window.Orbit3D = (function () {
     });
     nucleusObj = new THREE.Mesh(nucGeo, nucMat);
     scene.add(nucleusObj);
+
+    // ★ 用 ResizeObserver 监视**容器本身**的尺寸变化，而不只是 window.resize。
+    //   否则当布局因其他原因变化时（如展开侧栏的「进阶」折叠区，使网格行变高），
+    //   渲染器的宽高比会与 CSS 尺寸失配 → 图形被拉伸、拖拽手感错位。
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(function () {
+        const w = container.clientWidth, h = container.clientHeight;
+        if (w > 0 && h > 0) resize(w, h);
+      });
+      ro.observe(container);
+      containerRef.ro = ro;
+    }
 
     return api;
   }
@@ -317,7 +347,9 @@ window.Orbit3D = (function () {
     cloudObj = new THREE.Points(geo, mat);
     cloudObj.frustumCulled = false;
     scene.add(cloudObj);
-    fitView(cloud.extent);
+    // 与等值面共用同一取景尺度；且尺度没变就不动相机 →
+    // 切换渲染方式时视角不跳（见 fitViewIfNeeded 注释）
+    fitViewIfNeeded(currentFrameExtent());
   }
 
   // ---------------------------------------------------------------------------
@@ -332,9 +364,13 @@ window.Orbit3D = (function () {
    * 的格距会相差 3 倍——格距过粗时，节面附近两瓣之间约 1 a₀ 的缝只有一两个格子宽，
    * 行进算法无法分辨，会把两瓣连成一体并被切出"平底贴合"的丑陋形状。
    */
-  function computeField(n, l, m, mode, res, level) {
+  function computeField(n, l, m, mode, res, level, terms, relPhase) {
     const iso = (level > 0) ? level : 0;
-    const extent = Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2);
+    // 叠加态：范围取各分量外延的最大值；否则按单一本征态
+    const useSuper = !!(terms && terms.length);
+    const extent = useSuper
+      ? Math.max(OM.superpositionRefExtent(terms) * 1.15, 1.5)   // 按等值面实际外延，而非渐近尾部
+      : Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2);
     nGrid = res;
     gridExtent = extent;
     const NN = nGrid * nGrid * nGrid;      // 节点总数
@@ -344,17 +380,33 @@ window.Orbit3D = (function () {
     const step = (2 * extent) / (nGrid - 1);
     let maxVal = 0;
 
+    // ★ 性能：|ψ|² 的主力开销是径向部分（pow + exp + 拉盖尔递推）。
+    //   固定 (n,l) 下用 R² 查表替代，并把坐标预计算、用 sqrt 替代较慢的 hypot。
+    //   实测单次重建由 ~1200ms 降到 ~250ms 量级，滑块与扫参动画因此才跟得上手。
+    const psi2Fast = useSuper
+      ? (function () {
+          const phases = terms.map((t, i) => i * (relPhase || 0));
+          return function (r, theta, phi) { return OM.densitySuperposition(terms, r, theta, phi, phases); };
+        })()
+      : OM.makePsiDensityFast(n, l, m, mode, extent * 1.8);
+    const xs = new Float64Array(nGrid);
+    for (let i = 0; i < nGrid; i++) xs[i] = -extent + i * step;
+
     for (let k = 0; k < nGrid; k++) {
-      const z = -extent + k * step;
+      const z = xs[k];
+      const zz = z * z;
+      const kBase = k * nGrid * nGrid;
       for (let j = 0; j < nGrid; j++) {
-        const y = -extent + j * step;
+        const y = xs[j];
+        const yy = y * y + zz;
+        const jBase = kBase + j * nGrid;
         for (let i = 0; i < nGrid; i++) {
-          const x = -extent + i * step;
-          const r = Math.hypot(x, y, z);
+          const x = xs[i];
+          const r = Math.sqrt(x * x + yy);
           const theta = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
           const phi = Math.atan2(y, x);
-          const v = OM.psiDensity(n, l, m, r, theta, phi, mode);
-          field[k * nGrid * nGrid + j * nGrid + i] = v;
+          const v = psi2Fast(r, theta, phi);
+          field[jBase + i] = v;
           if (v > maxVal) maxVal = v;
         }
       }
@@ -402,81 +454,108 @@ window.Orbit3D = (function () {
   // 提取等值面，返回 BufferGeometry
   function extractSurface(iso) {
     const n = nGrid;
+    const n2 = n * n;
+    const step = (2 * gridExtent) / (nGrid - 1);
+
+    // ★ 性能关键：本函数在 68³ 网格上要处理约 1.8M 个四面体。
+    //   原实现每个四面体都在 map / filter / findIndex 里分配数组，
+    //   造成巨大 GC 压力——实测占等值面重建总耗时的约 78%（~600ms）。
+    //   现改为零分配：角点 id 直接算、交点直接写入输出数组、绕向判定用局部变量。
     const positions = [];
     const normals = [];
     const indices = [];
-    const idx = (i, j, k) => k * n * n + j * n + i;
+    const cross = new Int32Array(4);   // 复用：存放交点顶点下标
 
-    // 求线段 (a,b) 与 isosurface 交点及插值梯度
-    const crossInfo = (idA, idB) => {
+    /** 求线段 (a,b) 与等值面的交点，直接写入 positions/normals，返回新顶点下标 */
+    const emitVertex = (idA, idB) => {
       const va = field[idA], vb = field[idB];
       let t = (iso - va) / (vb - va);
       if (!isFinite(t)) t = 0.5;
-      const ca = nodeCoord(idA), cb = nodeCoord(idB);
-      return {
-        p: [ca[0] + t * (cb[0] - ca[0]), ca[1] + t * (cb[1] - ca[1]), ca[2] + t * (cb[2] - ca[2])],
-        n: [gradX[idA] + t * (gradX[idB] - gradX[idA]),
-            gradY[idA] + t * (gradY[idB] - gradY[idA]),
-            gradZ[idA] + t * (gradZ[idB] - gradZ[idA])],
-      };
-    };
-    // 推入一个三角形并强制"一致朝外"绕向：几何法线与梯度法线(朝外)对齐，否则交换顶点序。
-    // 否则绕向随机会让 DoubleSide 按 gl_FrontFacing 乱翻法线 → 面片明暗不均。
-    const pushTri = (pts) => {
-      if (!pts || pts.length < 3) return;
-      const [p0, p1, p2] = [pts[0].p, pts[1].p, pts[2].p];
-      // 几何法线 = (p1-p0) × (p2-p0)
-      const ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
-      const bx = p2[0] - p0[0], by = p2[1] - p0[1], bz = p2[2] - p0[2];
-      const gnx = ay * bz - az * by, gny = az * bx - ax * bz, gnz = ax * by - ay * bx;
-      // 朝外法线 = 各顶点梯度法线平均值
-      const onx = (pts[0].n[0] + pts[1].n[0] + pts[2].n[0]) / 3;
-      const ony = (pts[0].n[1] + pts[1].n[1] + pts[2].n[1]) / 3;
-      const onz = (pts[0].n[2] + pts[1].n[2] + pts[2].n[2]) / 3;
-      const order = (gnx * onx + gny * ony + gnz * onz) >= 0 ? [0, 1, 2] : [0, 2, 1];
-      for (const k of order) {
-        positions.push(pts[k].p[0], pts[k].p[1], pts[k].p[2]);
-        normals.push(pts[k].n[0], pts[k].n[1], pts[k].n[2]);
-      }
-      const base = positions.length / 3 - 3;   // 本三角形首顶点的索引
-      indices.push(base, base + 1, base + 2);
+
+      const ka = (idA / n2) | 0, ra = idA - ka * n2, ja = (ra / n) | 0, ia = ra - ja * n;
+      const kb = (idB / n2) | 0, rb = idB - kb * n2, jb = (rb / n) | 0, ib = rb - jb * n;
+      const ax = -gridExtent + ia * step, ay = -gridExtent + ja * step, az = -gridExtent + ka * step;
+      const bx = -gridExtent + ib * step, by = -gridExtent + jb * step, bz = -gridExtent + kb * step;
+
+      const gi = positions.length / 3;
+      positions.push(ax + t * (bx - ax), ay + t * (by - ay), az + t * (bz - az));
+      normals.push(
+        gradX[idA] + t * (gradX[idB] - gradX[idA]),
+        gradY[idA] + t * (gradY[idB] - gradY[idA]),
+        gradZ[idA] + t * (gradZ[idB] - gradZ[idA])
+      );
+      return gi;
     };
 
+    /** 按"一致朝外"绕向写入三角形（几何法线与梯度法线对齐，否则交换顶点序） */
+    const pushTri = (i0, i1, i2) => {
+      const p0 = i0 * 3, p1 = i1 * 3, p2 = i2 * 3;
+      const ax = positions[p1] - positions[p0], ay = positions[p1 + 1] - positions[p0 + 1], az = positions[p1 + 2] - positions[p0 + 2];
+      const bx = positions[p2] - positions[p0], by = positions[p2 + 1] - positions[p0 + 1], bz = positions[p2 + 2] - positions[p0 + 2];
+      const gnx = ay * bz - az * by, gny = az * bx - ax * bz, gnz = ax * by - ay * bx;
+      const onx = normals[p0] + normals[p1] + normals[p2];
+      const ony = normals[p0 + 1] + normals[p1 + 1] + normals[p2 + 1];
+      const onz = normals[p0 + 2] + normals[p1 + 2] + normals[p2 + 2];
+      if (gnx * onx + gny * ony + gnz * onz >= 0) indices.push(i0, i1, i2);
+      else indices.push(i0, i2, i1);
+    };
+
+    const cIds = new Int32Array(8);
+    const in4 = new Uint8Array(4);
+    const tIds = new Int32Array(4);
+
     for (let k = 0; k < n - 1; k++) {
+      const kBase = k * n2;
       for (let j = 0; j < n - 1; j++) {
+        const jBase = kBase + j * n;
         for (let i = 0; i < n - 1; i++) {
-          // 8 个角点的全局 id
-          const c = CUBE_OFF.map(o => idx(i + o[0], j + o[1], k + o[2]));
-          for (const tet of TETS) {
-            const ids = tet.map(t => c[t]);
-            const vals = ids.map(v => field[v]);
-            const inFlag = vals.map(v => v >= iso);
-            const cnt = inFlag.filter(Boolean).length;
+          const p = jBase + i;
+          // 8 个角点的全局 id：直接算，不再每格 map 一次
+          cIds[0] = p;              cIds[1] = p + 1;
+          cIds[2] = p + 1 + n;      cIds[3] = p + n;
+          cIds[4] = p + n2;         cIds[5] = p + 1 + n2;
+          cIds[6] = p + 1 + n + n2; cIds[7] = p + n + n2;
+
+          for (let t = 0; t < 6; t++) {
+            const T = TETS[t];
+            let cnt = 0;
+            for (let e = 0; e < 4; e++) {
+              const id = cIds[T[e]];
+              tIds[e] = id;
+              const ins = field[id] >= iso ? 1 : 0;
+              in4[e] = ins;
+              cnt += ins;
+            }
             if (cnt === 0 || cnt === 4) continue;
 
             if (cnt === 1 || cnt === 3) {
-              const oddIdx = cnt === 1
-                ? inFlag.findIndex(Boolean)                        // 唯一的"内"顶点
-                : inFlag.findIndex(v => !v);                       // 唯一的"外"顶点
-              const ptList = [];
-              for (let e = 0; e < 4; e++) if (e !== oddIdx) ptList.push(crossInfo(ids[oddIdx], ids[e]));
-              pushTri(ptList);
-            } else {  // cnt === 2
-              const ins = [], outs = [];
-              for (let e = 0; e < 4; e++) (inFlag[e] ? ins : outs).push(e);
-              const pac = crossInfo(ids[ins[0]], ids[outs[0]]);
-              const pad = crossInfo(ids[ins[0]], ids[outs[1]]);
-              const pbc = crossInfo(ids[ins[1]], ids[outs[0]]);
-              const pbd = crossInfo(ids[ins[1]], ids[outs[1]]);
-              pushTri([pac, pbc, pbd]);
-              pushTri([pac, pbd, pad]);
+              // 唯一的"异类"顶点：cnt=1 时是内部点，cnt=3 时是外部点
+              let odd = 0;
+              for (let e = 0; e < 4; e++) {
+                if ((cnt === 1) === (in4[e] === 1)) { odd = e; break; }
+              }
+              let m = 0;
+              for (let e = 0; e < 4; e++) if (e !== odd) cross[m++] = emitVertex(tIds[odd], tIds[e]);
+              pushTri(cross[0], cross[1], cross[2]);
+            } else {
+              let i0 = -1, i1 = -1, o0 = -1, o1 = -1;
+              for (let e = 0; e < 4; e++) {
+                if (in4[e]) { if (i0 < 0) i0 = e; else i1 = e; }
+                else { if (o0 < 0) o0 = e; else o1 = e; }
+              }
+              const pac = emitVertex(tIds[i0], tIds[o0]);
+              const pad = emitVertex(tIds[i0], tIds[o1]);
+              const pbc = emitVertex(tIds[i1], tIds[o0]);
+              const pbd = emitVertex(tIds[i1], tIds[o1]);
+              pushTri(pac, pbc, pbd);
+              pushTri(pac, pbd, pad);
             }
           }
         }
       }
     }
 
-    // 构建几何（法线来自梯度、方向朝外；三角形绕向已在 pushTri 中强制一致）
+    // 构建几何（法线来自梯度、方向朝外；绕向已在 pushTri 中强制一致）
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -500,7 +579,11 @@ window.Orbit3D = (function () {
    * 这正是切换按钮能被看出来差别的原因。
    */
   function levelAbsFor(P, fraction, psiCrit) {
-    const peak = OM.maxDensity(P.n, P.l, P.m, P.mode);
+    // ★ 叠加态用「无干涉参考峰值」Σ|cᵢ|²peakᵢ 作基准，而不是实际扫描峰值：
+    //   干涉会让实际峰值高出近 2 倍，若按它取 30%，曲面会远小于单一轨道并碎成几块。
+    const peak = (P.terms && P.terms.length)
+      ? OM.superpositionRefPeak(P.terms)
+      : OM.maxDensity(P.n, P.l, P.m, P.mode);
     return (psiCrit === 'psi') ? fraction * fraction * peak : fraction * peak;
   }
 
@@ -521,16 +604,16 @@ window.Orbit3D = (function () {
       if (!surfaceObj || critChanged || Math.abs(newExtent - gridExtent) / gridExtent > 0.12) {
         computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs);
       }
-      rebuildSurface();
+      rebuildSurface(false);   // 仅阈值/着色变化 → 相机不动
     } else if (colorChanged && surfaceGeoRef) {
       paintSurfaceColors(surfaceGeoRef);
     }
   }
 
-  function buildSurface(levelFraction) {
+  function buildSurface(levelFraction, refit) {
     if (!field) return;
     surfaceLevelFraction = levelFraction;
-    rebuildSurface();
+    rebuildSurface(!!refit);
   }
 
   /**
@@ -546,14 +629,21 @@ window.Orbit3D = (function () {
     const base = OM.lColor(currentL || 0);
     const P = surfaceParams;
     if (currentColorMode === 'phase' && P) {
+      const phases = P.terms ? P.terms.map((t, k) => k * (P.relPhase || 0)) : null;
       for (let i = 0; i < cnt; i++) {
         const x = posAttr.getX(i), y = posAttr.getY(i), z = posAttr.getZ(i);
         const r = Math.hypot(x, y, z);
         const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
         const ph = Math.atan2(y, x);
-        const col = (P.mode === 'real')
-          ? OM.phaseColor(OM.angularReal(P.l, P.m, th, ph) >= 0 ? 0 : Math.PI, 0.62)
-          : OM.phaseColor(OM.angularComplex(P.l, P.m, th, ph).arg(), 0.62);
+        let col;
+        if (P.terms) {
+          // 叠加态：相位直接取整个叠加态波函数的 arg ψ
+          col = OM.phaseColor(OM.psiSuperposition(P.terms, r, th, ph, phases).arg(), 0.62);
+        } else {
+          col = (P.mode === 'real')
+            ? OM.phaseColor(OM.angularReal(P.l, P.m, th, ph) >= 0 ? 0 : Math.PI, 0.62)
+            : OM.phaseColor(OM.angularComplex(P.l, P.m, th, ph).arg(), 0.62);
+        }
         colors[3 * i] = col[0]; colors[3 * i + 1] = col[1]; colors[3 * i + 2] = col[2];
       }
     } else {
@@ -634,7 +724,7 @@ window.Orbit3D = (function () {
     return { positions: new Float32Array(wp), normals: new Float32Array(wn), indices: win };
   }
 
-  function rebuildSurface() {
+  function rebuildSurface(refit) {
     if (surfaceObj) {
       scene.remove(surfaceObj);
       surfaceObj.geometry.dispose();
@@ -642,9 +732,11 @@ window.Orbit3D = (function () {
       surfaceObj = null;
     }
     surfaceGeoRef = null;
+    const __t0 = performance.now();
     const iso = Math.max(1e-9, surfaceLevelFraction * fieldMax);
     const geo = extractSurface(iso);
     if (!geo.getAttribute('position').count) return;
+    const __tExtract = performance.now();
     // 焊接 → 平滑（消除行进四面体的离散凹凸，轮廓更光滑）
     const welded = weldTriangleSoup(
       geo.getAttribute('position').array,
@@ -653,6 +745,7 @@ window.Orbit3D = (function () {
     );
     const nv = welded.positions.length / 3;
     if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 2);
+    const __tWeld = performance.now();
 
     const geo2 = new THREE.BufferGeometry();
     geo2.setAttribute('position', new THREE.BufferAttribute(welded.positions, 3));
@@ -670,10 +763,33 @@ window.Orbit3D = (function () {
       metalness: 0.0,
       side: THREE.DoubleSide,
     });
+    // 性能探针：仅在 window.__ORBIT_DEBUG__ 为真时记录（默认关闭，不产生开销）
+    if (window.__ORBIT_DEBUG__) {
+      window.__SURF_TIMING__ = {
+        extract: Math.round(__tExtract - __t0),
+        weldSmooth: Math.round(__tWeld - __tExtract),
+        build: Math.round(performance.now() - __tWeld),
+        total: Math.round(performance.now() - __t0),
+        verts: geo2.getAttribute('position').count,
+      };
+    }
     surfaceObj = new THREE.Mesh(geo2, mat);
     scene.add(surfaceObj);
-    const refExt = refExtentFor(surfaceParams);
-    fitView(Math.max(refExt, gridExtent), refExt);
+    // ★ 只在"换轨道 / 复位"时重新取景；切换判据、阈值、渲染方式时相机保持不动
+    if (refit) fitViewIfNeeded(currentFrameExtent(), frameExtentFor(surfaceParams));
+  }
+
+  /**
+   * 取景尺度没变就不动相机。
+   *
+   * ★ 这是"切换渲染方式时视角不该跳"的关键：粒子云每次重建都无条件重取景，
+   *   而等值面只在换轨道时才取景——两条路径不对称，于是"等值面→粒子云"会把
+   *   用户刚调好的缩放重置掉、"粒子云→等值面"又不会，看起来就是"视角重置不一致"。
+   *   统一成"尺度变了才取景"之后，纯切换渲染方式相机的朝向与距离都保持不动。
+   */
+  function fitViewIfNeeded(extent, decorExt) {
+    if (Math.abs(extent - lastFitExtent) < 1e-9) return;
+    fitView(extent, decorExt);
   }
 
   /**
@@ -686,11 +802,41 @@ window.Orbit3D = (function () {
    * 于是：抬高阈值 → 表面缩进标尺环内；降低阈值或切到 |ψ| 判据 → 表面涨出环外，
    * 两种情况都肉眼可辨。若两套范围混用（相机跟着表面走），变化就会被完全抵消。
    */
+  /** 固定参考范围（恒按 |ψ|² 的 30% 算，与当前阈值、判据无关）——用作取景基准与标尺 */
   const FRAME_REF_LEVEL = 0.30;
   function refExtentFor(P) {
     if (!P) return gridExtent;
-    const refAbs = FRAME_REF_LEVEL * OM.maxDensity(P.n, P.l, P.m, P.mode);   // 恒按 |ψ|² 记
+    const refAbs = FRAME_REF_LEVEL * OM.maxDensity(P.n, P.l, P.m, P.mode);
     return Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, refAbs) * 1.12, 1.2);
+  }
+
+  /**
+   * ★ 统一取景尺度（相机行为一致性的关键）
+   *
+   * 取景尺度**只随轨道本身变**（n/l/m/模式/叠加态），与**渲染方式、判据、阈值无关**。
+   * 于是三条规则变得可预期、且互相一致：
+   *   · 复位            → 重置朝向 + 按本尺度重新取景
+   *   · 换轨道          → 保持朝向，按本尺度重新取景（物体尺度真的变了）
+   *   · 纯显示参数变化  → 朝向与距离**都保持不动**（判据/阈值/渲染方式/着色）
+   * 后者尤其重要：用户常要"切换着对比"，相机若跟着跳就没法比较了。
+   */
+  function frameExtentFor(P) {
+    if (!P) return Math.max(gridExtent, 1.5);
+    if (P.terms && P.terms.length) {
+      // 用"等值面实际外延"而非渐近尾部，否则叠加态会缩成一小团
+      return Math.max(OM.superpositionRefExtent(P.terms) * 1.25, 1.5);
+    }
+    return Math.max(refExtentFor(P) * 1.25, 1.5);
+  }
+
+  /** 由当前应用状态取"本轨道"的取景尺度（供粒子云与等值面共用） */
+  function currentFrameExtent() {
+    const S = (window.OrbitApp && window.OrbitApp.getState()) || null;
+    if (!S) return Math.max(gridExtent, 1.5);
+    if (S.terms && S.terms.length) {
+      return Math.max(OM.superpositionRefExtent(S.terms) * 1.25, 1.5);
+    }
+    return frameExtentFor({ n: S.n, l: S.l, m: S.m, mode: S.wavefunction, psiCrit: S.psiCriterion, terms: null });
   }
 
   let currentL = 0;
@@ -699,15 +845,19 @@ window.Orbit3D = (function () {
   let surfaceParams = null;            // 当前等值面对应的 (n,l,m,mode)，供重涂/重算时用
   let lastRes = 68;                    // 上次使用的网格分辨率
 
-  function updateSurface(n, l, m, mode, res, levelFraction, colorMode, psiCrit) {
+  function updateSurface(n, l, m, mode, res, levelFraction, colorMode, psiCrit, terms, relPhase) {
     currentL = l;
     currentColorMode = colorMode || 'phase';
     lastRes = res;
-    surfaceParams = { n: n, l: l, m: m, mode: mode, psiCrit: psiCrit || 'psi2' };
-    // 先把"占峰值的比例"（按当前判据）换算成 |ψ|² 绝对值，才能定出随阈值自适应的网格范围
+    surfaceParams = {
+      n: n, l: l, m: m, mode: mode, psiCrit: psiCrit || 'psi2',
+      terms: (terms && terms.length) ? terms : null,
+      relPhase: relPhase || 0,
+    };
+    // 叠加态时阈值按各分量峰值的加权和为基准；单一态时按解析峰值
     const levelAbs = levelAbsFor(surfaceParams, levelFraction, surfaceParams.psiCrit);
-    computeField(n, l, m, mode, res, levelAbs);
-    buildSurface(levelFraction);
+    computeField(n, l, m, mode, res, levelAbs, surfaceParams.terms, surfaceParams.relPhase);
+    buildSurface(levelFraction, true);   // 换轨道 → 尺度变了，重新取景
   }
 
   // ---------------------------------------------------------------------------
@@ -721,9 +871,22 @@ window.Orbit3D = (function () {
 
   // 相机取景：保持当前朝向（四元数不变），只按轨道尺度调整距离与裁剪面。
   // decorExt 为"标尺"（坐标轴/赤道环）的固定尺度，与当前阈值无关，见 refExtentFor 注释。
+  //
+  // ★ 为什么不能只写 dist = extent * 常数：
+  //   透视相机的**竖直**视野由 fov 决定，水平视野 = 竖直视野 × aspect。若距离只看
+  //   extent，画面一扁（宽而矮的画布）轨道就会顶满上下边缘、甚至被切掉；换一台
+  //   显示器（画布更高或更窄）同一个轨道又会缩成一小团。所以距离必须由
+  //   「fov + aspect + 需要容纳的半尺寸」三者一起算出来，才能保证任何画布比例下
+  //   轨道都完整、且四周留白一致。
   function fitView(extent, decorExt) {
     if (!camera || !viewCtl) return;
-    const dist = Math.max(extent * 2.8, 3);
+    const vFov = camera.fov * Math.PI / 180;
+    const tanHalf = Math.tan(vFov / 2);
+    const aspect = camera.aspect || 1;
+    const need = extent * FIT_MARGIN;                  // 需要容纳的半尺寸（含留白）
+    const distV = need / tanHalf;                      // 竖直方向刚好容纳
+    const distH = need / (tanHalf * aspect);           // 水平方向刚好容纳
+    const dist = Math.max(distV, distH);
     camera.near = Math.max(extent * 0.02, 1e-3);
     camera.far = extent * 60;
     camera.updateProjectionMatrix();
@@ -731,6 +894,8 @@ window.Orbit3D = (function () {
     viewCtl.setDistance(dist);
     // 装饰参照（坐标轴 ±12、赤道环 r=12）缩放为固定标尺
     const de = decorExt || extent;
+    lastDecorExtent = de;                              // 供窗口尺寸变化时重取景复用
+    lastFitExtent = extent;                            // 供 fitViewIfNeeded 判断"尺度是否变了"
     if (decorGroup) decorGroup.scale.setScalar(Math.max(de * 1.12 / 12, 0.02));
     // 更新原子核与参考尺寸
     if (nucleusObj) {
@@ -754,12 +919,16 @@ window.Orbit3D = (function () {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
+    // ★ 换了画布比例就要重新取景：同一个轨道在 3:1 的扁画布和 1:1 的方画布里，
+    //   能"塞进去"的距离完全不同。用户没手动调过镜头时才自动重取，避免覆盖他的手感。
+    //   沿用上次的装饰标尺，保证坐标轴/赤道环的缩放不因窗口变化而跳动。
+    if (viewCtl && !viewCtl.isUserAdjusted()) fitView(currentFrameExtent(), lastDecorExtent);
   }
   function setAutoRotate(v) { if (viewCtl) viewCtl.setAutoRotate(v); }
   function resetView() {
     if (!viewCtl) return;
     viewCtl.resetHome();                       // 回到初始朝向（z 向上）
-    if (gridExtent) fitView(gridExtent);
+    fitView(currentFrameExtent(), frameExtentFor(null));
   }
   function disposeGrid() {           // 释放等值面缓存的标量场
     field = null; gradX = gradY = gradZ = null; nGrid = 0;
@@ -786,6 +955,16 @@ window.Orbit3D = (function () {
     angCtl.setLimits(1.2, 12);
     angCtl.setAutoRotate(true);
     buildAngularAxes();
+
+    // 同理：小场景也要跟随容器尺寸变化（图表卡宽度随响应式布局改变）
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(function () {
+        const w = container.clientWidth, h = container.clientHeight;
+        if (w > 0 && h > 0) resizeAngular(w, h);
+      });
+      ro.observe(container);
+      angResizeObs = ro;
+    }
   }
 
   // 小坐标轴（x 红 / y 绿 / z 蓝，z 竖直）与参考球
@@ -908,11 +1087,207 @@ window.Orbit3D = (function () {
     angRenderer.setSize(w, h);
   }
 
+  // ---------------------------------------------------------------------------
+  // 教学辅助：参考球（linkRadialTo3D）与节面高亮（spotlightNodes）
+  // 这两者把"径向图上的一个横坐标"与"三维中的一层壳"在空间上对应起来，
+  // 是本工具区别于普通轨道查看器的关键教学动作。
+  // ---------------------------------------------------------------------------
+  let auxGroup = null;
+
+  function ensureAuxGroup() {
+    if (!auxGroup) { auxGroup = new THREE.Group(); scene.add(auxGroup); }
+    return auxGroup;
+  }
+  function clearAux() {
+    if (!auxGroup) return;
+    while (auxGroup.children.length) {
+      const c = auxGroup.children.pop();
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) c.material.dispose();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 三维视图上的"标注标签"
+  //
+  // ★ 为什么需要它：参考球、节面高亮这类辅助几何一旦画上去，就没有任何入口能取消。
+  //   智能体可以用 linkRadialTo3D{radius:0} 清掉，但用户自己（和课堂上的老师）
+  //   只能干看着——一个"加得上、去不掉"的标注等于把画面弄脏了。
+  //   这里在画布左上角挂一枚可点击的标签，点一下就撤销，标注变成可逆操作。
+  // ---------------------------------------------------------------------------
+  const chipEls = {};
+
+  // 当前标注状态：参考球半径与节面高亮。存下来是为了让演示「上一步」能把
+  // 这些画上去的辅助几何也一并撤掉（它们不在 OrbitApp 的状态里）。
+  let curRingRadius = 0;
+  let curSpotlight = null;      // { type, on } | null
+
+  function setChip(key, text, onClear, title) {
+    const host = containerRef.el;
+    if (!host) return;
+    let el = chipEls[key];
+    if (!el) {
+      el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'viewer-chip hidden';
+      el.addEventListener('click', onClear);
+      chipBar().appendChild(el);
+      chipEls[key] = el;
+    }
+    if (text) {
+      el.textContent = text;
+      el.title = title || '点击移除该标注';
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  }
+
+  /** 标签容器：懒创建，只建一次 */
+  function chipBar() {
+    let bar = containerRef.el.querySelector('.viewer-chips');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'viewer-chips';
+      containerRef.el.appendChild(bar);
+    }
+    return bar;
+  }
+
+  /**
+   * 画出半径为 radius 的参考球（线框），用于把径向分布的横坐标 r
+   * 与三维空间中的"一层球壳"对应起来。
+   * radius ≤ 0 表示**清除**参考球。
+   */
+  function ringHighlight(radius) {
+    const g = ensureAuxGroup();
+    // 移除旧的参考球（保留节面等其他辅助对象）
+    for (let i = g.children.length - 1; i >= 0; i--) {
+      if (g.children[i].userData.kind === 'ring') {
+        const c = g.children[i];
+        g.remove(c); if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose();
+      }
+    }
+    if (!(radius > 0)) {
+      curRingRadius = 0;
+      setChip('ring', null);
+      return;
+    }
+    curRingRadius = radius;
+
+    const seg = Math.max(24, Math.min(64, Math.round(radius * 6)));
+    const geo = new THREE.SphereGeometry(radius, seg, Math.max(12, Math.round(seg / 2)));
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffd24a, wireframe: true, transparent: true, opacity: 0.28, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.kind = 'ring';
+    g.add(mesh);
+    setChip('ring', '参考球 r = ' + radius.toFixed(2) + ' a₀  ✕', function () { ringHighlight(0); });
+  }
+
+  /**
+   * 高亮节面（把节点公式变成可点亮、可数的几何对象）。
+   *   type='radial'  → 在每个径向零点半径处画线框球（"套娃"结构）
+   *   type='angular' → 在每个角节点的 θ 处画圆锥、φ 处画过 z 轴的平面
+   * 节面几何由 math.js 确定性给出，不依赖视觉推断。
+   */
+  function spotlightNodes(type, on) {
+    const g = ensureAuxGroup();
+    // 清除旧的节面对象
+    for (let i = g.children.length - 1; i >= 0; i--) {
+      if (g.children[i].userData.kind === 'node') {
+        const c = g.children[i];
+        g.remove(c); if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose();
+      }
+    }
+    if (!on) {
+      curSpotlight = null;
+      setChip('nodes', null);
+      return;
+    }
+    curSpotlight = { type: type, on: true };
+    // 同一个标签兼管两种节面（radial/angular），点击即全部清除
+    setChip('nodes', (type === 'radial' ? '径向节面' : '角节面') + '高亮  ✕',
+      function () { spotlightNodes(type, false); });
+
+    const S = (window.OrbitApp && window.OrbitApp.getState()) || {};
+    const n = S.n, l = S.l, m = S.m, mode = S.wavefunction || 'real';
+    if (n == null || l == null) return;
+    const R = gridExtent || 10;
+
+    const matR = new THREE.MeshBasicMaterial({ color: 0x7ad4ff, wireframe: true, transparent: true, opacity: 0.30, depthWrite: false });
+    const matA = new THREE.MeshBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false });
+
+    if (type === 'radial') {
+      // 径向节面：以核为中心的球壳
+      const zeros = OM.radialZeros(n, l);
+      const seg = 48;
+      for (const r of zeros) {
+        const geo = new THREE.SphereGeometry(r, seg, 24);
+        const mesh = new THREE.Mesh(geo, matR.clone());
+        mesh.userData.kind = 'node';
+        g.add(mesh);
+      }
+      if (!zeros.length) matR.dispose();
+    } else {
+      const nodes = OM.angularNodes(l, Math.abs(m), mode);
+      // 锥面：用"圆环 + 母线"示意，读作以 z 轴为轴、半顶角 θ 的锥
+      for (const th of nodes.cones) {
+        const rho = R * Math.sin(th), z = R * Math.cos(th);
+        const circle = new THREE.EllipseCurve(0, 0, rho, rho, 0, Math.PI * 2, false, 0);
+        const pts = circle.getPoints(64).map((p) => new THREE.Vector3(p.x, p.y, z));
+        const cg = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(cg, new THREE.LineBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.55 }));
+        line.userData.kind = 'node';
+        g.add(line);
+        // 4 条母线，帮助读出锥面
+        for (let k = 0; k < 4; k++) {
+          const a = (k * Math.PI) / 2;
+          const lg = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(rho * Math.cos(a), rho * Math.sin(a), z),
+          ]);
+          const ll = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.35 }));
+          ll.userData.kind = 'node';
+          g.add(ll);
+        }
+      }
+      // 平面节点（实函数 m≠0）：过 z 轴的半透明矩形
+      for (const ph of nodes.planes) {
+        const geo = new THREE.PlaneGeometry(R * 2, R * 2);
+        const mesh = new THREE.Mesh(geo, matA.clone());
+        mesh.userData.kind = 'node';
+        // 平面法线方向为 φ+90°，绕 z 转 ph 使其落在方位角 ph 处
+        mesh.rotation.set(Math.PI / 2, 0, ph);
+        g.add(mesh);
+      }
+      matR.dispose();
+    }
+  }
+
   const api = {
     init, render, resize, setAutoRotate, resetView,
     updateCloud, updateSurface, setSurfaceLevel, setVisibility,
     disposeGrid, setNucleusVisible,
     initAngular, updateAngular, renderAngular, resizeAngular,
+    ringHighlight, spotlightNodes,
+    /** 取当前"画上去的辅助几何"状态（参考球 / 节面高亮） */
+    getAnnotations: () => ({ ring: curRingRadius, spotlight: curSpotlight }),
+    /** 还原辅助几何状态；供演示「上一步」回退使用 */
+    setAnnotations: (a) => {
+      a = a || {};
+      ringHighlight(a.ring > 0 ? a.ring : 0);
+      if (a.spotlight && a.spotlight.on) spotlightNodes(a.spotlight.type, true);
+      else spotlightNodes('radial', false);
+    },
+    /** 相机状态查询（供测试与"预设视角"复用） */
+    getCameraState: () => (camera ? {
+      pos: camera.position.toArray().map((v) => +v.toFixed(3)),
+      orient: camera.quaternion.toArray().map((v) => +v.toFixed(4)),
+      dist: viewCtl ? +viewCtl.getDistance().toFixed(3) : null,
+      gridExtent: +gridExtent.toFixed(3),
+    } : null),
   };
   return api;
 })();

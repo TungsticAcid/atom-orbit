@@ -21,6 +21,9 @@
     sectionMode: 'intensity',// 'intensity' | 'phase' | 'contour'
     angWhich: 'Y',           // 'Y' | 'Y2'
     radial: ['R', 'R2', 'D', 'D2'],
+    // ★ 叠加态（辅助功能）：terms 为空时退化为单一本征态 ψ_{n,l,m}
+    terms: [],               // [{n,l,m,mode,c:{re,im}}]
+    relPhase: 0,             // 相对相位 φ（≠ 真实时间，见方案 §5.3）
   };
   let lastFieldKey = null;
   const isMobile = window.matchMedia('(max-width: 768px)').matches;
@@ -142,22 +145,33 @@
   }
 
   function currentFieldKey() {
-    return state.n + '-' + state.l + '-' + state.m + '-' + state.mode + '-' + state.psiCrit;
+    const sig = (state.terms || []).map(function (t) {
+      return t.n + ',' + t.l + ',' + t.m + ',' + t.c.re.toFixed(3) + ',' + t.c.im.toFixed(3);
+    }).join('|');
+    return state.n + '-' + state.l + '-' + state.m + '-' + state.mode + '-' + state.psiCrit +
+      (sig ? '-S:' + sig + '@' + state.relPhase : '');
   }
 
   function updateViewer() {
     if (state.renderMode === 'surface') {
       const key = currentFieldKey();
       if (key !== lastFieldKey) {
-        const gridRes = isMobile ? 46 : 68;   // 较高分辨率 → 轮廓更平滑
-        Orbit3D.updateSurface(state.n, state.l, state.m, state.mode, gridRes, state.level, state.colorMode, state.psiCrit);
+        // 拖动相位滑块时用较低分辨率预览（每帧重建等值面，高分辨率会卡）；
+        // 松手后 __ORBIT_PREVIEW__ 复位，会以全分辨率重建一次
+        const preview = !!window.__ORBIT_PREVIEW__;
+        const gridRes = preview ? (isMobile ? 30 : 40) : (isMobile ? 46 : 68);
+        Orbit3D.updateSurface(state.n, state.l, state.m, state.mode, gridRes, state.level,
+          state.colorMode, state.psiCrit, state.terms, state.relPhase);
         lastFieldKey = key;
       } else {
         // 仅阈值/着色变化：复用已缓存的标量场与网格
         Orbit3D.setSurfaceLevel(state.level, state.colorMode, state.psiCrit);
       }
     } else {
-      const cloud = OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, state.colorMode);
+      const cloud = (state.terms && state.terms.length)
+        ? OM.samplePointsSuperposition(state.terms, state.pointCount, state.colorMode,
+            state.terms.map(function (t, i) { return i * state.relPhase; }))
+        : OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, state.colorMode);
       Orbit3D.updateCloud(cloud);
     }
     Orbit3D.setVisibility(state.renderMode);
@@ -173,11 +187,16 @@
     Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
   }
 
+  // 公式高亮状态（由 agent 的 highlightFormulaTerm 动作驱动）
+  // 'R' 径向 | 'Y' 角度 | 'L' 拉盖尔 | 'P' 勒让德 | 'N' 归一化常数 | null 无
+  let formulaHighlight = null;
+
   function updateFormula() {
-    const f = Formula.buildPsi(state.n, state.l, state.m, state.mode);
+    const f = Formula.buildPsi(state.n, state.l, state.m, state.mode, { highlight: formulaHighlight });
     els.formulaTitle.textContent = f.title;
     els.formulaNote.textContent = f.note;
-    katex.render(f.latex, els.formulaBox, { throwOnError: false, displayMode: true });
+    // trust:true 是 \htmlClass 生效的前提（用于按项高亮）
+    katex.render(f.latex, els.formulaBox, { throwOnError: false, displayMode: true, trust: true });
     // 右上角轨道标签：n + 支壳层字母 + m 下标（此前漏了 m），实函数附化学惯用名
     const sub = OM.SUBSHELL[Math.min(state.l, OM.SUBSHELL.length - 1)];
     const realName = (state.mode === 'real') ? Formula.realOrbitalName(state.l, state.m) : '';
@@ -248,6 +267,225 @@
     Orbit3D.renderAngular();
     requestAnimationFrame(animate);
   }
+
+  // ---- 对外门面（供 agent 层使用）------------------------------------------
+  // 设计原则：agent 层不直接操作 DOM / Three.js，一律经由这里的受控动作；
+  // 每个动作最终翻译为「对现有控件的设置 + recompute()」，最大化复用既有逻辑。
+  // 交互痕迹的采集不在这里做——由 perception-snapshot 轮询 getState() 差分得到，
+  // 因此**无需改动任何现有事件处理**（零侵入）。
+
+  /** 程序化设置滑块（会触发既有的 input 处理链） */
+  function setSlider(el, v) {
+    if (!el) return false;
+    const nv = Number(v);
+    if (!Number.isFinite(nv)) return false;
+    el.value = nv;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+
+  /** 程序化选中某个分段按钮 */
+  function setSeg(segId, attr, val) {
+    const btn = document.querySelector(segId + ' .seg-btn[' + attr + '="' + val + '"]');
+    if (!btn) return false;
+    setActive(btn);
+    return true;
+  }
+
+  // 动作表：每个动作用最朴素的方式驱动既有控件
+  const ACTIONS = {
+    // 仅供"只重算、不改参数"的场景（如叠加态系数/相位变化后触发一次重绘）
+    recomputeOnly() { return true; },
+
+    /**
+     * 恢复一整套视图状态（供演示「上一步」回退使用）。
+     *
+     * ★ 为什么不让回退去"反向执行"原来的动作：动作语义是有副作用的
+     *   （例如 setQuantumNumbers 会顺手退出叠加态），反向执行不一定回到原处。
+     *   直接写回快照才是严格可逆的。
+     * ★ 这里刻意**只改控件与 state、不触发重算**——重算由 applyAction 统一做一次，
+     *   否则一次回退会连着重算七八遍（等值面每次约 250ms，会明显卡顿）。
+     */
+    restoreState(p) {
+      const s = p && p.state;
+      if (!s) return false;
+      const silentSeg = (segId, attr, val) => {
+        const btn = document.querySelector(segId + ' .seg-btn[' + attr + '="' + (val == null ? '' : val) + '"]');
+        if (!btn) return;
+        btn.parentElement.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+      };
+      // 量子数：先设 n 再设 l/m，范围才正确
+      if (els.nSlider) els.nSlider.value = s.n;
+      syncRanges();
+      if (els.lSlider) els.lSlider.value = s.l;
+      syncRanges();
+      if (els.mSlider) els.mSlider.value = s.m;
+      syncRanges();
+      if (els.nInput) els.nInput.value = s.n;
+      if (els.lInput) els.lInput.value = s.l;
+      if (els.mInput) els.mInput.value = s.m;
+
+      silentSeg('#modeSeg', 'data-mode', s.wavefunction);
+      silentSeg('#renderSeg', 'data-mode', s.render);
+      silentSeg('#colorSeg', 'data-mode', s.color);
+      silentSeg('#psiSeg', 'data-mode', s.psiCriterion);
+      silentSeg('#planeSeg', 'data-p', s.plane);
+      silentSeg('#phaseSeg', 'data-mode', s.sectionMode);
+      silentSeg('#angSeg', 'data-k', s.angularWhich);
+      // 径向曲线组是多选
+      const want = s.radial || [];
+      document.querySelectorAll('#radialSeg .seg-btn').forEach((b) => {
+        b.classList.toggle('active', want.indexOf(b.getAttribute('data-k')) >= 0);
+      });
+      if (!document.querySelector('#radialSeg .seg-btn.active')) {
+        const db = document.querySelector('#radialSeg .seg-btn[data-k="D"]');
+        if (db) db.classList.add('active');
+      }
+      if (els.levelSlider) els.levelSlider.value = s.levelFraction;
+      if (els.pointCountSlider) els.pointCountSlider.value = s.pointCount;
+
+      const cb = document.querySelector('#autoRotate');
+      if (cb) {
+        cb.checked = !!s.autoRotate;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      // 叠加态（含相对相位）
+      state.terms = (s.terms || []).map((t) => ({
+        n: t.n, l: t.l, m: t.m, mode: t.mode || 'real', c: { re: t.c.re, im: t.c.im },
+      }));
+      state.relPhase = s.relPhase || 0;
+      return true;
+    },
+    setQuantumNumbers(p) {
+      // ★ 指定了具体量子数即意味着"要看这个单一本征态" → 自动退出叠加态。
+      //   否则会出现"演示脚本设了 n/l/m，画面却仍是叠加态"的错位
+      //   （叠加态优先于 n/l/m，不退出就看不到任何变化）。
+      const given = (p.n != null) || (p.l != null) || (p.m != null);
+      if (given && state.terms && state.terms.length) {
+        state.terms = []; state.relPhase = 0;
+        if (window.StateEditor && window.StateEditor.clear) window.StateEditor.clear();
+      }
+      // n → l → m 依次设置，每步都收敛范围，避免越界被夹紧而丢失意图
+      if (p.n != null) { setSlider(els.nSlider, p.n); syncRanges(); }
+      if (p.l != null) { setSlider(els.lSlider, p.l); syncRanges(); }
+      if (p.m != null) { setSlider(els.mSlider, p.m); syncRanges(); }
+    },
+    setWavefunctionMode(p) { return setSeg('#modeSeg', 'data-mode', p.mode); },
+    setRenderMode(p) { return setSeg('#renderSeg', 'data-mode', p.mode); },
+    setColorMode(p) { return setSeg('#colorSeg', 'data-mode', p.mode); },
+    setPsiCriterion(p) { return setSeg('#psiSeg', 'data-mode', p.criterion); },
+    setIsosurfaceLevel(p) { return setSlider(els.levelSlider, p.fraction); },
+    setParticleCount(p) { return setSlider(els.pointCountSlider, p.count); },
+    setAngularView(p) { return setSeg('#angSeg', 'data-k', p.which); },
+    setSectionPlane(p) { return setSeg('#planeSeg', 'data-p', p.plane); },
+    setSectionMode(p) { return setSeg('#phaseSeg', 'data-mode', p.mode); },
+    showRadial(p) {
+      const want = p.which || [];
+      document.querySelectorAll('#radialSeg .seg-btn').forEach((b) => {
+        b.classList.toggle('active', want.indexOf(b.getAttribute('data-k')) >= 0);
+      });
+      // 至少保留一条曲线，否则图表会空白
+      if (!document.querySelector('#radialSeg .seg-btn.active')) {
+        const d = document.querySelector('#radialSeg .seg-btn[data-k="D"]');
+        if (d) d.classList.add('active');
+      }
+      return true;
+    },
+    setAutoRotate(p) {
+      const cb = document.querySelector('#autoRotate');
+      if (!cb) return false;
+      cb.checked = !!p.on;
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    },
+    resetCamera() { Orbit3D.resetView(); return true; },
+    // 公式按项高亮（'R'|'Y'|'L'|'P'|'N'|null）——三向联动的中枢
+    setFormulaHighlight(p) { formulaHighlight = p.part || null; return true; },
+
+    // ---- 叠加态（辅助功能）----
+    setSuperposition(p) {
+      const list = (p && p.terms) || [];
+      state.terms = list.map(function (t) {
+        return {
+          n: t.n, l: t.l, m: t.m, mode: t.mode || 'real',
+          c: t.c || { re: 1, im: 0 },
+        };
+      });
+      state.relPhase = 0;
+      return true;
+    },
+    clearSuperposition() { state.terms = []; state.relPhase = 0; return true; },
+    setRelPhase(p) {
+      const v = Number(p && p.phase);
+      if (!Number.isFinite(v)) return false;
+      state.relPhase = v;
+      return true;
+    },
+  };
+
+  const actionListeners = [];
+
+  const facade = {
+    /** 只读状态快照（供 agent 的感知层使用） */
+    getState() {
+      const seg = (id, attr) => {
+        const b = document.querySelector(id + ' .seg-btn.active');
+        return b ? b.getAttribute(attr) : null;
+      };
+      return {
+        n: state.n, l: state.l, m: state.m,
+        wavefunction: state.mode,
+        render: state.renderMode,
+        color: state.colorMode,
+        psiCriterion: state.psiCrit,
+        levelFraction: state.level,
+        pointCount: state.pointCount,
+        plane: state.plane,
+        sectionMode: state.sectionMode,
+        angularWhich: state.angWhich,
+        radial: state.radial.slice(),
+        autoRotate: !!(document.querySelector('#autoRotate') || {}).checked,
+        terms: state.terms.map(function (t) { return { n: t.n, l: t.l, m: t.m, mode: t.mode || 'real', c: { re: t.c.re, im: t.c.im } }; }),
+        relPhase: state.relPhase,
+      };
+    },
+
+    /** 应用一个受控动作。返回 { ok, error? } */
+    applyAction(action) {
+      if (!action || !action.action) return { ok: false, error: '动作缺少 action 字段' };
+      const fn = ACTIONS[action.action];
+      if (!fn) return { ok: false, error: '未知动作：' + action.action };
+      let ok = true;
+      try { ok = fn(action.params || {}) !== false; }
+      catch (e) { return { ok: false, error: '动作执行异常：' + (e && e.message) }; }
+      if (!ok) return { ok: false, error: '动作参数无效或目标不存在' };
+      recompute();
+      // 通知订阅者（量子态编辑器据此同步 UI；主动服务也可用）
+      for (let i = 0; i < actionListeners.length; i++) {
+        try { actionListeners[i](action); } catch (e) { /* 订阅者异常不影响主流程 */ }
+      }
+      return { ok: true };
+    },
+
+    /** 订阅视图变化（供主动服务与埋点使用） */
+    onAction(fn) {
+      if (typeof fn === 'function') actionListeners.push(fn);
+      return () => {
+        const i = actionListeners.indexOf(fn);
+        if (i >= 0) actionListeners.splice(i, 1);
+      };
+    },
+
+    /** 导出当前视图为 PNG（教师备课用） */
+    exportViewPNG() {
+      try { return els.viewer.querySelector('canvas').toDataURL('image/png'); }
+      catch (e) { return null; }
+    },
+  };
+
+  window.OrbitApp = facade;
 
   // ---- 启动 ---------------------------------------------------------------
   function start() {
