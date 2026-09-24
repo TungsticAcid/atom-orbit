@@ -713,19 +713,33 @@ body.agent-open .layout {
 /* 消息工具条（复制 / 编辑 / 分支 / 重答）
    只挂在消息节点上、绝对定位在气泡右上；**不新增 DOM 层级包住正文** ——
    beginAssistant 的流式重渲染会整段重写 .agent-text 的 innerHTML，工具条必须挂在
-   外层 wrap 上才不会被冲掉。 */
+   外层 wrap 上才不会被冲掉。
+   ★ 平时用 visibility:hidden 而不是 opacity:0 —— 后者虽然看不见但仍然可点，
+     会留下"看不见却能误触"的按钮；而且半透明状态看着像和正文重叠。
+     悬停时带**实底**浮现：它会压住底下的文字，但有底板才读得清按钮本身。 */
 .agent-msg { position: relative; }
 .agent-msg-acts {
-  position: absolute; top: 2px; right: 4px;
-  display: flex; gap: 3px; opacity: 0.32; transition: opacity .15s;
+  /* ★ 浮在气泡**上方**（消息间距那一带），而不是压在气泡右上角：
+     后者会盖住正文末尾——而悬停时用户正在读那句话。有实底 + 悬停才现，
+     所以越出一点点到上一条消息的下缘也不影响阅读。 */
+  position: absolute; top: -22px; right: 4px; z-index: 2;
+  display: flex; gap: 3px;
+  /* ★ width:max-content 是必需的：绝对定位元素的 shrink-to-fit 宽度会被**包含块**
+     （窄的用户气泡）限死，于是三个按钮被挤成竖排的"复/制"。按钮本身也不许换行。 */
+  width: max-content;
+  padding: 2px 3px; border-radius: 8px;
+  background: rgba(10, 15, 31, .94);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+  visibility: hidden; opacity: 0; transition: opacity .15s;
 }
 .agent-msg:hover .agent-msg-acts,
-.agent-msg:focus-within .agent-msg-acts { opacity: 1; }
-.agent-msg-acts.busy { pointer-events: none; opacity: 0.15; }
+.agent-msg:focus-within .agent-msg-acts { visibility: visible; opacity: 1; }
+.agent-msg-acts.busy { pointer-events: none; opacity: .15; }
 .agent-act-btn {
   border: 1px solid var(--line, #2a3558); background: rgba(10, 15, 31, .8);
   color: var(--text-dim, #9aa7c6); font: inherit; font-size: 11px;
   padding: 1px 6px; border-radius: 6px; cursor: pointer; line-height: 1.6;
+  white-space: nowrap; flex: none;
 }
 .agent-act-btn:hover { color: var(--accent, #6ea8ff); border-color: var(--accent, #6ea8ff); }
 .agent-act-btn.ok { color: #6ee7a8; border-color: #6ee7a8; }
@@ -737,8 +751,15 @@ body.agent-open .layout {
 .agent-act-row:hover .agent-act-btn,
 .agent-act-row:focus-within .agent-act-btn { opacity: 1; }
 .agent-act-ret { margin-top: 6px; opacity: .7; white-space: pre-wrap; }
-/* 没有 hover 的设备（触屏）恒显 —— 没有 hover 就没有"悬停出现"这回事 */
-@media (hover: none) { .agent-msg-acts { opacity: 1; } }
+/* 没有 hover 的设备（触屏）：没有"悬停出现"这回事，直接常显，并改成气泡末尾一行 ——
+   绝对定位在右上会压住正文，而触屏用户没法规避。 */
+@media (hover: none) {
+  .agent-msg-acts {
+    visibility: visible; opacity: 1;
+    position: static; justify-content: flex-end; margin-top: 4px;
+    background: none; box-shadow: none; padding: 0;
+  }
+}
 
 /* 分支切换条：只在"真正分叉"的地方出现（懒渲染，多数会话一条都不显示） */
 .agent-branch-bar {
@@ -793,6 +814,10 @@ body.agent-open .layout {
   .agent-fab { width: 46px; height: 46px; right: 12px; bottom: 12px; }
   .agent-fab-icon { font-size: 21px; }
   /* 小屏上把工具条从"绝对定位右上"改成气泡末尾一行，免得压住正文 */
-  .agent-msg-acts { position: static; justify-content: flex-end; margin-top: 4px; opacity: 1; }
+  .agent-msg-acts {
+    visibility: visible; opacity: 1;
+    position: static; justify-content: flex-end; margin-top: 4px;
+    background: none; box-shadow: none; padding: 0;
+  }
   .agent-act-btn { min-height: 28px; }
 }

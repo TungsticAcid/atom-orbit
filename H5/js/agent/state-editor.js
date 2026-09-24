@@ -50,40 +50,40 @@ window.StateEditor = (function () {
     // ★ sp³ 的 4 个等价杂化轨道：s 系数恒为 +½，三个 p 取正四面体的四个方向
     'sp3-1': {
       label: 'sp³-1', terms: sp3(1, 1, 1),
-      note: 'ψ = ½(s + p_x + p_y + p_z)。四个 sp³ 完全等价，指向**正四面体**，两两夹角 109.5°。',
+      note: '$\\psi = \\frac{1}{2}(s + p_x + p_y + p_z)$。四个 sp³ 完全等价，指向**正四面体**，两两夹角 109.5°。',
     },
     'sp3-2': {
       label: 'sp³-2', terms: sp3(1, -1, -1),
-      note: 'ψ = ½(s + p_x − p_y − p_z)。与 sp³-1 等价且正交，指向另一个顶点。',
+      note: '$\\psi = \\frac{1}{2}(s + p_x - p_y - p_z)$。与 sp³-1 等价且正交，指向另一个顶点。',
     },
     'sp3-3': {
       label: 'sp³-3', terms: sp3(-1, 1, -1),
-      note: 'ψ = ½(s − p_x + p_y − p_z)。与 sp³-1 等价且正交，指向第三个顶点。',
+      note: '$\\psi = \\frac{1}{2}(s - p_x + p_y - p_z)$。与 sp³-1 等价且正交，指向第三个顶点。',
     },
     'sp3-4': {
       label: 'sp³-4', terms: sp3(-1, -1, 1),
-      note: 'ψ = ½(s − p_x − p_y + p_z)。与 sp³-1 等价且正交，指向第四个顶点。',
+      note: '$\\psi = \\frac{1}{2}(s - p_x - p_y + p_z)$。与 sp³-1 等价且正交，指向第四个顶点。',
     },
     // sp²：三个轨道共面、两两 120°（只给一个看不出"共面"，故给全）
     'sp2-1': {
       label: 'sp²-1', terms: sp2(0),
-      note: 'ψ = (1/√3)s + √(2/3)p_x。三个等价轨道之一，**120° 共面**。',
+      note: '$\\psi = \\frac{1}{\\sqrt{3}}\\,s + \\sqrt{\\frac{2}{3}}\\,p_x$。三个等价轨道之一，**120° 共面**。',
     },
     'sp2-2': {
       label: 'sp²-2', terms: sp2(1),
-      note: 'ψ = (1/√3)s − (1/√6)p_x + (1/√2)p_y。由 sp²-1 绕 z 轴转 120° 得到。',
+      note: '$\\psi = \\frac{1}{\\sqrt{3}}\\,s - \\frac{1}{\\sqrt{6}}\\,p_x + \\frac{1}{\\sqrt{2}}\\,p_y$。由 sp²-1 绕 $z$ 轴转 120° 得到。',
     },
     'sp2-3': {
       label: 'sp²-3', terms: sp2(2),
-      note: 'ψ = (1/√3)s − (1/√6)p_x − (1/√2)p_y。由 sp²-1 绕 z 轴转 240° 得到。',
+      note: '$\\psi = \\frac{1}{\\sqrt{3}}\\,s - \\frac{1}{\\sqrt{6}}\\,p_x - \\frac{1}{\\sqrt{2}}\\,p_y$。由 sp²-1 绕 $z$ 轴转 240° 得到。',
     },
     'sp-1': {
       label: 'sp-1', terms: sp(1),
-      note: 'ψ = (1/√2)(s + p_z)。两个等价轨道之一，**180°** 直线型。',
+      note: '$\\psi = \\frac{1}{\\sqrt{2}}(s + p_z)$。两个等价轨道之一，**180°** 直线型。',
     },
     'sp-2': {
       label: 'sp-2', terms: sp(-1),
-      note: 'ψ = (1/√2)(s − p_z)。另一个 sp 轨道，与 sp-1 正交、恰好反向。',
+      note: '$\\psi = \\frac{1}{\\sqrt{2}}(s - p_z)$。另一个 sp 轨道，与 sp-1 正交、恰好反向。',
     },
   };
 
@@ -149,15 +149,37 @@ window.StateEditor = (function () {
   let dragging = false;
 
   /**
-   * 预设说明的轻量标记转换。
-   * note 是用 innerHTML 渲染的，所以 `**加粗**` 如果不转换就会**原样显示星号**；
-   * 同理 `p_x` 这类下标要转成 <sub>。集中在这里转一次，改 note 文案时不必手写 HTML。
+   * 预设说明的轻量标记转换（note 是用 innerHTML 渲染的）。
+   *   · `$...$` 行内公式 → **KaTeX**：公式就该是公式，而不是 "(1/√3)s − (1/√6)p_x" 这样的
+   *     纯文本；这是与 panel.js 的 renderRich 同一套约定，作者只需写 LaTeX。
+   *   · `**加粗**` → <b>（不转就会原样显示星号）
+   *   · `p_x` / `d_{xz}` → <sub>（兜底：万一某处没写成 $...$，也不至于露出下划线）
+   *
+   * ★ 先公式、后其余：KaTeX 的输出本身就是 HTML，若放在后面做，加粗与下标两条正则
+   *   会去动它生成的标签属性。故照 renderRich 的做法先把公式摘成占位符，最后再换回来。
    */
   function mdInline(s) {
-    return String(s == null ? '' : s)
+    let out = String(s == null ? '' : s);
+    const forms = [];
+    out = out.replace(/\$([^$\n]+?)\$/g, function (m, tex) {
+      forms.push(tex);
+      return '\u0002' + (forms.length - 1) + '\u0002';
+    });
+    out = out
       .replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>')
       .replace(/([spd])_\{([^}]+)\}/g, '$1<sub>$2</sub>')
       .replace(/([spd])_([xyz])/g, '$1<sub>$2</sub>');
+    return out.replace(/\u0002(\d+)\u0002/g, function (m, i) {
+      const tex = forms[+i];
+      try {
+        if (window.katex) {
+          return window.katex.renderToString(tex, {
+            throwOnError: false, displayMode: false, output: 'html', trust: true,
+          });
+        }
+      } catch (e) { /* 降级为原文 */ }
+      return '$' + tex + '$';
+    });
   }
 
   /** 从 localStorage 把自定义预设并回 PRESETS（键统一带 u- 前缀，不与内置冲突） */
@@ -320,7 +342,7 @@ window.StateEditor = (function () {
     // ★ 必须解释"为什么我填 0.35、它显示 0.37"：归一化会按比例缩放**全部**系数，
     //   所以任何单项的绝对值都只是"相对大小"。不写清楚，学生会以为工具算错了。
     host.appendChild(el('div', { class: 'se-hint', html:
-      '系数按 <b>Σ|c|² = 1</b> 自动归一化，因此<b>只有比值有物理意义</b>：'
+      '系数按 $\\sum_i |c_i|^2 = 1$ 自动归一化，因此**只有比值有物理意义**：'
       + '把某项填成 0.35，落库可能是 0.37（其余项会同比例缩放），这是归一化的必然结果。' }));
 
     const addRow = el('div', { class: 'se-addrow' });
@@ -379,7 +401,7 @@ window.StateEditor = (function () {
     host.appendChild(slider);
 
     host.appendChild(el('div', { class: 'se-note', html: mdInline(
-      'φ = (Eᵢ−Eⱼ)t/ħ 是**相对相位**，不是真实时间。真实振荡频率约 10¹⁵ Hz 无法可视化，'
+      '$\\varphi = (E_i - E_j)\\,t/\\hbar$ 是**相对相位**，不是真实时间。真实振荡频率约 $10^{15}$ Hz 无法可视化，'
       + '而干涉图样只依赖相对相位。' )}));
 
     renderObs();

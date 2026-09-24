@@ -793,9 +793,16 @@ window.Panel = (function () {
       next.onclick = () => go(1);
       bar.appendChild(prev);
       bar.appendChild(next);
-      const kid = S.children(ids[n.parent || n.seq])[here];
-      const txt = (kid && kid.n && kid.n.content) ? kid.n.content.slice(0, 12) : '（另一条分支）';
-      bar.appendChild(el('span', { class: 'agent-branch-txt', text: txt }));
+      // 预览**其他**分支的内容 —— 看分支条时想知道"另一条讲的是什么"。
+      // （自己在下面紧接着就会渲染出来，预览自己是多余的。）
+      const others = sibs.filter(function (id) { return id !== myId; }).slice(0, 2)
+        .map(function (id) {
+          const nd = S.nodeById(id);
+          return (nd && nd.content) ? nd.content.slice(0, 10) : '（动作记录）';
+        });
+      if (others.length) {
+        bar.appendChild(el('span', { class: 'agent-branch-txt', text: '另一条：' + others.join(' / ') }));
+      }
       node.parentNode.insertBefore(bar, node);
     });
   }

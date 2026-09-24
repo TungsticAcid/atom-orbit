@@ -271,10 +271,13 @@ window.ConvStore = (function () {
    * 从某节点分叉：把 leaf 移过去，再修一次协议。
    * ★ 分叉**不是"创建"动作，只是移动一个指针** —— 节点一个都不删，
    *   所以切回旧分支时它的后续消息都还在。
+   * ★ nodeId 允许为 null：表示"下一跳从空白开始"（编辑**第一条**提问时就是这样，
+   *   它的 parent 是 null）。旧实现在这里 nodeById(null) 拿不到节点就直接返回 false，
+   *   于是"编辑第一条"退化成线性追加、悄悄丢掉了分叉语义。
    */
   function branchFrom(nodeId) {
-    if (!nodeById(nodeId)) return false;
-    doc.leaf = nodeId;
+    if (nodeId != null && !nodeById(nodeId)) return false;
+    doc.leaf = nodeId || null;
     ensureValid();
     touch();
     scheduleSave();
@@ -319,11 +322,20 @@ window.ConvStore = (function () {
     return last;
   }
 
-  /** 同一 parent 下的兄弟节点 id（用于分支条：只在真正分叉处才 > 1） */
+  /**
+   * 同一 parent 下的兄弟节点 id（用于分支条：只在真正分叉处才 > 1）。
+   * ★ 根节点要单独处理：从**第一条**提问分叉时会产生"第二个根"，它们的 parent 都是
+   *   null —— 只返回自己就等于"看不见那条分支"，分支条永远不会出现。
+   */
   function siblings(nodeId) {
     const n = nodeById(nodeId);
     if (!n) return [];
-    if (!n.parent) return [nodeId];
+    const ns = nodes();
+    if (!n.parent) {
+      const roots = Object.keys(ns).filter(function (k) { return !ns[k].parent; });
+      roots.sort(function (a, b) { return ns[a].seq - ns[b].seq; });
+      return roots;
+    }
     return children(n.parent).map(function (c) { return c.id; });
   }
 

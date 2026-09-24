@@ -684,35 +684,6 @@
     /** 截面图的缩放/平移复位（智能体可用；对应图表角落的「复位缩放」小控件） */
     resetSectionView() { Charts.resetSectionView(); redrawSection(); return true; },
 
-    /**
-     * 把某张图按**当前状态**画进任意 canvas —— 供图表浮动窗复用同一条绘制路径。
-     * ★ 卡片与浮窗必须共用这一条路径，否则两处的"当前状态"会各自漂移
-     *   （浮窗里看到的可能不是卡片上那张图）。
-     */
-    drawChartInto(target, canvas) {
-      if (!canvas) return false;
-      if (target === 'radial') {
-        Charts.drawRadial(canvas, state.n, state.l, state.radial);
-        return true;
-      }
-      if (target === 'section') {
-        Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
-        return true;
-      }
-      return false;      // 角度分布是 three.js 单例，不支持（见 ChartOverlay 里的说明）
-    },
-
-    /**
-     * 给浮窗里的 canvas 绑上与卡片同一套交互（目前只有截面图有可交互的内容）。
-     * 视图变化时**两处都要重画** —— sectionView 是两者共享的状态。
-     */
-    attachChartInteractions(target, canvas, onRedraw) {
-      if (target !== 'section') return false;
-      return attachSectionView(canvas, () => {
-        redrawSection();                  // 卡片（含「复位缩放」小控件的显隐）
-        if (onRedraw) onRedraw();         // 浮窗自己
-      });
-    },
     // 公式按项高亮（'R'|'Y'|'L'|'P'|'N'|null）——三向联动的中枢
     setFormulaHighlight(p) { formulaHighlight = p.part || null; return true; },
 
@@ -788,6 +759,39 @@
         const i = actionListeners.indexOf(fn);
         if (i >= 0) actionListeners.splice(i, 1);
       };
+    },
+
+    /**
+     * 把某张图按**当前状态**画进任意 canvas —— 供图表浮动窗复用同一条绘制路径。
+     * ★ 卡片与浮窗必须共用这一条路径，否则两处的"当前状态"会各自漂移
+     *   （浮窗里看到的可能不是卡片上那张图）。
+     * ★ 这两个是**给浮窗模块直接调用的 API，不是动作** —— 它们先前被误加进了 ACTIONS
+     *   表，而动作表只经 applyAction 派发；ChartOverlay 直接读的是 facade，于是拿到
+     *   undefined、浮窗一直画不出内容（canvas 停在默认 300×150 空白）。
+     */
+    drawChartInto(target, canvas) {
+      if (!canvas) return false;
+      if (target === 'radial') {
+        Charts.drawRadial(canvas, state.n, state.l, state.radial);
+        return true;
+      }
+      if (target === 'section') {
+        Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
+        return true;
+      }
+      return false;      // 角度分布是 three.js 单例，不支持（见 ChartOverlay 里的说明）
+    },
+
+    /**
+     * 给浮窗里的 canvas 绑上与卡片同一套交互（目前只有截面图有可交互的内容）。
+     * 视图变化时**两处都要重画** —— sectionView 是两者共享的状态。
+     */
+    attachChartInteractions(target, canvas, onRedraw) {
+      if (target !== 'section') return false;
+      return attachSectionView(canvas, () => {
+        redrawSection();                  // 卡片（含「复位缩放」小控件的显隐）
+        if (onRedraw) onRedraw();         // 浮窗自己
+      });
     },
 
     /** 导出当前视图为 PNG（教师备课用） */
