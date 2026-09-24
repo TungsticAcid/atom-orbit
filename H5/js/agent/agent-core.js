@@ -24,7 +24,22 @@ window.AgentCore = (function () {
   // 又不至于把一轮对话拖成没完没了的续写。
   const MAX_CONTINUES = 2;
 
-  let history = [];          // 会话历史（OpenAI messages 格式，不含 system）
+  // 会话历史由 ConvStore 持有（分支树 + 持久化），这里不再自己维护一份。
+  // ★ 兜底：万一 conv-store.js 没加载（脚本顺序被改坏），退化成一个最小的内存实现，
+  //   免得整个智能体不可用。
+  const S = window.ConvStore || (function () {
+    const mem = [];
+    return {
+      load() {}, flush() {}, ensureValid() {}, scheduleSave() {},
+      append(o) { mem.push(o); return 'm' + mem.length; },
+      appendUser(t, og) { mem.push({ role: 'user', content: t, origin: og || 'user' }); return 'm' + mem.length; },
+      projection() { return mem.slice(); },
+      path() { return mem; },
+      activeLeafId: () => null,
+      isEmpty: () => !mem.length,
+      clearActiveSession() { mem.length = 0; },
+    };
+  })();
   let abortCtrl = null;
   let running = false;
   let aborted = false;
@@ -157,7 +172,7 @@ window.AgentCore = (function () {
       onError: handlers.onError || (() => {}),
     };
 
-    if (userText) history.push({ role: 'user', content: userText });
+    if (userText) S.appendUser(userText, 'user');
 
     const settings = (window.Settings && window.Settings.get) ? window.Settings.get() : null;
     if (!settings || !settings.apiKey) {
@@ -187,8 +202,13 @@ window.AgentCore = (function () {
         }
 
         // ② 组装 messages
+        // ★ 投影**当前分支**：ConvStore 是唯一真相，agent-core 不再自己维护一份 history。
+        //   投影是纯函数，因此不可能出现"裁剪后 tool_calls 悬空"这类不一致。
+        //   ensureValid() 前移到这里，顺带堵住"工具循环中途抛异常 → 尾部悬空 → 下次
+        //   请求 400"那个洞（详见 conv-store.js 的说明）。
+        S.ensureValid();
         const msgs = [{ role: 'system', content: buildSystem() }]
-          .concat(history);
+          .concat(S.projection());
 
         // 把快照作为一条临时的 system 注入（不写入 history，避免累积膨胀）
         if (snapshotText) {
@@ -233,7 +253,11 @@ window.AgentCore = (function () {
             function: { name: t.function.name, arguments: t.function.arguments },
           }));
         }
-        history.push(asstMsg);
+        // reasoning 与 diag 只**存档**、不上行（projection 会剥掉它们）——
+        // 存下来是为了刷新后"思考"折叠区与"没有正文"的说明能一字不差地重现
+        asstMsg.reasoning = streamedReasoning;
+        asstMsg.diag = { finishReason: out.finishReason };
+        S.append(asstMsg);
         if (out.content) H.onMessage({ role: 'assistant', content: out.content });
 
         // ⑤ 无工具调用 → 结束（截断的情况见下面第 ⑥ 步，要先处理掉）
@@ -245,7 +269,7 @@ window.AgentCore = (function () {
           if (aborted) {
             // 未执行的调用也要回灌一条结果，否则历史里 tool_calls 与 tool 消息不配对
             for (let k = i; k < out.toolCalls.length; k++) {
-              history.push({
+              S.append({
                 role: 'tool', tool_call_id: out.toolCalls[k].id,
                 content: JSON.stringify({ aborted: true, note: '用户已中止本次循环，该动作未执行' }),
               });
@@ -262,7 +286,7 @@ window.AgentCore = (function () {
           executedTools.push(name);
           H.onToolResult({ name, args, result, round: rounds });
 
-          history.push({
+          S.append({
             role: 'tool', tool_call_id: tc.id,
             content: JSON.stringify(result),
           });
@@ -277,11 +301,8 @@ window.AgentCore = (function () {
           H.onNotice({ kind: 'truncated', round: rounds, continues: continues });
           if (continues < MAX_CONTINUES) {
             continues++;
-            history.push({
-              role: 'user',
-              content: '（上一条回复因长度上限被截断，请从中断处继续写完，不要重复已经写过的内容。'
-                + '公式务必写成：行内 $…$ 不跨行，独立成行的 $$…$$ 独占一行。）',
-            });
+            S.appendUser('（上一条回复因长度上限被截断，请从中断处继续写完，不要重复已经写过的内容。'
+              + '公式务必写成：行内 $…$ 不跨行，独立成行的 $$…$$ 独占一行。）', 'continuation');
             continue;
           }
           H.onNotice({ kind: 'truncated_giveup', continues: continues });
@@ -327,14 +348,16 @@ window.AgentCore = (function () {
 
   function reset() {
     stop();
-    history = [];
+    // 清空**当前会话的内容**（会话本身保留）—— 原先这里清的是那个唯一的模块内数组
+    S.clearActiveSession();
     running = false;
   }
 
   return {
     send, stop, reset,
     isRunning: () => running,
-    getHistory: () => history.slice(),
+    /** 当前分支的 OpenAI messages（投影，每次生成新的对象，不会与内部状态共享引用） */
+    getHistory: () => S.projection(),
     buildSystem,
     _nodePrompt: '',
   };

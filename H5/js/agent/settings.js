@@ -163,13 +163,28 @@ window.Settings = (function () {
     body.appendChild(el('div', { class: 'agent-sgroup-title', text: '数据与隐私' }));
     const g3 = el('div', { class: 'agent-sgroup' });
     g3.appendChild(el('div', { class: 'agent-note', text:
-      '· 学情与设置只存本机浏览器（localStorage），不上传。\n' +
-      '· 对话内容不落库；只保留结构化动作序列用于复现与审计。\n' +
+      '· 学情、设置与对话记录只存本机浏览器（localStorage），不上传。\n' +
+      '· 对话记录可以在面板里清空；也可用下面的按钮一次清掉全部本机数据。\n' +
       '· API Key 只发往你填写的接入点，不经过任何第三方中转。' }));
     const clearBtn = el('button', { class: 'agent-btn danger', text: '清除本机全部数据' });
     clearBtn.onclick = () => {
-      if (!confirm('将清除本机的设置、学情与埋点数据，且不可恢复。确定？')) return;
-      try { localStorage.removeItem(KEY); localStorage.removeItem('orbit.mastery'); localStorage.removeItem('orbit.trace'); } catch (e) {}
+      if (!confirm('将清除本机的设置、学情、对话记录与埋点数据，且不可恢复。确定？')) return;
+      try {
+        localStorage.removeItem(KEY);
+        localStorage.removeItem('orbit.mastery');
+        localStorage.removeItem('orbit.trace');
+        localStorage.removeItem('orbit.agent.fabPos');
+        // ★ 原先漏了自定义预设：按钮写着"清除本机全部数据"，却一直没删它们
+        localStorage.removeItem('orbit.statePresets');
+        // 对话是"一个索引 key + 每个会话一个 key"，必须按前缀遍历删 ——
+        // 漏了这一步，"清除全部数据"会把整段对话留在本机
+        const convKeys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.indexOf('orbit.agent.conv') === 0) convKeys.push(k);
+        }
+        convKeys.forEach((k) => localStorage.removeItem(k));
+      } catch (e) { /* 忽略 */ }
       cache = null;
       alert('已清除。页面将刷新。');
       location.reload();

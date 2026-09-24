@@ -179,6 +179,8 @@
   <!-- 智能体层 -->
   <script src="js/agent/llm-client.js"></script>
   <script src="js/agent/settings.js"></script>
+  <!-- 对话存储：多会话 / 分支树 / 持久化。必须在 agent-core 之前加载（后者依赖它） -->
+  <script src="js/agent/conv-store.js"></script>
   <script src="js/agent/perception-snapshot.js"></script>
   <script src="js/agent/scene-bridge.js"></script>
   <script src="js/agent/knowledge.js"></script>

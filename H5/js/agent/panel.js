@@ -366,19 +366,25 @@ window.Panel = (function () {
   // ---------------------------------------------------------------------------
   // 消息渲染
   // ---------------------------------------------------------------------------
-  function addMsg(html, cls) {
+  /**
+   * @param {string} [mid] 对应的 ConvStore 节点 id —— 挂上之后，恢复路径与 fork/编辑
+   *   才能定位"这条消息是哪一条"。不传就是原行为（多数调用点不需要）。
+   */
+  function addMsg(html, cls, mid) {
     const m = el('div', { class: 'agent-msg ' + (cls || '') , html: html });
+    if (mid) m.dataset.mid = mid;
     msgBox.appendChild(m);
     scrollDown();
     return m;
   }
   function scrollDown() { msgBox.scrollTop = msgBox.scrollHeight; }
 
-  function addUser(text) { addMsg(escapeHtml(text), 'user'); }
+  function addUser(text, mid) { return addMsg(escapeHtml(text), 'user', mid); }
 
   /** 助手消息：思考折叠 + 流式正文 */
-  function beginAssistant() {
+  function beginAssistant(mid) {
     const wrap = el('div', { class: 'agent-msg assistant' });
+    if (mid) wrap.dataset.mid = mid;
     const think = el('details', { class: 'agent-think' });
     think.appendChild(el('summary', { text: '思考中…' }));
     const thinkBody = el('div', { class: 'agent-think-body' });
@@ -485,6 +491,101 @@ window.Panel = (function () {
     return d;
   }
 
+  // ---------------------------------------------------------------------------
+  // 恢复路径：按 ConvStore 的当前分支重建整个消息区
+  // ---------------------------------------------------------------------------
+  /**
+   * 为一个回合建静态容器（非流式）。一轮回复可能有多条 assistant 节点（多轮工具调用），
+   * 它们都进**同一个**容器 —— 这样"回合组"的 dataset.mid 就是它起始 user 节点的 id，
+   * 组上的「重答」语义 = 重发这条 user 消息，多轮工具调用被正确当作一个整体。
+   */
+  function beginStaticTurn(mid) {
+    const wrap = el('div', { class: 'agent-msg assistant' });
+    if (mid) wrap.dataset.mid = mid;
+    const body = el('div', { class: 'agent-text' });
+    wrap.appendChild(body);
+    msgBox.appendChild(wrap);
+    return {
+      wrap: wrap,
+      setReasoning(text) {
+        if (!text) return;
+        let think = wrap.querySelector('.agent-think');
+        if (!think) {
+          think = el('details', { class: 'agent-think' });
+          think.appendChild(el('summary', { text: '思考过程' }));
+          think.appendChild(el('div', { class: 'agent-think-body' }));
+          wrap.insertBefore(think, body);
+          if (!(window.Settings.get().showReasoning)) think.classList.add('hidden');
+        }
+        think.querySelector('.agent-think-body').textContent = text;
+      },
+      addText(text) {
+        if (!text || !text.trim()) return;
+        body.appendChild(el('div', { html: renderRich(text, { streaming: false }) }));
+      },
+    };
+  }
+
+  /** 恢复路径的动作气泡：判据与直播路径完全一致（applySceneActions 或 ACTION_LABEL 里有名字的） */
+  function addActionBubbleForCall(tc, toolNode) {
+    const name = tc.function && tc.function.name;
+    if (!name) return;
+    let args = {};
+    try { args = JSON.parse((tc.function && tc.function.arguments) || '{}'); } catch (e) { args = {}; }
+    let result = null;
+    if (toolNode) { try { result = JSON.parse(toolNode.content); } catch (e) { result = null; } }
+    if (name === 'applySceneActions') addActionBubble(name, (args && args.actions) || [], result);
+    else if (ACTION_LABEL[name]) addActionBubble(name, args, result);
+  }
+
+  /**
+   * 按当前分支重建消息区（刷新后调用）。
+   * ★ 分组规则必须与直播路径一致，否则用户会觉得"刷新后变了样"：
+   *   · 真用户消息 → 关上一组、渲染气泡、开新组（其 id 即组 id）
+   *   · internal → 关上一组、**不渲染气泡**（与直播一致）
+   *   · continuation → 不渲染、不开新组（它属于上一条回答的续写）
+   *   · assistant / tool → 进当前组；动作气泡由 tool_calls 与对应 tool 节点**派生**
+   *     （所以动作气泡不必存进 store）
+   *   · card（题目卡等）→ 归后续批次渲染，这里先跳过
+   */
+  function renderPath() {
+    const S = window.ConvStore;
+    if (!S) return;
+    msgBox.innerHTML = '';
+    const chain = S.path();
+    if (!chain.length) { renderEmptyState(); return; }
+    const ids = S.idMap ? S.idMap() : {};
+    const idOf = (n) => ids[n.seq] || null;
+    const toolByCall = Object.create(null);
+    chain.forEach(function (n) {
+      if (n.role === 'tool' && n.tool_call_id) toolByCall[n.tool_call_id] = n;
+    });
+
+    let turn = null;
+    let turnMid = null;      // 当前回合**起始 user 节点**的 id —— 组的 dataset.mid 取它
+    chain.forEach(function (n) {
+      if (n.role === 'card') { turn = null; turnMid = null; return; }
+      if (n.role === 'user') {
+        if (n.origin === 'continuation') return;      // 续写提示：不渲染、不开新组
+        turn = null;                                  // 关上一组
+        turnMid = idOf(n);
+        if (n.origin === 'internal') return;          // 内部提示：不渲染气泡
+        addUser(n.content, idOf(n));
+        return;
+      }
+      if (n.role === 'assistant') {
+        if (!turn) turn = beginStaticTurn(turnMid);
+        if (n.reasoning) turn.setReasoning(n.reasoning);
+        turn.addText(n.content);
+        (n.tool_calls || []).forEach(function (tc) {
+          addActionBubbleForCall(tc, toolByCall[tc.id]);
+        });
+        return;
+      }
+    });
+    scrollDown();
+  }
+
   const ACTION_LABEL = {
     setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
     setWavefunctionMode: '切换实/复函数', setRenderMode: '切换渲染方式',
@@ -542,12 +643,24 @@ window.Panel = (function () {
       return;
     }
     inputEl.value = ''; inputEl.style.height = 'auto';
-    addUser(text);
-    await runAgent(text);
+    // ★ 先落树、再发送：send(null) 不会重复追加（agent-core 里是 `if (userText)`），
+    //   于是"这条消息归属哪一轮"只有一处真相 —— fork / 编辑才定位得到它。
+    const S = window.ConvStore;
+    const mid = S ? S.appendUser(text, 'user') : null;
+    addUser(text, mid);
+    await runAgent(null, mid);
   }
 
-  async function runAgent(userText) {
-    cur = beginAssistant();
+  /**
+   * @param {string|null} userText 传 null 表示"消息已由调用方落树"（doSend 与 fork / 编辑
+   *   路径都这样）；其余调用方（练习 / 演示）仍传文本，这里代为落树，但**不渲染用户
+   *   气泡** —— 保持它们原本的样子。
+   * @param {string} [mid] 该回合起始 user 节点的 id，用来给消息组打标记
+   */
+  async function runAgent(userText, mid) {
+    const S = window.ConvStore;
+    if (userText != null && S) mid = S.appendUser(userText, 'internal');
+    cur = beginAssistant(mid);
     let reasoning = '', content = '';
     let lastBubble = null;
     let truncated = false;
@@ -773,6 +886,14 @@ window.Panel = (function () {
 
   function init() {
     build();
+    // ★ 恢复上次的对话：ConvStore 持有分支树与持久化，这里只负责"把它画出来"。
+    //   build() 末尾已经显示过一次欢迎语，renderPath 会清空消息区重画（无害）。
+    const S = window.ConvStore;
+    if (S) {
+      S.load();
+      if (S.isEmpty()) renderEmptyState();
+      else renderPath();
+    }
     bindSceneProgress();
     window.addEventListener('resize', () => {
       const r = fab.getBoundingClientRect();
