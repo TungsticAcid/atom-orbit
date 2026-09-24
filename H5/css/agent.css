@@ -555,6 +555,13 @@ body.agent-open .layout {
 
 .se-list { display: flex; flex-direction: column; gap: 5px; }
 .se-term { display: flex; align-items: center; gap: 5px; }
+/* 组分表表头：让"纵向这几个数字框各是什么"一目了然（.se-num 46px / .se-amp 56px 对齐） */
+.se-term.se-head { margin-bottom: 1px; }
+.se-term.se-head .se-hcol {
+  width: 46px; text-align: center; font-size: 11px; line-height: 1.2;
+  color: var(--text-dim, #9aa7c6); cursor: help;
+}
+.se-term.se-head .se-hcol-c { width: 56px; }
 .se-idx { font-size: 11px; color: var(--text-dim, #9aa7c6); width: 14px; }
 .se-num, .se-amp {
   width: 46px; background: var(--card, #151c33); border: 1px solid var(--line, #2a3558);

@@ -24,7 +24,7 @@
     plane: 'xz',             // 截面平面
     sectionMode: 'intensity',// 'intensity' | 'phase' | 'contour'
     angWhich: 'Y',           // 'Y' | 'Y2'
-    radial: ['R', 'R2', 'D', 'D2'],
+    radial: ['R', 'R2', 'D'],   // D² 已移除（零点与峰值和 D 完全相同，见 charts.js 的说明）
     // ★ 叠加态（辅助功能）：terms 为空时退化为单一本征态 ψ_{n,l,m}
     terms: [],               // [{n,l,m,mode,c:{re,im}}]
     relPhase: 0,             // 相对相位 φ（≠ 真实时间，见方案 §5.3）
@@ -238,11 +238,21 @@
   let formulaHighlight = null;
 
   function updateFormula() {
-    const f = Formula.buildPsi(state.n, state.l, state.m, state.mode, { highlight: formulaHighlight });
+    // ★ 叠加态要单独出公式：否则公式区还停在"上一个单一本征态"，
+    //   与三维视图里真正画出来的东西对不上。
+    const sup = (state.terms && state.terms.length)
+      ? Formula.buildSuperposition(state.terms) : null;
+    const f = sup || Formula.buildPsi(state.n, state.l, state.m, state.mode, { highlight: formulaHighlight });
     els.formulaTitle.textContent = f.title;
     els.formulaNote.textContent = f.note;
     // trust:true 是 \htmlClass 生效的前提（用于按项高亮）
     katex.render(f.latex, els.formulaBox, { throwOnError: false, displayMode: true, trust: true });
+    if (sup) {
+      els.orbitTitle.innerHTML = '叠加态' +
+        '<span class="orbit-real">' + state.terms.length + ' 个分量</span>';
+      els.modeBadge.textContent = '叠加态';
+      return;
+    }
     // 右上角轨道标签：n + 支壳层字母 + m 下标（此前漏了 m），实函数附化学惯用名
     const sub = OM.SUBSHELL[Math.min(state.l, OM.SUBSHELL.length - 1)];
     const realName = (state.mode === 'real') ? Formula.realOrbitalName(state.l, state.m) : '';
@@ -280,6 +290,18 @@
     bindNumToSlider(els.pointCountInput, els.pointCountSlider, (v) => v * 10000, 0.8, 8);
     els.levelSlider.addEventListener('input', () => scheduleUpdate());
     els.pointCountSlider.addEventListener('input', () => scheduleUpdate());
+    // 径向图的特征标注：单选，再点一次取消（与曲线开关并列在卡片头，不再是"看不见的"状态）
+    const markSeg = $('#radialMarkSeg');
+    if (markSeg) {
+      markSeg.addEventListener('click', (e) => {
+        const btn = e.target.closest('.seg-btn');
+        if (!btn) return;
+        const wasOn = btn.classList.contains('active');
+        const f = wasOn ? null : btn.getAttribute('data-m');
+        // 走动作通路，图表与界面状态只在一处维护
+        window.OrbitApp.applyAction({ action: 'setRadialMarks', params: { target: 'ALL', feature: f } });
+      });
+    }
     // 单选分段
     bindSeg('#modeSeg', 'data-mode');
     bindSeg('#renderSeg', 'data-mode');
@@ -447,6 +469,25 @@
       if (!cb) return false;
       cb.checked = !!p.on;
       cb.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    },
+    /**
+     * 径向图的特征标注（峰值 / 零点）—— 与曲线显隐是**同一套控件语义**：
+     * 标线只画在"当前可见的曲线"上，关掉 R 曲线，R 的峰值线也跟着没了。
+     * feature 为空表示清除标注。target='ALL' 时 R 与 D 各自用自己的颜色标。
+     */
+    setRadialMarks(p) {
+      const f = p && p.feature;
+      const target = p && p.target ? p.target : 'ALL';
+      const seg = document.querySelector('#radialMarkSeg');
+      if (seg) {
+        seg.querySelectorAll('.seg-btn').forEach((b) => {
+          b.classList.toggle('active', !!f && b.getAttribute('data-m') === f);
+        });
+      }
+      if (window.Charts && window.Charts.setRadialHighlight) {
+        window.Charts.setRadialHighlight(f ? target : null, f);
+      }
       return true;
     },
     resetCamera() { Orbit3D.resetView(); return true; },

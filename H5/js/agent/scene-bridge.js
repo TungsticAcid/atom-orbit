@@ -75,7 +75,7 @@ window.SceneBridge = (function () {
     showRadial: {
       group: '径向', concept: 'K3',
       desc: '选择径向图显示哪些曲线（可多选）',
-      params: { which: "('R'|'R2'|'D'|'D2')[]" },
+      params: { which: "('R'|'R2'|'D')[]" },
     },
     highlightRadialFeature: {
       group: '径向', concept: 'K3',
@@ -417,9 +417,9 @@ window.SceneBridge = (function () {
         return { params: { from: f, to: t, durationMs: clampNum(p.durationMs, 300, 6000) || DEFAULT_SWEEP_MS } };
       }
       case 'showRadial': {
-        const ok = ['R', 'R2', 'D', 'D2'];
+        const ok = ['R', 'R2', 'D'];      // D² 已从界面移除（与 D 的节点结构完全重复）
         const which = (p.which || []).filter((k) => ok.indexOf(k) >= 0);
-        return which.length ? { params: { which } } : { err: 'which 非法（应为 R/R2/D/D2 的非空子集）' };
+        return which.length ? { params: { which } } : { err: 'which 非法（应为 R/R2/D 的非空子集）' };
       }
       case 'highlightRadialFeature':
         if (['R', 'D'].indexOf(p.target) < 0) return { err: 'target 应为 R 或 D' };
@@ -552,9 +552,9 @@ window.SceneBridge = (function () {
       case 'setFormulaHighlight': return A.applyAction({ action: 'setFormulaHighlight', params: p });
 
       case 'highlightRadialFeature':
-        if (!window.Charts || !window.Charts.setRadialHighlight) return { ok: false, error: '图表高亮能力未就绪' };
-        window.Charts.setRadialHighlight(p.target, p.feature);
-        return { ok: true };
+        // 走 setRadialMarks 动作：它同时更新图表与面板上的标注控件，
+        // 用户之后可以自己把标注关掉（否则智能体画了就再也没人能收）
+        return A.applyAction({ action: 'setRadialMarks', params: { target: p.target, feature: p.feature } });
 
       case 'linkRadialTo3D':
         if (!hooks.ringHighlight) return { ok: false, error: '三维参考球能力未注册' };

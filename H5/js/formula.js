@@ -144,6 +144,52 @@ window.Formula = (function () {
    *     可联动高亮对应的图表区域与三维特征。
    *   依赖 KaTeX 的 \htmlClass（渲染时需传 trust:true）。
    */
+  /**
+   * 叠加态公式：ψ = Σ cᵢψᵢ 的展开式 + 各分量权重 |cᵢ|²。
+   *
+   * ★ 为什么必须单独构建：updateFormula 原先只按 (n,l,m,mode) 生成公式，切到叠加态后
+   *   公式区还停在"上一个单一本征态"，与三维视图里真正画出来的东西不是一回事。
+   *
+   * ★ 顺带把 |cᵢ|² 一并列出 —— 它就是"测到该分量的概率"，是叠加态最该讲清楚的量，
+   *   而它正好由程序算出（不经过模型）。放在公式下方比写在正文里更可靠。
+   *
+   * @param {Array} terms [{n,l,m,c:{re,im}}]
+   * @returns {Object|null} 与 buildPsi 同构的 { title, note, latex, mLabel, modeName }
+   */
+  function buildSuperposition(terms) {
+    if (!terms || !terms.length) return null;
+    const comp = terms.map(function (t) {
+      const re = t.c.re, im = t.c.im || 0;
+      const mag = Math.sqrt(re * re + im * im);
+      const sub = OM.SUBSHELL[Math.min(t.l, OM.SUBSHELL.length - 1)];
+      return {
+        re: re, mag: mag, w: mag * mag,
+        nm: '\\psi_{' + t.n + ',' + t.l + ',' + t.m + '}',
+        label: t.n + sub + (t.m !== 0 ? '（m=' + (t.m > 0 ? '+' : '') + t.m + '）' : ''),
+      };
+    });
+    // 展开式：系数为 1 时省略；第一项为负要带负号，其余用 ± 连接
+    let expr = '';
+    comp.forEach(function (x, i) {
+      const abs = Math.abs(x.re);
+      const cf = (Math.abs(abs - 1) < 1e-9) ? '' : abs.toFixed(3) + '\\,';
+      expr += (i === 0 ? (x.re < 0 ? '-' : '') : (x.re < 0 ? '-' : '+')) + cf + x.nm;
+    });
+    const latex = '\\begin{aligned}'
+      + '\\psi &= \\sum_{i} c_i\\,\\psi_{n_i,l_i,m_i} \\\\[2pt]'
+      + '&= ' + expr
+      + '\\end{aligned}';
+    const note = '系数按 Σ|cᵢ|² = 1 自动归一化；|cᵢ|² 是测到该分量的概率 —— '
+      + comp.map(function (x) { return x.label + ' ' + x.w.toFixed(3); }).join('、');
+    return {
+      title: '叠加态 · ' + terms.length + ' 个分量',
+      note: note,
+      latex: latex,
+      mLabel: '',
+      modeName: '叠加态',
+    };
+  }
+
   function buildPsi(n, l, m, mode, opts) {
     const hl = (opts && opts.highlight) || null;
     /** 按需把某个片段包进高亮 class */
@@ -261,5 +307,5 @@ window.Formula = (function () {
     return '径向节点 ' + radialNodes + ' 个、角节点 ' + angularNodes + ' 个；' + orient;
   }
 
-  return { buildPsi, legendreCoeffs, laguerreCoeffs, realOrbitalName };
+  return { buildPsi, buildSuperposition, legendreCoeffs, laguerreCoeffs, realOrbitalName };
 })();

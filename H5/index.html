@@ -109,14 +109,20 @@
       <div class="card chart-card">
         <div class="card-head">
           <span class="card-title">径向分布</span>
-          <div class="seg small" id="radialSeg">
-            <button class="seg-btn active" data-k="R">R</button>
-            <button class="seg-btn active" data-k="R2">R²</button>
-            <button class="seg-btn active" data-k="D">D</button>
-            <button class="seg-btn active" data-k="D2">D²</button>
+          <div class="card-head-right">
+            <div class="seg small" id="radialSeg">
+              <button class="seg-btn active" data-k="R">R</button>
+              <button class="seg-btn active" data-k="R2">R²</button>
+              <button class="seg-btn active" data-k="D">D</button>
+            </div>
+            <div class="seg small" id="radialMarkSeg" title="在选中曲线上标出峰值 / 零点半径">
+              <button class="seg-btn" data-m="peak">峰值</button>
+              <button class="seg-btn" data-m="zeros">零点</button>
+            </div>
           </div>
         </div>
         <canvas id="radialChart" class="chart"></canvas>
+        <div class="hint">各曲线分别按自身峰值归一化，故看形状与峰值位置、不比绝对高度；竖线标的是选中曲线的峰值/零点半径</div>
       </div>
 
       <div class="card chart-card">

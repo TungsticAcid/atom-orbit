@@ -148,6 +148,18 @@ window.StateEditor = (function () {
   let state = { terms: [], relPhase: 0, preset: 'pure' };
   let dragging = false;
 
+  /**
+   * 预设说明的轻量标记转换。
+   * note 是用 innerHTML 渲染的，所以 `**加粗**` 如果不转换就会**原样显示星号**；
+   * 同理 `p_x` 这类下标要转成 <sub>。集中在这里转一次，改 note 文案时不必手写 HTML。
+   */
+  function mdInline(s) {
+    return String(s == null ? '' : s)
+      .replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>')
+      .replace(/([spd])_\{([^}]+)\}/g, '$1<sub>$2</sub>')
+      .replace(/([spd])_([xyz])/g, '$1<sub>$2</sub>');
+  }
+
   /** 从 localStorage 把自定义预设并回 PRESETS（键统一带 u- 前缀，不与内置冲突） */
   function loadCustomPresets() {
     let saved = {};
@@ -255,7 +267,7 @@ window.StateEditor = (function () {
     host.appendChild(row);
 
     if (state.preset && PRESETS[state.preset] && PRESETS[state.preset].note) {
-      host.appendChild(el('div', { class: 'se-note', html: PRESETS[state.preset].note }));
+      host.appendChild(el('div', { class: 'se-note', html: mdInline(PRESETS[state.preset].note) }));
     }
 
     if (!state.terms.length) {
@@ -265,8 +277,16 @@ window.StateEditor = (function () {
       return;
     }
 
-    // 组分表
+    // 组分表（**带表头**：纵向这几个数字框各是什么，原先完全没说明）
     const list = el('div', { class: 'se-list' });
+    const head = el('div', { class: 'se-term se-head' });
+    head.appendChild(el('span', { class: 'se-idx', text: '#' }));
+    [['n', '主量子数 n'], ['l', '角量子数 l'], ['m', '磁量子数 m']].forEach(function (kv) {
+      head.appendChild(el('span', { class: 'se-hcol', text: kv[0], title: kv[1] }));
+    });
+    head.appendChild(el('span', { class: 'se-hcol se-hcol-c', text: 'c',
+      title: '该分量的系数（本模块只做实系数组合，虚部恒为 0）' }));
+    list.appendChild(head);
     state.terms.forEach(function (t, i) {
       const r = el('div', { class: 'se-term' });
       r.appendChild(el('span', { class: 'se-idx', text: String(i + 1) }));
@@ -358,9 +378,9 @@ window.StateEditor = (function () {
     slider.addEventListener('change', endDrag);
     host.appendChild(slider);
 
-    host.appendChild(el('div', { class: 'se-note', html:
+    host.appendChild(el('div', { class: 'se-note', html: mdInline(
       'φ = (Eᵢ−Eⱼ)t/ħ 是**相对相位**，不是真实时间。真实振荡频率约 10¹⁵ Hz 无法可视化，'
-      + '而干涉图样只依赖相对相位。' }));
+      + '而干涉图样只依赖相对相位。' )}));
 
     renderObs();
   }
@@ -374,12 +394,13 @@ window.StateEditor = (function () {
     [
       ['⟨E⟩', r.energy.mean + ' eV', r.energy.definite ? '有确定值' : '无确定值'],
       ['⟨L²⟩', r.L2.mean + ' ħ²', r.L2.definite ? '有确定值' : '无确定值'],
-      ['⟨L_z⟩', r.Lz.mean + ' ħ', r.Lz.definite ? '有确定值' : '无确定值'],
-      ['L_z 谱', r.Lz.spectrum.map(function (s) { return 'm=' + s.m + ':' + (s.prob * 100).toFixed(1) + '%'; }).join('　'), ''],
+      ['⟨L<sub>z</sub>⟩', r.Lz.mean + ' ħ', r.Lz.definite ? '有确定值' : '无确定值'],
+      ['L<sub>z</sub> 谱', r.Lz.spectrum.map(function (s) { return 'm=' + s.m + ':' + (s.prob * 100).toFixed(1) + '%'; }).join('　'), ''],
       ['是否定态', r.isStationary ? '是（各分量能量简并）' : '否（能量不同 → 密度随时间变）', ''],
     ].forEach(function (row) {
       const d = el('div', { class: 'se-obs-row' });
-      d.appendChild(el('span', { class: 'se-obs-k', text: row[0] }));
+      // 用 html：下标（L_z）要真的渲染成下标，而不是字面的 "L_z"
+      d.appendChild(el('span', { class: 'se-obs-k', html: row[0] }));
       d.appendChild(el('span', { class: 'se-obs-v', text: row[1] }));
       if (row[2]) d.appendChild(el('span', { class: 'se-obs-tag', text: row[2] }));
       box.appendChild(d);

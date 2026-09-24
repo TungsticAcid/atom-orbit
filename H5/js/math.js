@@ -475,9 +475,18 @@ window.OM = (function () {
    * 只有一层壳（没有第二个区间）时返回 0，表示"无法分层"。
    */
   function shellGapRadius(n, l, m, mode, level) {
-    if (!(level > 0)) return 0;
+    const g = shellGaps(n, l, m, mode, level);
+    return g.length ? g[0] : 0;
+  }
+
+  /**
+   * 全部"空档半径"（每两层壳之间的中点，可放无曲面分界面）。
+   * 局部精细化据此**逐层外扩**：盒子覆盖到第几层，由 planFinePatch 按分辨率权衡决定。
+   */
+  function shellGaps(n, l, m, mode, level) {
+    if (!(level > 0)) return [];
     const Ymax2 = samplingAngleMax(l, m, mode || 'real');
-    if (!(Ymax2 > 0)) return 0;
+    if (!(Ymax2 > 0)) return [];
     const scanMax = 2 * n * n + 14;
     const steps = 2000;
     const bands = [];
@@ -490,8 +499,9 @@ window.OM = (function () {
       else if (!ok && start >= 0) { bands.push({ from: start, to: r }); start = -1; }
     }
     if (start >= 0) bands.push({ from: start, to: scanMax });
-    if (bands.length < 2) return 0;
-    return (bands[0].to + bands[1].from) / 2;
+    const gaps = [];
+    for (let i = 0; i + 1 < bands.length; i++) gaps.push((bands[i].to + bands[i + 1].from) / 2);
+    return gaps;
   }
 
   /**
@@ -875,7 +885,7 @@ window.OM = (function () {
     lColor, phaseColor, phaseColorFor, hslToRgb,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
-    isoNeckHalf, shellGapRadius,
+    isoNeckHalf, shellGapRadius, shellGaps,
     makeRadialLUT, makePsiDensityFast,
     psiSuperposition, densitySuperposition, isStationary, superpositionExtent,
     maxDensitySuperposition, superpositionRefPeak, superpositionRefExtent,

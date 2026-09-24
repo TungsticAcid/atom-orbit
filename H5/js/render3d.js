@@ -199,6 +199,8 @@ window.Orbit3D = (function () {
       setLimits: (lo, hi) => { minDistance = lo; maxDistance = hi; },
       resetHome: () => { userAdjusted = false; setView(homeEye, homeLook); },
       getDistance: () => distance,
+      /** 供调试/测试读取（与 getCameraState 同类用途） */
+      isAutoRotate: () => autoRotate,
       isUserAdjusted: () => userAdjusted,
     };
   }
@@ -671,6 +673,10 @@ window.Orbit3D = (function () {
       fitViewIfNeeded(currentFrameExtent(), lastDecorExtent);
     } else if (colorChanged && surfaceGeoRef) {
       paintSurfaceColors(surfaceGeoRef);
+      // ★ 局部精细化的补片是**另一块网格**，必须一起重涂。
+      //   漏了这一步，切三维着色时外层壳（粗网格画）会变色、内层壳（细网格画）
+      //   却保持旧色，看起来像"只改了一半"。
+      if (fineObj) paintSurfaceColors(fineObj.geometry);
     }
   }
 
@@ -859,12 +865,18 @@ window.Orbit3D = (function () {
     const P = surfaceParams;
     if (!P || (P.terms && P.terms.length)) return null;
     if (P.l < 1 || P.n - P.l - 1 < 1) return null;
-    // ★ 分界球面必须落在"两层壳之间**必然**没有曲面"的位置（见 shellGapRadius 的推导），
+    // ★ 分界球面必须落在"两层壳之间**必然**没有曲面"的位置（见 shellGaps 的推导），
     //   否则两套网格会在交界处各画一遍 → 重叠、z-fighting、碎三角片。
     //   放在径向节点上也**不行**：节点虽然 |ψ|²=0，但两侧的曲面都贴着它，跨界的单元
     //   里照样含曲面。
-    const radius = OM.shellGapRadius(P.n, P.l, P.m, P.mode, iso);
-    if (!(radius > 0)) return null;                            // 只有一层壳 → 无需分层
+    const gaps = OM.shellGaps(P.n, P.l, P.m, P.mode, iso);
+    if (!gaps.length) return null;                             // 只有一层壳 → 无需分层
+    // 细网格覆盖到第几层？盒子越大、远处的单元格越粗，所以要权衡：
+    //   ① 盖得越多，越多"折角"（壳的内/外边界，曲率最高处）能摆脱粗网格的锯齿；
+    //   ② 盒半径 L 越大，同样 112³ 节点摊到每一层就越粗。
+    // 经验规则：最多外扩到最内分界的 3 倍（此时最外侧那层仍有 ~3 个细单元格的余量）。
+    let radius = gaps[0];
+    for (let i = 1; i < gaps.length; i++) if (gaps[i] <= gaps[0] * 3) radius = gaps[i];
     const half = OM.isoNeckHalf(P.n, P.l, P.m, P.mode, iso, radius);
     if (!isFinite(half) || !(half > 0)) return null;
     const gap = 2 * half;
@@ -1182,7 +1194,16 @@ window.Orbit3D = (function () {
     //   沿用上次的装饰标尺，保证坐标轴/赤道环的缩放不因窗口变化而跳动。
     if (viewCtl && !viewCtl.isUserAdjusted()) fitView(currentFrameExtent(), lastDecorExtent);
   }
-  function setAutoRotate(v) { if (viewCtl) viewCtl.setAutoRotate(v); }
+  /**
+   * 自动旋转开关。
+   * ★ 同时作用于**主视图与角度分布小场景**：两处都是"绕着看形状"，共用一个开关
+   *   才符合直觉，也省得再加一套控件。原先小场景在 init 时写死 setAutoRotate(true)，
+   *   用户没有任何入口关掉它 —— "角度分布图的自动旋转无法控制"就是这么来的。
+   */
+  function setAutoRotate(v) {
+    if (viewCtl) viewCtl.setAutoRotate(v);
+    if (angCtl) angCtl.setAutoRotate(v);
+  }
   function resetView() {
     if (!viewCtl) return;
     viewCtl.resetHome();                       // 回到初始朝向（z 向上）
@@ -1525,6 +1546,12 @@ window.Orbit3D = (function () {
       orient: camera.quaternion.toArray().map((v) => +v.toFixed(4)),
       dist: viewCtl ? +viewCtl.getDistance().toFixed(3) : null,
       gridExtent: +gridExtent.toFixed(3),
+      autoRotate: viewCtl ? viewCtl.isAutoRotate() : null,
+    } : null),
+    /** 角度分布小场景的状态（同一开关应同时作用于它） */
+    getAngularState: () => (angCtl ? {
+      dist: +angCtl.getDistance().toFixed(3),
+      autoRotate: angCtl.isAutoRotate(),
     } : null),
   };
   return api;
