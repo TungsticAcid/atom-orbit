@@ -460,28 +460,22 @@ window.OM = (function () {
   }
 
   /**
-   * 两层壳之间的"空档半径" —— 半径等于该值的球面上**一定没有等值面**。
+   * 全部"空档"：每两层壳之间的**中点半径** + 该空档的**宽度**。
    *
-   * 用途：局部精细化需要把粗/细两张网格分开，而分界球面若被曲面穿过，两套网格就会
-   * 在交界处各画一遍（重叠、z-fighting、碎三角片）。放在一个"必然无曲面"的球面上
-   * 才能保证既不重叠也不留缝。
+   * 中点可放"必然无曲面"的分界球面 —— 局部精细化要把粗/细两张网格分开，而分界球面
+   * 若被曲面穿过，两套网格就会在交界处各画一遍（重叠、z-fighting、碎三角片）。
    *
-   * 依据：|ψ|² = R(r)²·|Y|² ≤ R(r)²·Ymax²，故
+   * 依据（**严格**，不依赖任何估计）：|ψ|² = R(r)²·|Y|² ≤ R(r)²·Ymax²，故
    *   {|ψ|² ≥ level} ⊆ { R(r)²·Ymax² ≥ level }
-   * 后者沿 r 是一串区间（每层径向壳一个）。取第 1、2 个区间之间的中点即可 ——
-   * 在那一整个区间里对所有角度都有 |ψ|² < level。
+   * 后者沿 r 是一串区间（每层径向壳一个）；区间之间那整个空档里，对所有角度都有
+   * |ψ|² < level —— 取其中点即可。
    *
-   * ★ 这一步是**严格**的（不依赖任何估计）：区间之外 |ψ|² 必然低于阈值。
-   * 只有一层壳（没有第二个区间）时返回 0，表示"无法分层"。
-   */
-  function shellGapRadius(n, l, m, mode, level) {
-    const g = shellGaps(n, l, m, mode, level);
-    return g.length ? g[0] : 0;
-  }
-
-  /**
-   * 全部"空档半径"（每两层壳之间的中点，可放无曲面分界面）。
-   * 局部精细化据此**逐层外扩**：盒子覆盖到第几层，由 planFinePatch 按分辨率权衡决定。
+   * 宽度是**安全闸门**的依据：分派判据看的是"单元有没有一部分落在球内"，所以只有当
+   * 空档宽到容得下跨界单元的伸出量时，才不会出现"同一个单元既含曲面、又被判到另一
+   * 侧"（推导见 render3d.js 的 planFinePatch）。只有一层壳时返回空数组（无法分层）。
+   *
+   * 局部精细化据此**逐层外扩**：盒子覆盖到第几层，由 planFinePatch 按"不越界"与
+   * "分辨率够"两道关权衡决定。
    */
   function shellGaps(n, l, m, mode, level) {
     if (!(level > 0)) return [];
@@ -500,7 +494,12 @@ window.OM = (function () {
     }
     if (start >= 0) bands.push({ from: start, to: scanMax });
     const gaps = [];
-    for (let i = 0; i + 1 < bands.length; i++) gaps.push((bands[i].to + bands[i + 1].from) / 2);
+    for (let i = 0; i + 1 < bands.length; i++) {
+      gaps.push({
+        r: (bands[i].to + bands[i + 1].from) / 2,
+        width: bands[i + 1].from - bands[i].to,
+      });
+    }
     return gaps;
   }
 
@@ -885,7 +884,7 @@ window.OM = (function () {
     lColor, phaseColor, phaseColorFor, hslToRgb,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
-    isoNeckHalf, shellGapRadius, shellGaps,
+    isoNeckHalf, shellGaps,
     makeRadialLUT, makePsiDensityFast,
     psiSuperposition, densitySuperposition, isStationary, superpositionExtent,
     maxDensitySuperposition, superpositionRefPeak, superpositionRefExtent,

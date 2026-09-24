@@ -473,27 +473,35 @@ window.Orbit3D = (function () {
    *
    * @param {number} iso          等值面的绝对值（|ψ|²）
    * @param {number} [maskR]      >0 时启用球形掩膜（半径，世界单位）
-   * @param {boolean} [keepInside] true=只处理**整格都在球内**的单元；
-   *                              false=跳过这些单元（其余照常）。
+   * @param {boolean} [keepInside] true=只处理"**至少一个角在球内**"的单元（细网格用）；
+   *                              false=只处理"**所有角都在球外**"的单元（粗网格用）。
    *
-   * ★ 掩膜用来做"局部精细化"：粗网格跳过节点球内的单元，细网格只填球内。
-   *   两边的单元集合互斥且完整覆盖，因此两片曲面既不重叠也不留缝
-   *   （球面正好取在径向节点上，那里 |ψ|²=0、本来就没有曲面）。
-   *   判据取"单元里离原点最远的那个角"——整格都在球内 ⇔ 最远角在球内。
+   * ★ 掩膜用来做"局部精细化"：两套网格的单元集合必须**互斥且完整覆盖**，否则两片
+   *   曲面会在交界处各画一遍 → 重叠、z-fighting、碎三角片。
+   *
+   * ★ 判据取"单元**离原点最近的角**"，含义是"这个单元有没有一部分落在球内"：
+   *     · 粗网格只保留"完全在球外"的单元。由凸性，该单元内**所有点**到原点的距离
+   *       都 > maskR；而 maskR 落在两层壳之间的**空档**里（见 math.js 的 shellGaps），
+   *       所以这样的单元**不可能**含内层壳的曲面 —— 越界重叠从根上消除。
+   *     · 三轴可分离：最近角距² = Σ_a min(X_a[t]², X_a[t+1]²)，不必枚举 8 个角。
+   *   演进史（两次都栽在"球面上无曲面 ≠ 单元里无曲面"上）：曾用"最远的角"，
+   *   把跨界单元整格推给粗网格 → 重叠；改用"单元中心"只保证了"中心落在内侧"的
+   *   那一半，另一半跨界单元仍漏给粗网格（实测 |ψ| 判据 1% 下碎成 572 片）。
    */
   function extractSurface(iso, maskR, keepInside) {
     const n = nGrid;
     const n2 = n * n;
     const X = gridXs;                  // 节点坐标（均匀或径向渐变）
-    // 掩膜：每个单元**中心**在各轴上离原点的距离（三轴公式相同，共用一张表）。
-    // ★ 用单元中心而不是"最远的角"：用最远的角会把跨界单元整格推给粗网格，
-    //   而那些单元里含有内层壳的曲面 → 细网格又画一遍 → 重叠出碎三角片。
+    // 掩膜：每个单元**离原点最近的角**在各轴上的坐标平方（三轴独立，可分离求和）
     const useMask = maskR > 0;
     const maskR2 = maskR * maskR;
     let cArr = null;
     if (useMask) {
       cArr = new Float64Array(n);
-      for (let t = 0; t < n; t++) cArr[t] = Math.abs((X[t] + X[t + 1]) / 2);
+      for (let t = 0; t < n; t++) {
+        const a2 = X[t] * X[t], b2 = X[t + 1] * X[t + 1];
+        cArr[t] = (a2 < b2) ? a2 : b2;                 // 该轴上更靠近原点的那个角
+      }
     }
 
     // ★ 性能关键：本函数在 68³ 网格上要处理约 1.8M 个四面体。
@@ -545,14 +553,14 @@ window.Orbit3D = (function () {
 
     for (let k = 0; k < n - 1; k++) {
       const kBase = k * n2;
-      const kz2 = useMask ? cArr[k] * cArr[k] : 0;
+      const kz2 = useMask ? cArr[k] : 0;
       for (let j = 0; j < n - 1; j++) {
         const jBase = kBase + j * n;
-        const jy2 = useMask ? kz2 + cArr[j] * cArr[j] : 0;
+        const jy2 = useMask ? kz2 + cArr[j] : 0;
         for (let i = 0; i < n - 1; i++) {
           if (useMask) {
-            // 单元中心在球内 ⇔ 归细网格；否则归粗网格（两边互斥且完整覆盖）
-            const inside = (jy2 + cArr[i] * cArr[i]) <= maskR2;
+            // 最近角在球内 ⟺ 该单元有一部分在球内 → 归细网格；否则整格在球外 → 归粗网格
+            const inside = (jy2 + cArr[i]) <= maskR2;
             if (inside !== !!keepInside) continue;
           }
           const p = jBase + i;
@@ -871,18 +879,35 @@ window.Orbit3D = (function () {
     //   里照样含曲面。
     const gaps = OM.shellGaps(P.n, P.l, P.m, P.mode, iso);
     if (!gaps.length) return null;                             // 只有一层壳 → 无需分层
+    const cellCoarse = (2 * gridExtent) / (nGrid - 1);
     // 细网格覆盖到第几层？盒子越大、远处的单元格越粗，所以要权衡：
     //   ① 盖得越多，越多"折角"（壳的内/外边界，曲率最高处）能摆脱粗网格的锯齿；
     //   ② 盒半径 L 越大，同样 112³ 节点摊到每一层就越粗。
-    // 经验规则：最多外扩到最内分界的 3 倍（此时最外侧那层仍有 ~3 个细单元格的余量）。
-    let radius = gaps[0];
-    for (let i = 1; i < gaps.length; i++) if (gaps[i] <= gaps[0] * 3) radius = gaps[i];
+    // 从外到内试：优先要覆盖大的方案，但它必须过得了 planFineAt 的两道关。
+    //   ★ 粗网格那一侧的越界重叠**已经被判据根治**（extractSurface 现在只保留"完全
+    //   在球外"的单元，由凸性它绝不可能扎进内层壳），所以这里只需管细网格一侧。
+    const maxR = gaps[0].r * 3;                                // 再大就摊得太薄了
+    for (let i = gaps.length - 1; i >= 0; i--) {
+      if (gaps[i].r > maxR) continue;
+      const plan = planFineAt(P, iso, gaps[i].r, gaps[i].width, cellCoarse);
+      if (plan) return plan;
+    }
+    // 没有任何一层能同时过"不越界"与"分辨率够"两关 → **不做精细化**。
+    // ★ 这是有意的取舍：细颈会因此粘连，但那是"分辨率不够"的可理解近似；
+    //   强行分层会留下碎三角片，那是明显的渲染错误。宁可前者。
+    return null;
+  }
+
+  /**
+   * 在给定分界半径上算细网格参数。两道关任一不过就返回 null，由调用方继续往内试：
+   *   ① 不越界 —— 细网格单元不得伸进外层壳（否则与粗网格各画一遍）
+   *   ② 分辨率够 —— 钳位之后核附近的**实际**格距仍要让细颈缝隙跨得开
+   */
+  function planFineAt(P, iso, radius, width, cellCoarse) {
     const half = OM.isoNeckHalf(P.n, P.l, P.m, P.mode, iso, radius);
     if (!isFinite(half) || !(half > 0)) return null;
     const gap = 2 * half;
-    const cellCoarse = (2 * gridExtent) / (nGrid - 1);
     if (gap > 2.5 * cellCoarse) return null;                   // 粗网格分得开，不必精细化
-    // 让缝隙跨约 2.5 个细单元格：盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap
     // 让缝隙跨约 2.5 个细单元格：盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap
     let res = Math.ceil((5 * radius) / gap);
     res = Math.min(Math.max(res, nGrid), FINE_RES_MAX);
@@ -892,6 +917,18 @@ window.Orbit3D = (function () {
     //   x = L(a·u + (1−a)u³) 在 u=0 处的间距 = L·a·du，由此反解 a。
     const du = 2 / (res - 1);
     const grade = Math.max(0.15, Math.min(1, (gap / 4) / (radius * du)));
+    // ★ 关卡①：细网格一侧不得**越界到外层壳**。
+    //   细网格处理"至少一个角在球内"的单元，这种单元最远可伸到 r* + 一个全对角线。
+    //   要求它 ≤ b = r* + width/2，即 半对角线 ≤ width/4。
+    //   格距取径向的（三轴里最大）= radius·(3−2·grade)·du，即渐变坐标 x=L(a·u+(1−a)u³)
+    //   在 u=±1 处的导数 × du。
+    const cellEdge = radius * (3 - 2 * grade) * du;
+    if (0.866 * cellEdge > width / 4) return null;
+    // ★ 关卡②：两道钳位（res 撞 FINE_RES_MAX、grade 撞下限 0.15）叠加后，核附近**实际**
+    //   的格距可能仍达不到 gap/4 —— 那这个盒子就太大、精细化等于白做（盒子大了而节点数
+    //   没变，正是"次外层远不如内部细腻"的原因）。要求缝隙至少跨 3 格，达不到就退回更小的盒子。
+    const cellCore = radius * grade * du;
+    if (gap / cellCore < 3) return null;
     return { radius: radius, res: res, gap: gap, cellCoarse: cellCoarse, grade: grade };
   }
 
