@@ -323,7 +323,78 @@
     Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
   }
 
-  // 公式高亮状态（由 agent 的 highlightFormulaTerm 动作驱动）
+  /**
+   * 只重绘截面图（不牵动其余两张），并同步「复位缩放」小控件的显隐。
+   * 缩放/平移时用它而不是 updateCharts —— 后者会顺带重算径向与角度图，纯属浪费。
+   */
+  function redrawSection() {
+    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
+    const chip = $('#sectionResetChip');
+    if (chip) chip.style.display = Charts.sectionState().userAdjusted ? '' : 'none';
+  }
+
+  /**
+   * 给任意 canvas 绑上"截面图"的缩放 / 平移 / 复位交互。
+   * 抽成函数是因为**卡片与浮动窗要对同一个视图状态**（charts.js 的 sectionView）做同样的
+   * 操作 —— 绑两遍时逻辑必须一致，否则两处的缩放手感会漂移。
+   * UX 口径照抄三维视图（render3d.js 的 createQuatOrbit）：滚轮缩放、拖拽平移、双击复位。
+   * @param {HTMLCanvasElement} cv
+   * @param {Function} onChange 视图变化后调用（重画该 canvas）
+   * @returns {boolean} 是否绑定成功
+   */
+  function attachSectionView(cv, onChange) {
+    if (!cv) return false;
+    const halfE = () => OM.rExtent(state.n, state.l) * 1.05;
+    let drag = null;
+    cv.style.cursor = 'grab';
+    cv.style.touchAction = 'none';        // 触屏上自己处理拖动，别让浏览器把页面滚走
+
+    cv.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = cv.getBoundingClientRect();
+      const st = Charts.sectionState();
+      const hu = halfE() / st.scale;
+      // 指针位置 → 平面坐标，作为缩放锚点（"放大看指针底下这一块"）
+      const au = st.cu + ((e.clientX - r.left) / Math.max(1, r.width) - 0.5) * 2 * hu;
+      const av = st.cv + ((e.clientY - r.top) / Math.max(1, r.height) - 0.5) * 2 * hu;
+      if (Charts.zoomSection(Math.exp(-e.deltaY * 0.0015), au, av)) onChange();
+    }, { passive: false });
+
+    cv.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+      cv.style.cursor = 'grabbing';
+    });
+    cv.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const st = Charts.sectionState();
+      // 每像素对应多少平面坐标：视窗全宽 2·E/scale 铺满画布宽度
+      const k = (2 * halfE() / st.scale) / Math.max(1, cv.clientWidth);
+      // 指针右移 → 内容跟着右移 → 视窗中心左移，故取负号
+      Charts.panSection(-(e.clientX - drag.x) * k, -(e.clientY - drag.y) * k);
+      drag = { x: e.clientX, y: e.clientY };
+      onChange();
+    });
+    const endDrag = (e) => {
+      if (!drag) return;
+      drag = null;
+      cv.style.cursor = 'grab';
+      try { cv.releasePointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+    };
+    cv.addEventListener('pointerup', endDrag);
+    cv.addEventListener('pointercancel', endDrag);
+    cv.addEventListener('dblclick', () => { Charts.resetSectionView(); onChange(); });
+    return true;
+  }
+
+  function bindSectionView() {
+    attachSectionView(els.sectionChart, redrawSection);
+    const chip = $('#sectionResetChip');
+    if (chip) chip.addEventListener('click', () => { Charts.resetSectionView(); redrawSection(); });
+  }
+
+  // 公式高亮状态（由 agent 的 setFormulaHighlight 动作驱动）
   // 'R' 径向 | 'Y' 角度 | 'L' 拉盖尔 | 'P' 勒让德 | 'N' 归一化常数 | null 无
   let formulaHighlight = null;
 
@@ -396,6 +467,7 @@
         scheduleUpdate(0);
       });
     }
+    bindSectionView();          // 截面图：滚轮缩放 / 拖拽平移 / 双击复位
     // 径向图的特征标注：单选，再点一次取消（与曲线开关并列在卡片头，不再是"看不见的"状态）
     const markSeg = $('#radialMarkSeg');
     if (markSeg) {
@@ -609,6 +681,38 @@
       return true;
     },
     resetCamera() { Orbit3D.resetView(); return true; },
+    /** 截面图的缩放/平移复位（智能体可用；对应图表角落的「复位缩放」小控件） */
+    resetSectionView() { Charts.resetSectionView(); redrawSection(); return true; },
+
+    /**
+     * 把某张图按**当前状态**画进任意 canvas —— 供图表浮动窗复用同一条绘制路径。
+     * ★ 卡片与浮窗必须共用这一条路径，否则两处的"当前状态"会各自漂移
+     *   （浮窗里看到的可能不是卡片上那张图）。
+     */
+    drawChartInto(target, canvas) {
+      if (!canvas) return false;
+      if (target === 'radial') {
+        Charts.drawRadial(canvas, state.n, state.l, state.radial);
+        return true;
+      }
+      if (target === 'section') {
+        Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
+        return true;
+      }
+      return false;      // 角度分布是 three.js 单例，不支持（见 ChartOverlay 里的说明）
+    },
+
+    /**
+     * 给浮窗里的 canvas 绑上与卡片同一套交互（目前只有截面图有可交互的内容）。
+     * 视图变化时**两处都要重画** —— sectionView 是两者共享的状态。
+     */
+    attachChartInteractions(target, canvas, onRedraw) {
+      if (target !== 'section') return false;
+      return attachSectionView(canvas, () => {
+        redrawSection();                  // 卡片（含「复位缩放」小控件的显隐）
+        if (onRedraw) onRedraw();         // 浮窗自己
+      });
+    },
     // 公式按项高亮（'R'|'Y'|'L'|'P'|'N'|null）——三向联动的中枢
     setFormulaHighlight(p) { formulaHighlight = p.part || null; return true; },
 

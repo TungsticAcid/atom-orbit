@@ -75,6 +75,8 @@ window.DemoMode = (function () {
           actions: [
             { action: 'setQuantumNumbers', params: { n: 1, l: 0, m: 0 } },
             { action: 'showRadial', params: { which: ['R'] } },
+            // ★ 径向图在页面底部，讲三维时学生根本看不到它 —— 放大到浮窗里，讲解与图才同屏
+            { action: 'focusChart', params: { target: 'radial' } },
           ],
         },
         {
@@ -90,6 +92,7 @@ window.DemoMode = (function () {
             { action: 'setRenderMode', params: { mode: 'points' } },
             { action: 'linkRadialTo3D', params: { radius: 1 } },
             { action: 'setAutoRotate', params: { on: true } },
+            { action: 'focusChart', params: { target: 'none' } },   // 回到三维，收起浮窗
           ],
         },
         {
@@ -134,9 +137,10 @@ window.DemoMode = (function () {
         },
         {
           speech: '既然能量一样（简并），它们的任意线性组合就还是同一能量的状态。所以"实轨道是复轨道的线性组合"——它们不是两种不同的物理，而是同一空间的两组基底。',
-          actions: [
-            { action: 'setCameraView', params: {} },
-          ],
+          // 这一步只需停留一屏、不改视图。原先写的是 { action: 'setCameraView' } ——
+          // 那个动作**在 VOCAB 里根本不存在**，会被 validate 静默打回（学生看到最后一步
+          // 什么都没发生）。留空即可：actions 为空时 step() 只发旁白、不派发动作。
+          actions: [],
         },
       ],
     },

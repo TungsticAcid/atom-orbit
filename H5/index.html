@@ -156,6 +156,8 @@
           <button class="seg-btn" data-mode="contour">等高线</button>
         </div>
         <canvas id="sectionChart" class="chart"></canvas>
+        <!-- 手动缩放/平移过才出现；双击图表同样可复位 -->
+        <div class="chart-chip" id="sectionResetChip" style="display:none">⟲ 复位缩放</div>
       </div>
     </section>
   </main>
@@ -170,6 +172,7 @@
   <script src="js/layout.js"></script>
   <script src="js/render3d.js"></script>
   <script src="js/charts.js"></script>
+  <script src="js/chart-overlay.js"></script>
   <script src="js/formula.js"></script>
   <script src="js/main.js"></script>
 

@@ -115,6 +115,7 @@ window.SceneBridge = (function () {
       params: { on: 'bool' },
     },
     resetCamera: { group: '相机', concept: '', desc: '重置相机视角', params: {} },
+    resetSectionView: { group: '截面', concept: '', desc: '把截面图的缩放/平移复位到全范围', params: {} },
     setFormulaHighlight: {
       group: '公式', concept: 'K1/K2',
       desc: '★ 高亮 KaTeX 公式中的某一项（R/Y/L/P/N，null 取消），实现公式—图形—数值三向联动',
@@ -124,6 +125,12 @@ window.SceneBridge = (function () {
       group: '导航', concept: '',
       desc: '打开教材对照表（R 表 / Y 表）',
       params: { which: "'R'|'Y'", open: 'bool?' },
+    },
+    focusChart: {
+      group: '图表', concept: '',
+      desc: '把某张图表放大到**浮动窗**里讲 —— 径向分布与截面密度在页面底部，讲三维视图时'
+        + '学生看不到它们。target="none" 关闭浮窗。',
+      params: { target: "'radial'|'section'|'none'" },
     },
     loadPreset: {
       group: '叠加态', concept: 'K9',
@@ -522,10 +529,16 @@ window.SceneBridge = (function () {
       case 'setAutoRotate':
         return { params: { on: !!p.on } };
       case 'resetCamera':
+      case 'resetSectionView':
         return { params: {} };
       case 'showReferenceTable':
         if (['R', 'Y'].indexOf(p.which) < 0) return { err: 'which 应为 R 或 Y' };
         return { params: { which: p.which, open: p.open !== false } };
+      case 'focusChart':
+        if (['radial', 'section', 'none'].indexOf(p.target) < 0) {
+          return { err: 'target 应为 radial / section / none' };
+        }
+        return { params: { target: p.target } };
       default:
         return { err: '未知动作：' + name };
     }
@@ -551,6 +564,7 @@ window.SceneBridge = (function () {
       case 'setSectionMode': return A.applyAction({ action: 'setSectionMode', params: p });
       case 'setAutoRotate': return A.applyAction({ action: 'setAutoRotate', params: p });
       case 'resetCamera': return A.applyAction({ action: 'resetCamera', params: p });
+      case 'resetSectionView': return A.applyAction({ action: 'resetSectionView', params: p });
       case 'setFormulaHighlight': return A.applyAction({ action: 'setFormulaHighlight', params: p });
 
       case 'highlightRadialFeature':
@@ -568,13 +582,15 @@ window.SceneBridge = (function () {
         hooks.spotlightNodes(p.type, p.on);
         return { ok: true };
 
-      case 'highlightFormulaTerm':
-        if (!hooks.setFormulaHighlight) return { ok: false, error: '公式高亮能力未注册' };
-        hooks.setFormulaHighlight(p.part);
-        return { ok: true };
-
       case 'showReferenceTable':
         window.dispatchEvent(new CustomEvent('orbit:reftable', { detail: p }));
+        return { ok: true };
+
+      // ★ 做成**瞬时动作**而不是"在分镜脚本里直接调浮窗"：captureSnapshot 只快照
+      //   OrbitApp 的状态与三维标注，**不含浮窗开合**。走动作后它天然进入队列，
+      //   按「上一步」回退时会被重放，浮窗的开关与画面就能自洽（脚本字段做不到）。
+      case 'focusChart':
+        window.dispatchEvent(new CustomEvent('orbit:chart-focus', { detail: p }));
         return { ok: true };
 
       // ---- 叠加态（辅助功能）----
@@ -896,7 +912,9 @@ window.SceneBridge = (function () {
     linkRadialTo3D: '画出参考球', setAngularView: '切换角度分布',
     setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
     spotlightNodes: '高亮节面', setAutoRotate: '自动旋转', resetCamera: '复位视角',
+    resetSectionView: '复位截面缩放',
     setFormulaHighlight: '高亮公式项', showReferenceTable: '打开教材对照表',
+    focusChart: '放大图表讲解',
     loadPreset: '载入预设态', setSuperposition: '构造叠加态',
     setCoefficient: '改系数', setRelPhase: '调相对相位', clearSuperposition: '回到纯态',
     savePreset: '存为预设', deletePreset: '删除预设',

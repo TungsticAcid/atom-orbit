@@ -47,6 +47,16 @@
     window.addEventListener('orbit:reftable', function (ev) {
       if (window.ReferenceTable) window.ReferenceTable.toggle(ev.detail || {});
     });
+
+    // ---- 图表浮动窗 ----
+    // 演示讲到"看径向分布 / 截面密度"时，把那张（位于页面底部的）图放大到浮层里，
+    // 讲解与图才能同时可见。用事件而不是直接调用：动作层（scene-bridge）不该依赖 UI 模块。
+    window.addEventListener('orbit:chart-focus', function (ev) {
+      if (!window.ChartOverlay) return;
+      const p = ev.detail || {};
+      if (p.target === 'none') window.ChartOverlay.close();
+      else window.ChartOverlay.open(p.target);
+    });
   }
 
   if (document.readyState === 'loading') {

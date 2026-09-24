@@ -334,6 +334,25 @@ window.Charts = (function () {
 
   // --- 截面图 -------------------------------------------------------------
   const PLANES = { xy: 'xy 平面', xz: 'xz 平面', yz: 'yz 平面' };
+
+  /**
+   * 截面视图窗口（缩放 / 平移）。由 main.js 的事件绑定驱动（滚轮缩放、拖拽平移、
+   * 双击复位），UX 口径与三维视图一致。
+   *
+   * ★ 核心设计：让**视窗恒等于采样窗口** —— drawSection 采样 (u,v) ∈ 视窗，而
+   *   marchSquareSegments 假定采样网格铺满画布（dx = w/(G-1)）。只要这个等式成立，
+   *   热力图 / 等高线 / 节面 / 数值标注**全都不用改**，改的只是"采样哪一块区域"。
+   *   反之若"采样全范围、绘图时再缩放"，就得动 marchSquareSegments 与所有标注的坐标。
+   *
+   * 缺省（scale=1、cu=cv=0）时视窗正是原来的 [-E, E]，行为与改造前完全一致。
+   */
+  const SECTION_SCALE_MIN = 0.25, SECTION_SCALE_MAX = 8;
+  const sectionView = { scale: 1, cu: 0, cv: 0, userAdjusted: false };
+
+  /** 截面视窗的半宽（世界单位）：缺省时跟随全范围 E = rExtent × 1.05 */
+  function sectionHalfWidth(n, l) {
+    return (OM.rExtent(n, l) * 1.05) / sectionView.scale;
+  }
   // 数值格式化：小的概率密度用科学计数法
   function fmtNum(x) {
     const ax = Math.abs(x);
@@ -341,15 +360,60 @@ window.Charts = (function () {
     return x.toFixed(3);
   }
 
+  /**
+   * 截面视图控制 —— 供 main.js 的事件绑定调用。
+   * 视图状态留在这里而不是 main.js：它直接决定采样窗口，属于绘制的一部分。
+   */
+  function zoomSection(factor, anchorU, anchorV) {
+    const s0 = sectionView.scale;
+    const s1 = Math.max(SECTION_SCALE_MIN, Math.min(SECTION_SCALE_MAX, s0 * factor));
+    if (s1 === s0) return false;
+    if (anchorU != null && anchorV != null) {
+      // 让锚点在视窗里的**相对位置保持不变**（"放大看指针底下这一块"）：
+      // 旧偏移 d = a − cu 对应归一化 d·s0/E；要求新归一化相同 ⇒ cu' = a + (cu − a)·s0/s1
+      const k = s0 / s1;
+      sectionView.cu = anchorU + (sectionView.cu - anchorU) * k;
+      sectionView.cv = anchorV + (sectionView.cv - anchorV) * k;
+    }
+    sectionView.scale = s1;
+    sectionView.userAdjusted = true;
+    return true;
+  }
+
+  /** 平移视窗（世界单位；正值 = 视窗中心向右 / 向下移动） */
+  function panSection(du, dv) {
+    sectionView.cu += du;
+    sectionView.cv += dv;
+    sectionView.userAdjusted = true;
+  }
+
+  function resetSectionView() {
+    sectionView.scale = 1; sectionView.cu = 0; sectionView.cv = 0;
+    sectionView.userAdjusted = false;
+  }
+
+  /** 视窗状态只读副本（供 main.js 换算像素↔世界坐标、以及决定是否显示复位按钮） */
+  function sectionState() {
+    return {
+      scale: sectionView.scale, cu: sectionView.cu, cv: sectionView.cv,
+      userAdjusted: sectionView.userAdjusted,
+    };
+  }
+
   // 统一的坐标轴 + 平面名 + 方向标签
-  function drawSectionFrame(ctx, w, h, plane) {
+  function drawSectionFrame(ctx, w, h, plane, win) {
     ctx.strokeStyle = 'rgba(200,210,235,0.35)';
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w / 2, h); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+    // ★ 十字线（u=0 / v=0）随视窗移动 —— 原先写死在 w/2、h/2，缩放平移后就不对了。
+    //   线跑出画布时不画（免得在边缘留下一条看着像轴线的假线）。
+    const x0 = win ? ((0 - win.u0) / (2 * win.hu)) * w : w / 2;
+    const y0 = win ? ((0 - win.v0) / (2 * win.hv)) * h : h / 2;
+    if (x0 >= 0 && x0 <= w) { ctx.beginPath(); ctx.moveTo(x0, 0); ctx.lineTo(x0, h); ctx.stroke(); }
+    if (y0 >= 0 && y0 <= h) { ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke(); }
     ctx.fillStyle = 'rgba(220,228,245,0.92)';
     ctx.font = '12px system-ui, sans-serif';
     ctx.fillText(PLANES[plane], 8, 18);
+    // 轴名固定贴在画布边缘：它说明的是"横/纵轴各是什么"，与视窗位置无关
     const lab = plane === 'xy' ? ['x', 'y'] : plane === 'xz' ? ['x', 'z'] : ['y', 'z'];
     ctx.fillText(lab[0], w - 14, h / 2 - 6);
     ctx.fillText(lab[1], w / 2 + 6, 16);
@@ -394,7 +458,7 @@ window.Charts = (function () {
   }
 
   // 无填色等高线 + 节面(白线) + 数值标注
-  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, E, nodalPlane) {
+  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane) {
     ctx.fillStyle = '#0a0f1f';                 // 暗底，突出线条
     ctx.fillRect(0, 0, w, h);
     if (nodalPlane) {                          // 整面为节点面
@@ -426,8 +490,8 @@ window.Charts = (function () {
       const sg = new Float32Array(G * G);
       for (let j = 0; j < G; j++) {
         for (let i = 0; i < G; i++) {
-          const u = -E + (2 * E * i) / (G - 1);
-          const v = -E + (2 * E * j) / (G - 1);
+          const u = win.u0 + (2 * win.hu * i) / (G - 1);
+          const v = win.v0 + (2 * win.hv * j) / (G - 1);
           const [x, y, z] = uv2xyz(u, v);
           const r = Math.hypot(x, y, z);
           const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
@@ -484,9 +548,13 @@ window.Charts = (function () {
 
   function drawSection(canvas, n, l, m, mode, plane, sectionMode) {
     const { ctx, w, h } = setup(canvas);
-    const G = 160;                 // 计算分辨率（离屏）
-    const E = OM.rExtent(n, l) * 1.05;
-    // 平面内坐标 (u,v) ∈ [-E,E] → 空间 (x,y,z)
+    // ★ 计算分辨率随缩放提高：视窗缩到 1/4 后仍用 160² 拉大到画布就是插值糊，
+    //   "放大"等于没做。上限 512²（约 26 万次 psiDensity，仍是可接受的开销）。
+    const G = Math.max(160, Math.min(512, Math.round(160 * sectionView.scale)));
+    // 视窗（半宽 + 中心）；scale = 1 时即原来的 [-E, E]
+    const hu = sectionHalfWidth(n, l);
+    const win = { u0: sectionView.cu - hu, v0: sectionView.cv - hu, hu: hu, hv: hu };
+    // 平面内坐标 (u,v) → 空间 (x,y,z)
     const uv2xyz = (u, v) => {
       if (plane === 'xy') return [u, v, 0];
       if (plane === 'xz') return [u, 0, v];
@@ -499,8 +567,8 @@ window.Charts = (function () {
     let maxV = 0;
     for (let j = 0; j < G; j++) {
       for (let i = 0; i < G; i++) {
-        const u = -E + (2 * E * i) / (G - 1);
-        const v = -E + (2 * E * j) / (G - 1);
+        const u = win.u0 + (2 * win.hu * i) / (G - 1);
+        const v = win.v0 + (2 * win.hv * j) / (G - 1);
         const [x, y, z] = uv2xyz(u, v);
         const r = Math.hypot(x, y, z);
         const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
@@ -520,8 +588,10 @@ window.Charts = (function () {
     if (maxV < 1e-12) maxV = 1e-12;
 
     if (sectionMode === 'contour') {
-      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, E, nodalPlane);
-      drawSectionFrame(ctx, w, h, plane);
+      // ★ maxV 是**视窗内**的峰值：放大后颜色映射与 8 层等高线会整体重标定（越放大越亮）。
+      //   这是有意选择 —— 放大看暗部（外层壳、概率尾巴）正是这个功能的目的。
+      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane);
+      drawSectionFrame(ctx, w, h, plane, win);
       return;
     }
 
@@ -545,7 +615,7 @@ window.Charts = (function () {
     tctx.putImageData(img, 0, 0);
     ctx.drawImage(tmp, 0, 0, w, h);
 
-    drawSectionFrame(ctx, w, h, plane);
+    drawSectionFrame(ctx, w, h, plane, win);
     // 节点面提示（填色模式下，把"空白"变成教学点）
     if (nodalPlane) {
       ctx.fillStyle = 'rgba(255,170,90,0.95)';
@@ -598,6 +668,8 @@ window.Charts = (function () {
 
   return {
     drawRadial, drawAngular, drawSection, setRadialHighlight,
+    /** 截面视图控制（缩放 / 平移 / 复位），由 main.js 的事件绑定驱动 */
+    zoomSection, panSection, resetSectionView, sectionState, sectionHalfWidth,
     /** 调试/测试：给定曲线显隐时实际会画的标线（只读，不改变状态） */
     _marksDebug: (n, l, whichList) => computeMarks(n, l, whichList),
   };

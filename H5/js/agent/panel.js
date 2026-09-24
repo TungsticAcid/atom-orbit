@@ -493,8 +493,9 @@ window.Panel = (function () {
     showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值/零点',
     linkRadialTo3D: '画出参考球（把半径与三维对应）',
     setAngularView: '切换角度分布', setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
-    spotlightNodes: '高亮节面', highlightFormulaTerm: '高亮公式项',
-    setAutoRotate: '自动旋转', resetCamera: '复位视角', showReferenceTable: '打开教材对照表',
+    spotlightNodes: '高亮节面', setFormulaHighlight: '高亮公式项',
+    setAutoRotate: '自动旋转', resetCamera: '复位视角', resetSectionView: '复位截面缩放',
+    showReferenceTable: '打开教材对照表', focusChart: '放大图表讲解',
   };
   function describeAction(name, args) {
     const label = ACTION_LABEL[name] || name;
