@@ -161,7 +161,28 @@ window.Perception = (function () {
         '；切换次数 ' + JSON.stringify(it.toggleCounts || {}) +
         '；最近动作 ' + (it.recentActions || []).join('→'),
     ];
+    // ★ 演示状态原先**不在**每轮注入的快照里（只有模型主动调 getSnapshot 才看得到），
+    //   于是它常常不带"演示走到哪一步"就开始说话。补上这一行。
+    const dl = demoLine();
+    if (dl) lines.push(dl);
     return lines.join('\n');
+  }
+
+  /**
+   * 演示状态的一行摘要 —— 让模型每轮都知道：哪个演示、走到第几步、下一步是什么、
+   * 以及"可以按步号修订"。没有它，模型无法把学生说的"第 3 步那个"对上号。
+   */
+  function demoLine() {
+    const S = window.SceneBridge;
+    if (!S || !S.state) return null;
+    let st;
+    try { st = S.state(); } catch (e) { return null; }
+    if (!st || !st.total) return null;
+    const next = (st.steps || []).filter(function (s) { return !s.done; })[0];
+    return '【演示】' + (st.origin || '未知来源') + ' · 第 ' + (st.index + 1) + '/' + st.total + ' 步'
+      + (st.waitingForUser ? '（正在等学生点「下一步」）' : '')
+      + (next ? '；下一步：' + next.action : '；已播完')
+      + '（学生若要求改动，用 reviseDemo 按步号修订，别重发整条）';
   }
 
   return { start, stop, snapshot, getTrace, toCompactText, poll };

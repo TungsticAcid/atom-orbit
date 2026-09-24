@@ -219,7 +219,15 @@ window.DemoMode = (function () {
     if (ni >= n) { finish(); return; }        // 走完最后一步 → 给出重播入口
     idx = ni;
     const st = playing.steps[idx];
-    if (dir > 0 && st.speech) window.Panel.addMsg(window.Panel.renderRich(st.speech), 'assistant');
+    if (dir > 0 && st.speech) {
+    window.Panel.addMsg(window.Panel.renderRich(st.speech), 'assistant');
+    // ★ 旁白也记进对话：它原先只塞 DOM、完全不进 history，于是模型对内置演示一无所知 ——
+    //   学生一说"刚才那个演示的第 2 步"它就断线。用 internal 记入：模型看得到，界面不显示。
+    if (window.AgentCore && window.AgentCore.noteExternal) {
+      window.AgentCore.noteExternal(st.speech,
+        '内置演示《' + (playing && playing.title ? playing.title : '') + '》第 ' + (idx + 1) + ' 步');
+    }
+  }
     if (st.actions && st.actions.length) {
       // auto:true —— 演示者在**脚本层面**已经点过「下一步」了，脚本内部的子动作
       // 应当连贯播完，不再逐个等他确认（否则每一步要点两次）

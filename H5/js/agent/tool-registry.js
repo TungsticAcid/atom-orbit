@@ -222,6 +222,41 @@ window.ToolRegistry = (function () {
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'reviseDemo',
+        description: '修订**已在播放队列里**的演示：改某一步 / 在某步后插入 / 删除某步 / 跳回某步。'
+          + '★ 当学生说"刚才那个演示第 3 步不对、换个说法、阈值太高了"时用它 —— '
+          + '**不要**用 applySceneActions 把整条演示重发一遍：那会清空旧队列，学生已经看过、'
+          + '确认过的步骤也会跟着重来。'
+          + '步号取自 getSnapshot 的「演示播放 → steps」里各步的 i（也给了 action / params），'
+          + '所以不必猜。只能改**尚未执行**的步骤：已执行的步骤有快照依赖（「上一步」靠它回退），'
+          + '改动会让回退失真。',
+        parameters: {
+          type: 'object',
+          properties: {
+            op: {
+              type: 'string',
+              enum: ['replace', 'insert', 'remove', 'jump'],
+              description: 'replace=替换某步 / insert=在该步之后插入 / remove=删除该步 / jump=回到该步',
+            },
+            index: { type: 'integer', description: '步号，从 0 开始（见 steps 里的 i）' },
+            step: {
+              type: 'object',
+              description: 'op 为 replace / insert 时必填：新的那一步',
+              properties: {
+                action: { type: 'string', description: '动作名，见 listSceneActions' },
+                params: { type: 'object', description: '动作参数' },
+                speech: { type: 'string', description: '该步的教学旁白（强烈建议写）' },
+              },
+              required: ['action'],
+            },
+          },
+          required: ['op', 'index'],
+        },
+      },
+    },
   ];
 
   // ---------------------------------------------------------------------------
@@ -420,6 +455,24 @@ window.ToolRegistry = (function () {
       const e = need('MasteryModel', '掌握度模型');
       if (e) return e;
       return window.MasteryModel.recommend(p && p.count);
+    },
+    reviseDemo(a) {
+      const e = need('SceneBridge', '演示队列');
+      if (e) return e;
+      const i = a && a.index;
+      if (typeof i !== 'number' || i < 0) return { error: 'index 应为 ≥ 0 的步号' };
+      const S = window.SceneBridge;
+      let r;
+      if (a.op === 'replace') r = S.replaceStep(i, a.step || {});
+      else if (a.op === 'insert') r = S.insertAfter(i, a.step || {});
+      else if (a.op === 'remove') r = S.removeStep(i);
+      else if (a.op === 'jump') r = S.jumpTo(i);
+      else return { error: 'op 应为 replace / insert / remove / jump' };
+      if (!r || !r.ok) return { error: (r && r.error) || '修订失败' };
+      // 回执里带上修订后的**整条队列**：模型下一步要指着它说话，省得再调一次 getSnapshot
+      return Object.assign({ ok: true, op: a.op, index: i },
+        r.step ? { step: r.step } : {},
+        { total: r.total, steps: S.queueInfo ? S.queueInfo() : null });
     },
   };
 

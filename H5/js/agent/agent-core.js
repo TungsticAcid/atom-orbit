@@ -92,8 +92,9 @@ window.AgentCore = (function () {
       '量子数  setQuantumNumbers{n,l,m} ｜ sweepQuantumNumber{axis,from,to}',
       '模式    setWavefunctionMode{mode:real|complex} ｜ setRenderMode{mode:points|surface} ｜ setColorMode{mode:orbital|phase}',
       '等值面  setPsiCriterion{criterion:psi|psi2} ｜ setIsosurfaceLevel{fraction} ｜ animateIsosurfaceLevel{from,to}',
-      '图表    showRadial{which:[R,R2,D,D2]} ｜ highlightRadialFeature{target:R|D,feature:peak|zeros}',
+      '图表    showRadial{which:[R,R2,D]} ｜ highlightRadialFeature{target:R|D,feature:peak|zeros}',
       '        setAngularView{which:Y|Y2} ｜ setSectionPlane{plane:xy|xz|yz} ｜ setSectionMode{mode:intensity|phase|contour}',
+      '        focusChart{target:radial|section|none}（把页面底部那两张图放大到浮窗里讲）',
       '三维    linkRadialTo3D{radius}（radius=0 清除参考球） ｜ spotlightNodes{type,on}（on=false 清除） ｜ setFormulaHighlight{part:R|Y|L|P|N}',
       '叠加态  loadPreset{key} ｜ setSuperposition{terms} ｜ setCoefficient{index,re,im} ｜ setRelPhase{phase} ｜ clearSuperposition{}',
       '        savePreset{label,terms?,note?}（把当前叠加态存成面板上的按钮） ｜ deletePreset{key}',
@@ -103,6 +104,9 @@ window.AgentCore = (function () {
       '  「连续播放」一把放完、「停止」中止。播完之后还可以「重新演示」从头再来。',
       '· 所以**每一步都必须写 speech**：它是学生判断"这一步发生了什么、要不要继续"的唯一依据。',
       '  没写旁白的那一步，学生会看到画面莫名其妙地跳了一下。',
+      '· ★ 学生要求改动**正在播的那条演示**时（"第 3 步换个说法""阈值调低点"），用 **reviseDemo**',
+      '  按步号改那一步，**不要重发整条** —— applySceneActions 只用于"往后追加"，重发会清空旧队列，',
+      '  学生已经看过、点过确认的步骤也会跟着重来。步号从「演示播放 → steps」里读，不必猜。',
       '· 不要把 speech 写成"点击下一步继续"这类操作指令——按钮本身已经说明了这件事。',
       '  一句话交代这一步在做什么、要学生看哪里即可。',
       '· 讲解里如果需要引用具体数值（尤其是系数），请用工具返回的**实际值**，不要用你请求的值。',
@@ -358,6 +362,17 @@ window.AgentCore = (function () {
     isRunning: () => running,
     /** 当前分支的 OpenAI messages（投影，每次生成新的对象，不会与内部状态共享引用） */
     getHistory: () => S.projection(),
+    /**
+     * 把**外部来源**的一段文本记进对话（内置演示脚本的旁白走这条路）。
+     * ★ 用 origin='internal'：它进协议历史、但渲染时不显示气泡 —— 于是模型"知道学生
+     *   看过这段演示"，而学生界面上不会凭空多出一个气泡。内置脚本的旁白原先直接塞
+     *   DOM、完全不进 history，导致学生一引用"刚才那个演示"模型就断线。
+     */
+    noteExternal(text, tag) {
+      if (!text) return false;
+      S.appendUser('【' + (tag || '系统') + '】' + text, 'internal');
+      return true;
+    },
     buildSystem,
     _nodePrompt: '',
   };

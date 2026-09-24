@@ -189,6 +189,11 @@ window.SceneBridge = (function () {
   let pendingAnim = null;              // 动画动作的 resolve（同理）
   let gateResolve = null;              // 「下一步」闸门的 resolve（同理，最要紧的一个）
   let progressHooks = [];              // 播放进度回调（支持多个订阅者）
+  // 演示编号与步骤编号：模型得能指认"哪个演示的第几步"才谈得上整改它（见 reviseDemo）。
+  // 数组下标会随播放漂移，所以步骤需要一个**稳定的 id**。每轮新演示重新编号。
+  let demoSeq = 0;
+  let stepSeq = 0;
+  let demoOrigin = '';                 // 'agent' | 'script' | 'proactive'
 
   // ---- 播放列表（分镜）----
   // ★ 为什么要有队列：演示必须"由用户点下一步"，而用户的点击可能在几秒后、也可能
@@ -344,6 +349,8 @@ window.SceneBridge = (function () {
   function state() {
     return {
       playing: playing,
+      demoId: demoSeq || null,
+      origin: demoOrigin || null,
       mode: manual ? 'manual' : 'auto',
       index: qIndex,                   // 已执行步数
       total: qTotal,
@@ -351,8 +358,103 @@ window.SceneBridge = (function () {
       canPrev: manual && qIndex > 0 && (!playing || atGate),
       canNext: atGate && qIndex < queue.length,
       canReplay: !playing && queue.length > 0,   // 播完后可重播
+      // ★ 给**整条队列**（而不是只给未来步骤）、带 params、带稳定 id：
+      //   模型得能指认"第 3 步把阈值设成了几"，才谈得上整改它。原先只给
+      //   slice(qIndex) 的 {action, speech} —— 看不到已执行的、没有参数，
+      //   下标还随播放漂移。
+      steps: queue.map(function (s, i) {
+        return {
+          i: i, id: s.id, action: s.name, params: s.params || null,
+          speech: s.speech || null, done: i < qIndex,
+        };
+      }),
+      // 旧字段保留（语义：尚未执行的步骤），免得别处依赖时突然变 undefined
       pending: queue.slice(qIndex).map((s) => ({ action: s.name, speech: s.speech || null })),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // 队列的只读 / 可寻址接口（供 reviseDemo 工具与感知层）
+  //
+  // ★ 插删只允许作用于 **>= qIndex** 的位置：snapshots[j] 的语义是"第 j 步执行前"，
+  //   对已执行的前缀做任何插删都会让快照失效，「上一步」也就退不回正确的状态了。
+  // ---------------------------------------------------------------------------
+
+  /** 整条队列的只读快照（含 params 与稳定 id） */
+  function queueInfo() {
+    return state().steps;
+  }
+
+  /** 取第 i 步的完整内容 */
+  function getStep(i) {
+    const s = queue[i];
+    if (!s) return null;
+    return {
+      i: i, id: s.id, action: s.name, params: s.params || null,
+      speech: s.speech || null, done: i < qIndex,
+    };
+  }
+
+  /** 替换第 i 步（只能改尚未执行的） */
+  function replaceStep(i, step) {
+    if (i < qIndex || i >= queue.length) {
+      return { ok: false, error: '只能修改尚未执行的步骤（当前待执行下标 ' + qIndex + '，共 ' + queue.length + ' 步）' };
+    }
+    const v = validate(step && step.action, (step && step.params) || {});
+    if (v.err) return { ok: false, error: v.err };
+    const old = queue[i];
+    queue[i] = {
+      id: old.id,                                        // id 不变：它标识"第几步"
+      name: step.action, params: v.params,
+      speech: (step.speech !== undefined) ? step.speech : old.speech,
+      holdMs: clampNum(step.holdMs, MIN_DWELL_MS, MAX_DWELL_MS) || old.holdMs,
+      animated: !!(VOCAB[step.action] && VOCAB[step.action].animated),
+    };
+    emitProgress({ phase: 'revised', index: i, total: qTotal });
+    return { ok: true, step: getStep(i) };
+  }
+
+  /** 在第 i 步之后插入一步 */
+  function insertAfter(i, step) {
+    if (i < qIndex - 1 || i >= queue.length) {
+      return { ok: false, error: '只能在尚未执行的部分之后插入' };
+    }
+    if (queue.length >= MAX_QUEUE) return { ok: false, error: '演示步骤已达上限 ' + MAX_QUEUE };
+    const v = validate(step && step.action, (step && step.params) || {});
+    if (v.err) return { ok: false, error: v.err };
+    queue.splice(i + 1, 0, {
+      id: ++stepSeq, name: step.action, params: v.params,
+      speech: step.speech, holdMs: clampNum(step.holdMs, MIN_DWELL_MS, MAX_DWELL_MS),
+      animated: !!(VOCAB[step.action] && VOCAB[step.action].animated),
+    });
+    qTotal = queue.length;
+    emitProgress({ phase: 'revised', index: i + 1, total: qTotal });
+    return { ok: true, total: qTotal };
+  }
+
+  /** 删除第 i 步 */
+  function removeStep(i) {
+    if (i < qIndex || i >= queue.length) {
+      return { ok: false, error: '只能删除尚未执行的步骤' };
+    }
+    queue.splice(i, 1);
+    qTotal = queue.length;
+    emitProgress({ phase: 'revised', index: i, total: qTotal });
+    return { ok: true, total: qTotal };
+  }
+
+  /** 跳到第 i 步（i 可小于 qIndex，即"退回"）—— 复用 prev() 的快照机制 */
+  function jumpTo(i) {
+    if (!queue.length) return { ok: false, error: '当前没有演示' };
+    if (!manual) return { ok: false, error: '自动连播中无法跳转，请先切到手动逐步' };
+    if (playing && !atGate) return { ok: false, error: '当前步骤正在播放，请稍候' };
+    if (i < 0 || i >= queue.length) return { ok: false, error: '步号越界（共 ' + queue.length + ' 步）' };
+    if (!snapshots[i]) return { ok: false, error: '第 ' + i + ' 步没有可用的快照' };
+    qIndex = i;
+    restoreSnapshot(snapshots[i]);
+    if (!playing) { playing = true; runQueue(generation, false, true); }
+    emitProgress({ phase: 'back', index: qIndex, total: queue.length });
+    return { ok: true, index: qIndex, total: queue.length };
   }
 
   // ---------------------------------------------------------------------------
@@ -739,6 +841,7 @@ window.SceneBridge = (function () {
       const v = validate(name, a.params || {});
       if (v.err) { failed.push({ action: name, error: v.err }); continue; }
       okSteps.push({
+        id: ++stepSeq,                                      // 稳定编号，供 reviseDemo 指认
         name: name, params: v.params,
         speech: a && a.speech,
         holdMs: clampNum(a && a.holdMs, MIN_DWELL_MS, MAX_DWELL_MS),
@@ -750,6 +853,7 @@ window.SceneBridge = (function () {
     // ---- 自动连播：走完再返回（DemoMode 等脚本用）----
     if (opts.auto) {
       stop();
+      demoSeq++; stepSeq = 0; demoOrigin = opts.origin || 'script';
       const gen = generation;
       manual = false;
       queue = okSteps;
@@ -764,6 +868,7 @@ window.SceneBridge = (function () {
     // 正在播就追加（智能体分几次下发也能接成一条完整的分镜），否则重开一轮
     if (!playing) {
       stop();
+      demoSeq++; stepSeq = 0; demoOrigin = opts.origin || 'agent';
       queue = [];
       qIndex = 0;
       // 默认播放方式由设置决定（见设置 → 教学偏好）；演示条上还能临时改成连播
@@ -793,8 +898,10 @@ window.SceneBridge = (function () {
       manual: manual,
       total: qTotal,
       note: '已入队 ' + taken.length + ' 步（共 ' + qTotal + ' 步）。'
-        + (manual ? '正在等用户点「下一步」逐步确认——请不要重复下发同样的动作，' +
-            '并在回复里告诉学生可以用「下一步 / 连续播放 / 停止」控制节奏。'
+        + (manual ? '正在等用户点「下一步」逐步确认——请在回复里告诉学生可以用'
+            + '「下一步 / 连续播放 / 停止」控制节奏。'
+            + '★ 这些是**新追加**的步骤；若要修改**已在队列里**的步骤，请用 reviseDemo 按步号改，'
+            + '不要用本工具重发整条演示（重发会清空旧队列，学生看过的步骤也会跟着重来）。'
           : '正在连续播放。'),
     };
   }
@@ -953,8 +1060,10 @@ window.SceneBridge = (function () {
   return {
     applySequence, applyInstant, stop, listActions, registerHooks,
     onProgress, next, prev, autoPlay, replay, state,
+    // 队列的只读 / 可寻址接口（reviseDemo 工具与感知层用）
+    queueInfo, getStep, replaceStep, insertAfter, removeStep, jumpTo,
     isRunning: () => playing,
-    MAX_ACTIONS_PER_TURN,
+    MAX_ACTIONS_PER_TURN, MAX_QUEUE,
     DEFAULT_DWELL_MS,
   };
 })();
