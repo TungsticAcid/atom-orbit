@@ -195,6 +195,7 @@ window.Panel = (function () {
     const mkBtn = (label, fn, cls) => { const b = el('button', { class: 'agent-tbtn ' + (cls || ''), text: label }); b.onclick = fn; return b; };
     acts.appendChild(mkBtn('练习', () => startPractice()));
     acts.appendChild(mkBtn('演示', () => startDemo()));
+    acts.appendChild(mkBtn('会话', () => enterConvPage()));
     acts.appendChild(mkBtn('设置', () => window.Settings.open()));
     const closeBtn = mkBtn('✕', () => close(), 'agent-x');
     acts.appendChild(closeBtn);
@@ -570,11 +571,15 @@ window.Panel = (function () {
         turn = null;                                  // 关上一组
         turnMid = idOf(n);
         if (n.origin === 'internal') return;          // 内部提示：不渲染气泡
-        addUser(n.content, idOf(n));
+        const un = addUser(n.content, idOf(n));
+        attachActs(un, idOf(n), 'user');
         return;
       }
       if (n.role === 'assistant') {
-        if (!turn) turn = beginStaticTurn(turnMid);
+        if (!turn) {
+          turn = beginStaticTurn(turnMid);
+          attachActs(turn.wrap, turnMid, 'turn');
+        }
         if (n.reasoning) turn.setReasoning(n.reasoning);
         turn.addText(n.content);
         (n.tool_calls || []).forEach(function (tc) {
@@ -584,6 +589,317 @@ window.Panel = (function () {
       }
     });
     scrollDown();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 消息工具条：复制 / 编辑 / 分支 / 重答
+  // ---------------------------------------------------------------------------
+  /**
+   * 复制文本。
+   * ★ 不用 navigator.clipboard：它要求 secure context，而本项目定位是"file:// 双击
+   *   即用"，file:// 在 Chrome / Edge / Safari 里都不算 secure context —— clipboard
+   *   直接是 undefined 或 reject。故走隐藏 textarea + execCommand 的降级路径，
+   *   navigator.clipboard 只作为 https 部署时的快路径。
+   */
+  function copyText(text, btn) {
+    const done = (ok) => {
+      if (!btn) return;
+      const old = btn.textContent;
+      btn.textContent = ok ? '已复制' : '复制失败';
+      btn.classList.add(ok ? 'ok' : 'bad');
+      setTimeout(() => { btn.textContent = old; btn.classList.remove('ok', 'bad'); }, 1200);
+    };
+    let ok = false;
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      // 不能 display:none（那样选不中），移到屏幕外即可
+      ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      // iOS Safari 必须显式 setSelectionRange，否则会复制到空串
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) { ok = false; }
+    if (!ok && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+      return;
+    }
+    done(ok);
+  }
+
+  /** 正在跑就把当前回合停掉 —— 结构性操作（分叉 / 重答）前必须先停，否则在飞的回合会继续往新分支追加 */
+  function stopRunning() {
+    if (window.AgentCore && window.AgentCore.isRunning && window.AgentCore.isRunning()) {
+      window.AgentCore.stop();
+      addChip('已停止（本次循环剩余动作已丢弃）', 'warn');
+    }
+  }
+
+  /**
+   * 挂工具条。
+   * ★ 只 appendChild 到消息节点上，**绝不新增 DOM 层级包住正文** —— beginAssistant 的
+   *   setContent 会整段重写内层 .agent-text 的 innerHTML，工具条挂在 wrap 上才不会被
+   *   流式重渲染吃掉。
+   * @param {string} role 'user'（单条提问）| 'turn'（一个回合并为一组）| 'card'
+   */
+  function attachActs(node, mid, role) {
+    if (!node || !mid || !window.ConvStore) return;
+    const bar = el('div', { class: 'agent-msg-acts' });
+    const mk = (label, title, fn) => {
+      const b = el('button', { class: 'agent-act-btn', text: label, title: title });
+      b.type = 'button';
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); fn(b); });
+      return b;
+    };
+    // ★ 复制的是**存档里的原文**，不从 DOM 反解析：DOM 里是 KaTeX 渲染后的 HTML，
+    //   textContent 会把 $\frac{1}{2}$ 变成 "21"（分子分母粘连），公式源码彻底丢失。
+    bar.appendChild(mk('复制', '复制原文（含公式源码）', (b) => {
+      const n = window.ConvStore.nodeById(mid);
+      copyText(n ? n.content : '', b);
+    }));
+    if (role === 'user') {
+      bar.appendChild(mk('编辑', '改这条提问并从它重新提问（原分支保留）', () => editUserMsg(mid)));
+      bar.appendChild(mk('分支', '从这条提问之前另起一个分支（原分支保留）', () => forkFrom(mid)));
+    } else if (role === 'turn') {
+      bar.appendChild(mk('重答', '让智能体重新回答这一轮', () => reanswer(mid)));
+      bar.appendChild(mk('分支', '从这一轮末尾另起一个分支（原分支保留）', () => forkFrom(mid, true)));
+    }
+    node.appendChild(bar);
+  }
+
+  /** 编辑提问 = 从它的**上一条**分叉 + 用新文本重发（原分支一个字节都不动） */
+  function editUserMsg(mid) {
+    const S = window.ConvStore;
+    const n = S.nodeById(mid);
+    if (!n) return;
+    const next = window.prompt('改这条提问（将从这里重新提问，原分支会保留）：', n.content);
+    if (next == null) return;
+    const text = String(next).trim();
+    if (!text || text === n.content) return;
+    stopRunning();
+    S.branchFrom(n.parent);
+    const nm = S.appendUser(text, n.origin || 'user');
+    renderPath();
+    refreshBranchBars();
+    runAgent(null, nm);
+  }
+
+  /** 重答：回到该回合的提问重发一次 */
+  function reanswer(userMid) {
+    const S = window.ConvStore;
+    const n = S.nodeById(userMid);
+    if (!n || n.role !== 'user') return;
+    stopRunning();
+    S.branchFrom(n.parent);
+    const nm = S.appendUser(n.content, n.origin || 'user');
+    renderPath();
+    refreshBranchBars();
+    runAgent(null, nm);
+  }
+
+  /**
+   * 分叉。
+   * @param {boolean} atTurnEnd true = 以该回合末尾为起点（"接着这条回答另起一问"）；
+   *   false = 以该节点的前一条为起点（"换个问法"）
+   */
+  function forkFrom(mid, atTurnEnd) {
+    const S = window.ConvStore;
+    const n = S.nodeById(mid);
+    if (!n) return;
+    stopRunning();
+    let from = n.parent;
+    if (atTurnEnd) {
+      const ids = S.idMap();
+      const last = S.lastNodeOfTurn(mid);
+      if (last && ids[last.seq]) from = ids[last.seq];
+    }
+    S.branchFrom(from);
+    renderPath();
+    refreshBranchBars();
+    addChip('已切到新分支（原分支保留，可在「会话」页切回）');
+    if (inputEl) inputEl.focus();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 分支条：只在"真正分叉"的地方出现
+  // ---------------------------------------------------------------------------
+  /**
+   * 给"同一 parent 下 ≥2 个子节点"的节点前面插一条分支切换条。
+   * 懒渲染 —— 绝大多数会话一条都不显示，零视觉噪音。
+   */
+  function refreshBranchBars() {
+    const S = window.ConvStore;
+    if (!S || !msgBox) return;
+    Array.prototype.forEach.call(msgBox.querySelectorAll('.agent-branch-bar'), (b) => b.remove());
+    const chain = S.path();
+    const ids = S.idMap();
+    chain.forEach(function (n) {
+      const myId = ids[n.seq];
+      const sibs = S.siblings(myId);
+      if (sibs.length < 2) return;
+      const here = sibs.indexOf(myId);
+      if (here < 0) return;
+      const node = msgBox.querySelector('[data-mid="' + myId + '"]');
+      if (!node || !node.parentNode) return;
+      const bar = el('div', { class: 'agent-branch-bar' });
+      bar.appendChild(el('span', { class: 'agent-branch-label',
+        text: '分支 ' + (here + 1) + '/' + sibs.length }));
+      const go = (k) => {
+        const target = sibs[(here + k + sibs.length) % sibs.length];
+        S.switchLeaf(target);
+        renderPath();
+        refreshBranchBars();
+        const hit = msgBox.querySelector('[data-mid="' + target + '"]');
+        if (hit && hit.scrollIntoView) hit.scrollIntoView({ block: 'center' });
+      };
+      const prev = el('button', { class: 'agent-act-btn', text: '‹', title: '上一条分支' });
+      const next = el('button', { class: 'agent-act-btn', text: '›', title: '下一条分支' });
+      prev.type = next.type = 'button';
+      prev.onclick = () => go(-1);
+      next.onclick = () => go(1);
+      bar.appendChild(prev);
+      bar.appendChild(next);
+      const kid = S.children(ids[n.parent || n.seq])[here];
+      const txt = (kid && kid.n && kid.n.content) ? kid.n.content.slice(0, 12) : '（另一条分支）';
+      bar.appendChild(el('span', { class: 'agent-branch-txt', text: txt }));
+      node.parentNode.insertBefore(bar, node);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 会话页（抽屉内的二级页，绝对定位滑入 —— 不动抽屉既有的 flex 列）
+  // ---------------------------------------------------------------------------
+  let convPage = null;
+
+  function agoText(ts) {
+    if (!ts) return '';
+    const d = Math.max(0, Date.now() - ts);
+    if (d < 60000) return '刚刚';
+    if (d < 3600000) return Math.floor(d / 60000) + ' 分钟前';
+    if (d < 86400000) return Math.floor(d / 3600000) + ' 小时前';
+    return Math.floor(d / 86400000) + ' 天前';
+  }
+
+  function buildConvPage() {
+    if (convPage) return convPage;
+    convPage = el('div', { class: 'agent-conv-page' });
+    const head = el('div', { class: 'agent-conv-head' });
+    const back = el('button', { class: 'agent-tbtn', text: '← 返回' });
+    back.type = 'button';
+    back.onclick = () => leaveConvPage();
+    const add = el('button', { class: 'agent-tbtn primary', text: '+ 新建' });
+    add.type = 'button';
+    add.onclick = () => {
+      window.ConvStore.newSession('');
+      leaveConvPage();
+      renderPath();
+      refreshBranchBars();
+      addChip('已新建会话');
+    };
+    head.appendChild(back);
+    head.appendChild(el('span', { class: 'agent-conv-title', text: '会话' }));
+    head.appendChild(add);
+    convPage.appendChild(head);
+    convPage.appendChild(el('div', { class: 'agent-conv-list' }));
+    convPage.appendChild(el('div', { class: 'agent-conv-foot' }));
+    drawer.appendChild(convPage);
+    return convPage;
+  }
+
+  function renderConvList() {
+    const S = window.ConvStore;
+    if (!S || !convPage) return;
+    const list = convPage.querySelector('.agent-conv-list');
+    const foot = convPage.querySelector('.agent-conv-foot');
+    list.innerHTML = '';
+    const active = S.activeSessionId();
+    const rows = S.sessions().slice()
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    rows.forEach((s) => {
+      const row = el('div', { class: 'agent-conv-row' + (s.id === active ? ' active' : '') });
+      const t = el('span', { class: 'agent-conv-t', text: s.title || '（未命名）' });
+      row.appendChild(t);
+      // 当前会话的行内直接给分支切换器，避免"点进去再切分支"的两跳
+      if (s.id === active) {
+        const chain = S.path();
+        const leaf = chain.length ? chain[chain.length - 1] : null;
+        const ids = S.idMap();
+        if (leaf && ids[leaf.seq]) {
+          const sibs = S.siblings(ids[leaf.seq]);
+          if (sibs.length > 1) {
+            row.appendChild(el('span', { class: 'agent-conv-meta',
+              text: '分支 ' + (sibs.indexOf(ids[leaf.seq]) + 1) + '/' + sibs.length }));
+          }
+        }
+      }
+      row.appendChild(el('span', { class: 'agent-conv-meta',
+        text: (s.count || 0) + ' 条 · ' + agoText(s.updatedAt) }));
+      const ren = el('button', { class: 'agent-act-btn', text: '✎', title: '重命名' });
+      ren.type = 'button';
+      ren.onclick = (ev) => { ev.stopPropagation(); renameInline(row, t, s); };
+      const del = el('button', { class: 'agent-act-btn', text: '✕', title: '删除' });
+      del.type = 'button';
+      del.onclick = (ev) => {
+        ev.stopPropagation();
+        if (!confirm('删除这个会话？不可恢复。')) return;
+        S.deleteSession(s.id);
+        renderConvList();
+        renderPath();
+        refreshBranchBars();
+      };
+      row.appendChild(ren);
+      row.appendChild(del);
+      row.onclick = () => {
+        if (s.id === active) { leaveConvPage(); return; }
+        S.switchSession(s.id);
+        leaveConvPage();
+        renderPath();
+        refreshBranchBars();
+      };
+      list.appendChild(row);
+    });
+    const st = S.stats();
+    foot.textContent = '已用 ' + st.sessions + ' 个会话 · 约 ' + Math.round(st.bytes / 1024) + ' KB'
+      + ' / 上限 ' + S.MAX_SESSIONS + ' 个'
+      + (st.persist ? '' : ' · ⚠ 本机存储已满，本次对话不再自动保存');
+  }
+
+  /** 行内重命名（不用 prompt()，移动端也顺手） */
+  function renameInline(row, span, s) {
+    const inp = el('input', { class: 'agent-conv-input' });
+    inp.value = s.title || '';
+    inp.placeholder = '会话名';
+    row.replaceChild(inp, span);
+    inp.focus();
+    inp.select();
+    let done = false;
+    const commit = (save) => {
+      if (done) return;
+      done = true;
+      if (save) window.ConvStore.renameSession(s.id, inp.value.trim());
+      renderConvList();
+    };
+    inp.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();                  // 别让 Enter 冒泡到输入框的发送逻辑
+      if (ev.key === 'Enter') commit(true);
+      else if (ev.key === 'Escape') commit(false);
+    });
+    inp.addEventListener('blur', () => commit(true));
+    inp.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+
+  function enterConvPage() {
+    buildConvPage();
+    renderConvList();
+    convPage.classList.add('show');
+    if (inputEl) inputEl.blur();    // 移动端：不收键盘的话列表会被压掉一半
+  }
+
+  function leaveConvPage() {
+    if (convPage) convPage.classList.remove('show');
   }
 
   const ACTION_LABEL = {
@@ -647,7 +963,8 @@ window.Panel = (function () {
     //   于是"这条消息归属哪一轮"只有一处真相 —— fork / 编辑才定位得到它。
     const S = window.ConvStore;
     const mid = S ? S.appendUser(text, 'user') : null;
-    addUser(text, mid);
+    const un = addUser(text, mid);
+    attachActs(un, mid, 'user');
     await runAgent(null, mid);
   }
 
@@ -661,6 +978,7 @@ window.Panel = (function () {
     const S = window.ConvStore;
     if (userText != null && S) mid = S.appendUser(userText, 'internal');
     cur = beginAssistant(mid);
+    attachActs(cur.wrap, mid, 'turn');   // 直播时也挂工具条，与恢复路径行为一致
     let reasoning = '', content = '';
     let lastBubble = null;
     let truncated = false;
@@ -892,7 +1210,7 @@ window.Panel = (function () {
     if (S) {
       S.load();
       if (S.isEmpty()) renderEmptyState();
-      else renderPath();
+      else { renderPath(); refreshBranchBars(); }
     }
     bindSceneProgress();
     window.addEventListener('resize', () => {

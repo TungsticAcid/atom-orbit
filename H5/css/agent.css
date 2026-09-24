@@ -710,8 +710,82 @@ body.agent-open .layout {
 /* ------------------------------------------------------------------ */
 /* 移动端                                                              */
 /* ------------------------------------------------------------------ */
+/* 消息工具条（复制 / 编辑 / 分支 / 重答）
+   只挂在消息节点上、绝对定位在气泡右上；**不新增 DOM 层级包住正文** ——
+   beginAssistant 的流式重渲染会整段重写 .agent-text 的 innerHTML，工具条必须挂在
+   外层 wrap 上才不会被冲掉。 */
+.agent-msg { position: relative; }
+.agent-msg-acts {
+  position: absolute; top: 2px; right: 4px;
+  display: flex; gap: 3px; opacity: 0.32; transition: opacity .15s;
+}
+.agent-msg:hover .agent-msg-acts,
+.agent-msg:focus-within .agent-msg-acts { opacity: 1; }
+.agent-msg-acts.busy { pointer-events: none; opacity: 0.15; }
+.agent-act-btn {
+  border: 1px solid var(--line, #2a3558); background: rgba(10, 15, 31, .8);
+  color: var(--text-dim, #9aa7c6); font: inherit; font-size: 11px;
+  padding: 1px 6px; border-radius: 6px; cursor: pointer; line-height: 1.6;
+}
+.agent-act-btn:hover { color: var(--accent, #6ea8ff); border-color: var(--accent, #6ea8ff); }
+.agent-act-btn.ok { color: #6ee7a8; border-color: #6ee7a8; }
+.agent-act-btn.bad { color: #ff9b9b; border-color: #ff9b9b; }
+/* 没有 hover 的设备（触屏）恒显 —— 没有 hover 就没有"悬停出现"这回事 */
+@media (hover: none) { .agent-msg-acts { opacity: 1; } }
+
+/* 分支切换条：只在"真正分叉"的地方出现（懒渲染，多数会话一条都不显示） */
+.agent-branch-bar {
+  display: flex; align-items: center; gap: 5px;
+  margin: 2px 0 4px; padding: 2px 6px;
+  border-left: 2px solid var(--accent, #6ea8ff);
+  font-size: 11px; color: var(--text-dim, #9aa7c6);
+}
+.agent-branch-label { color: var(--accent, #6ea8ff); font-weight: 700; }
+.agent-branch-txt { opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 会话页：抽屉内**绝对定位**的二级页，滑入。
+   刻意不动抽屉既有的 flex 列 —— 若改成"包一层 wrapper"，就要处理 min-height:0
+   这个经典 flexbox 陷阱；滑入式二级页零风险，而且移动端抽屉本来就是一屏宽。 */
+.agent-conv-page {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column;
+  background: linear-gradient(180deg, #101629, #0d1324);
+  transform: translateX(100%); transition: transform .2s;
+}
+.agent-conv-page.show { transform: translateX(0); }
+.agent-conv-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line, #2a3558);
+}
+.agent-conv-title { flex: 1; font-weight: 700; }
+.agent-conv-list { flex: 1; overflow-y: auto; min-height: 0; padding: 8px 10px; }
+.agent-conv-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 10px; border-radius: 10px; cursor: pointer;
+  border: 1px solid transparent; min-height: 44px;      /* iOS 触控标准 */
+}
+.agent-conv-row:hover { background: rgba(110, 168, 255, .08); }
+.agent-conv-row.active { border-color: var(--accent, #6ea8ff); background: rgba(110, 168, 255, .10); }
+.agent-conv-t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-conv-meta { font-size: 11px; color: var(--text-dim, #9aa7c6); white-space: nowrap; }
+.agent-conv-input {
+  flex: 1; font: inherit; padding: 4px 8px; border-radius: 8px;
+  border: 1px solid var(--accent, #6ea8ff);
+  background: var(--card, #151c33); color: inherit;
+}
+.agent-conv-foot {
+  padding: 8px 12px; border-top: 1px solid var(--line, #2a3558);
+  font-size: 11px; color: var(--text-dim, #9aa7c6);
+}
+/* 长按选择这条路要真的可用（复制失败时提示的正是它） */
+.agent-msgs { -webkit-user-select: text; user-select: text; }
+
+/* ------------------------------------------------------------------ */
 @media (max-width: 640px) {
   .agent-drawer { width: 100vw; }
   .agent-fab { width: 46px; height: 46px; right: 12px; bottom: 12px; }
   .agent-fab-icon { font-size: 21px; }
+  /* 小屏上把工具条从"绝对定位右上"改成气泡末尾一行，免得压住正文 */
+  .agent-msg-acts { position: static; justify-content: flex-end; margin-top: 4px; opacity: 1; }
+  .agent-act-btn { min-height: 28px; }
 }
