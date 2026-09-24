@@ -484,8 +484,22 @@ window.Panel = (function () {
         (lines.length > 1 ? '<span class="agent-act-more">等 ' + lines.length + ' 个动作</span>' : ''),
     }));
     const body = el('div', { class: 'agent-act-body' });
-    body.textContent = lines.join('\n') +
-      (result ? '\n\n返回：' + JSON.stringify(result).slice(0, 400) : '');
+    // 每步一行，各带一个「引用」按钮 —— 学生想对某一步提整改意见时，不必自己复述
+    // "那个演示的第 3 步是哪个"，点一下就把这一步写进输入框（配合 reviseDemo 用）。
+    lines.forEach((line, i) => {
+      const row = el('div', { class: 'agent-act-row' });
+      row.appendChild(el('span', { class: 'agent-act-txt', text: line }));
+      const q = el('button', { class: 'agent-act-btn', text: '引用',
+        title: '把这一步写进输入框，便于提整改意见' });
+      q.type = 'button';
+      q.onclick = (ev) => { ev.stopPropagation(); quoteStep(acts[i]); };
+      row.appendChild(q);
+      body.appendChild(row);
+    });
+    if (result) {
+      body.appendChild(el('div', { class: 'agent-act-ret',
+        text: '返回：' + JSON.stringify(result).slice(0, 400) }));
+    }
     d.appendChild(body);
     msgBox.appendChild(d);
     scrollDown();
@@ -628,6 +642,23 @@ window.Panel = (function () {
       return;
     }
     done(ok);
+  }
+
+  /** 设备/浏览器通常不在 hover 状态下的兜底见 CSS；这里只管把这一步写进输入框 */
+  /**
+   * 把"这一步"写进输入框，光标留在末尾等学生补"改成什么"。
+   * ★ 刻意**不写步号**：动作气泡里的这批动作与当前队列的步号未必对得上（队列里可能
+   *   还有之前下发的步骤），硬写一个号反而会把模型带偏。写成可读的动作描述，让模型
+   *   自己对照 getSnapshot 的 steps 去定位。
+   */
+  function quoteStep(act) {
+    if (!inputEl) return;
+    const a = act || {};
+    const txt = '关于演示里的这一步：' + describeAction(a.action || '', a.params || a)
+      + '\n我想改成：';
+    inputEl.value = txt;
+    inputEl.focus();
+    try { inputEl.setSelectionRange(txt.length, txt.length); } catch (e) { /* 忽略 */ }
   }
 
   /** 正在跑就把当前回合停掉 —— 结构性操作（分叉 / 重答）前必须先停，否则在飞的回合会继续往新分支追加 */

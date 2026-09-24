@@ -730,6 +730,13 @@ body.agent-open .layout {
 .agent-act-btn:hover { color: var(--accent, #6ea8ff); border-color: var(--accent, #6ea8ff); }
 .agent-act-btn.ok { color: #6ee7a8; border-color: #6ee7a8; }
 .agent-act-btn.bad { color: #ff9b9b; border-color: #ff9b9b; }
+/* 动作气泡里"一步一行"，每行右侧一个「引用」按钮（悬停才现，触屏恒显） */
+.agent-act-row { display: flex; align-items: center; gap: 6px; }
+.agent-act-row .agent-act-txt { flex: 1; }
+.agent-act-row .agent-act-btn { opacity: 0; transition: opacity .15s; flex: none; }
+.agent-act-row:hover .agent-act-btn,
+.agent-act-row:focus-within .agent-act-btn { opacity: 1; }
+.agent-act-ret { margin-top: 6px; opacity: .7; white-space: pre-wrap; }
 /* 没有 hover 的设备（触屏）恒显 —— 没有 hover 就没有"悬停出现"这回事 */
 @media (hover: none) { .agent-msg-acts { opacity: 1; } }
 
