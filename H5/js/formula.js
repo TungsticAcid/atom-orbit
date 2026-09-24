@@ -292,6 +292,24 @@ window.Formula = (function () {
     return '';
   }
 
+  /**
+   * 实轨道惯用名的 **HTML 版**（真下标）：`p_z` → `p<sub>z</sub>`、
+   * `d_{x^2-y^2}` → `d<sub>x²-y²</sub>`。
+   *
+   * ★ 必须与 realOrbitalName 分开：那个用于**纯文本**场合（公式区标题走 textContent，
+   *   不能含标签），这个用于 innerHTML（右上角轨道标签）。混用会让标签原样显示成
+   *   "p_z"，d 轨道尤其扎眼 —— 它内部用的是 LaTeX 花括号语法，会显示成 "d_{xz}"。
+   */
+  function realOrbitalNameHtml(l, m) {
+    const name = realOrbitalName(l, m);
+    if (!name) return '';
+    return name
+      .replace(/_\{([^}]*)\}/g, function (mm, inner) {
+        return '<sub>' + inner.replace(/\^2/g, '²') + '</sub>';
+      })
+      .replace(/_([a-z])/g, function (mm, c) { return '<sub>' + c + '</sub>'; });
+  }
+
   /** 针对常见情况给出教育性解说 */
   function buildNote(n, l, m, mode) {
     const sub = SUBSHELL[Math.min(l, SUBSHELL.length - 1)];
@@ -307,5 +325,5 @@ window.Formula = (function () {
     return '径向节点 ' + radialNodes + ' 个、角节点 ' + angularNodes + ' 个；' + orient;
   }
 
-  return { buildPsi, buildSuperposition, legendreCoeffs, laguerreCoeffs, realOrbitalName };
+  return { buildPsi, buildSuperposition, legendreCoeffs, laguerreCoeffs, realOrbitalName, realOrbitalNameHtml };
 })();

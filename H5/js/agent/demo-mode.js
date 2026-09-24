@@ -125,7 +125,7 @@ window.DemoMode = (function () {
           ],
         },
         {
-          speech: '现在切回实函数。环变成了两个定向的瓣——变成 p_x。注意：**能量没有变**。',
+          speech: '现在切回实函数。环变成了两个定向的瓣——变成 $p_x$。注意：**能量没有变**。',
           actions: [
             { action: 'setAutoRotate', params: { on: false } },
             { action: 'setWavefunctionMode', params: { mode: 'real' } },

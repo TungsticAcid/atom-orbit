@@ -183,6 +183,14 @@ html, body {
 }
 /* 提示文字（如 φ 无影响时的说明） */
 .hint { color: var(--text-dim); font-size: 12px; margin-top: 6px; line-height: 1.5; }
+.hint b { color: var(--accent); font-variant-numeric: tabular-nums; }
+/* 提示行里的内联按钮（如「采用推荐阈值」）：做成链接样式，不占额外一行 */
+.link-btn {
+  border: none; background: none; padding: 0 2px; margin-left: 4px;
+  color: var(--accent); font: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.link-btn:hover { filter: brightness(1.25); }
 /* 数字输入框：与滑块并用，可直接键入精确值 */
 .num-val {
   width: 64px;
@@ -267,6 +275,9 @@ input[type="range"]::-moz-range-thumb {
   color: #0b1224;
   font-weight: 700;
 }
+/* 禁用的分段按钮（如 l=0 时的相位色：角向函数是常数，没有正负可分） */
+.seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.seg-btn:disabled:hover { color: var(--text-dim); }
 
 .btn {
   border: 1px solid var(--line);

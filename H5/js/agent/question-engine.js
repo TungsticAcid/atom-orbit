@@ -241,7 +241,7 @@ window.QuestionEngine = (function () {
       return assemble(stem, correct,
         [deg(m / l), deg(l / (l + 1)), (180 - a.deg).toFixed(1) + '°', '90.0°'],
         `cosθ = m / √(l(l+1)) = ${m} / √(${l}×${l + 1}) ⇒ θ = **${correct}**。\n` +
-        `★ 常见错误是用 cosθ = m/l（把 L_z/L 当成了 m/l），正确的分母是 √(l(l+1)) 而非 l。\n` +
+        `★ 常见错误是用 cosθ = m/l（把 $L_z/L$ 当成了 m/l），正确的分母是 √(l(l+1)) 而非 l。\n` +
         `特别地：m = ±l 时夹角最小但不为 0（角动量不可能与 z 轴重合）；m = 0 时夹角为 90°。`,
         { kp: 'K9', difficulty: 'challenge' });
     },
@@ -299,10 +299,10 @@ window.QuestionEngine = (function () {
   const CONCEPT = {
     K6: [
       {
-        stem: '**p_x** 轨道可以由哪两个复轨道线性组合得到？',
+        stem: '**$p_x$** 轨道可以由哪两个复轨道线性组合得到？',
         correct: 'm = +1 与 m = −1',
         wrong: ['m = 0 与 m = +1', 'm = 0 与 m = −1', 'm = +1 与 m = +1'],
-        exp: '实轨道是复轨道的线性组合：p_x ∝ (Y_1^{−1} − Y_1^{+1})。\n' +
+        exp: '实轨道是复轨道的线性组合：$p_x \\propto (Y_1^{-1} - Y_1^{+1})$。\n' +
              '因为三者能量简并，组合态仍是合法的本征态。',
       },
       {
@@ -360,7 +360,7 @@ window.QuestionEngine = (function () {
              '★ 只有**不同能量**的态叠加才是非定态。',
       },
       {
-        stem: '对叠加态 ψ = Σcᵢψᵢ，测得力学量 L_z 取值为 ħm 的概率是？',
+        stem: '对叠加态 $\\psi = \\sum_i c_i \\psi_i$，测得力学量 $L_z$ 取值为 $\\hbar m$ 的概率是？',
         correct: '所有 mᵢ = m 的分量的 |cᵢ|² 之和',
         wrong: ['|cᵢ|² 的最大值', 'Σ|cᵢ|²  (恒为 1)', 'cᵢ 本身'],
         exp: '测量假设：测得本征值 a 的概率 = 对应本征态系数模方之和 P(a) = Σ_{aᵢ=a}|cᵢ|²。\n' +
@@ -368,9 +368,9 @@ window.QuestionEngine = (function () {
       },
       {
         stem: '**sp³** 杂化轨道由哪些原子轨道组合而成？',
-        correct: '一个 s 与三个 p（p_x, p_y, p_z）',
+        correct: '一个 s 与三个 p（$p_x$, $p_y$, $p_z$）',
         wrong: ['一个 s 与两个 p', '两个 s 与两个 p', '三个 s 与一个 p'],
-        exp: 'sp³ = ½(s + p_x + p_y + p_z)，共 4 个等价杂化轨道，指向正四面体，夹角 109.5°。\n' +
+        exp: '$sp^3 = \\frac{1}{2}(s + p_x + p_y + p_z)$，共 4 个等价杂化轨道，指向正四面体，夹角 109.5°。\n' +
              '★ 杂化轨道是**叠加态的特例**，系数由对称性唯一确定。',
       },
     ],

@@ -119,7 +119,7 @@
     state.mode = activeValue('#modeSeg', 'data-mode') || 'real';
     state.renderMode = activeValue('#renderSeg', 'data-mode') || 'surface';
     state.colorMode = activeValue('#colorSeg', 'data-mode') || 'orbital';
-    state.level = +els.levelSlider.value;
+    state.level = levelFromSlider(+els.levelSlider.value);
     state.psiCrit = activeValue('#psiSeg', 'data-mode') || 'psi2';
     state.pointCount = +els.pointCountSlider.value;
     state.plane = activeValue('#planeSeg', 'data-p') || 'xz';
@@ -133,17 +133,99 @@
     // 阈值/粒子数时输入框也会跟着走（正在输入的那只不覆盖，否则会打断键入）。
     syncNumBox(els.levelInput, state.level * 100);
     syncNumBox(els.pointCountInput, state.pointCount / 10000);
-    // 提示两种判据的换算：|ψ| = f ⟺ |ψ|² = f²（故同一读数下 |ψ| 判据得到更大的面）
+    // 提示两种判据的换算（|ψ| = f ⟺ |ψ|² = f²，故同一读数下 |ψ| 判据得到更大的面），
+    // 并给出该轨道的推荐值。百分比按量级取小数位 —— 低端可达 0.02%。
+    const pct = (x) => {
+      const p = x * 100;
+      return (p >= 10 ? p.toFixed(1) : (p >= 1 ? p.toFixed(2) : p.toFixed(3))) + '%';
+    };
     const f = state.level;
-    els.psiHint.textContent = (state.psiCrit === 'psi2')
-      ? '阈值＝占 |ψ|² 峰值的比例（' + (f * 100).toFixed(1) + '% |ψ|² ⟺ ' + (Math.sqrt(f) * 100).toFixed(1) + '% |ψ|）'
-      : '阈值＝占 |ψ| 峰值的比例（' + (f * 100).toFixed(1) + '% |ψ| ⟺ ' + (f * f * 100).toFixed(1) + '% |ψ|²）';
+    const rec = recommendedLevel(state.n, state.l, state.psiCrit);
+    // ★ 用 innerHTML：推荐值后面挂一个「采用」内联按钮（提示行会随每次重算重建，
+    //   所以按钮的点击靠事件委托绑定，见 init 里的 psiHint 监听）。内容全是自产数字，
+    //   无注入面。
+    els.psiHint.innerHTML = ((state.psiCrit === 'psi2')
+      ? '阈值＝占 |ψ|² 峰值的比例（' + pct(f) + ' |ψ|² ⟺ ' + pct(Math.sqrt(f)) + ' |ψ|）'
+      : '阈值＝占 |ψ| 峰值的比例（' + pct(f) + ' |ψ| ⟺ ' + pct(f * f) + ' |ψ|²）')
+      + '　· 本轨道推荐 <b>' + pct(rec) + '</b>'
+      + '<button type="button" class="link-btn" id="levelRecBtn">采用</button>';
+
+    // ★ l = 0（s 轨道）时角向函数是常数、ψ 的符号在整块空间恒定，相位色会退化成一整块
+    //   同色（s 蓝变纯红），既无信息又容易让学生以为"红色有特殊含义"。故此时禁用相位色，
+    //   并把当前选择拉回支壳层色。★ state 与 DOM 必须**同时**改，否则下一帧
+    //   readFromControls 会从 DOM 读回 phase。
+    const phaseBtn = document.querySelector('#colorSeg .seg-btn[data-mode="phase"]');
+    if (phaseBtn) {
+      const noPhase = (state.l === 0);
+      phaseBtn.disabled = noPhase;
+      if (noPhase && state.colorMode === 'phase') {
+        state.colorMode = 'orbital';
+        const orbBtn = document.querySelector('#colorSeg .seg-btn[data-mode="orbital"]');
+        if (orbBtn) { orbBtn.classList.add('active'); phaseBtn.classList.remove('active'); }
+      }
+    }
   }
 
-  /** 把数值写回数字框（正整数一位小数足够：阈值步长 0.5%、粒子数步长 0.1 万） */
+  // ---- 等值面阈值：对数刻度 + 按轨道推荐值 --------------------------------
+  /**
+   * 阈值滑块的刻度映射。
+   * ★ 为什么用对数：可用范围是 0.02%–80%（跨 1.6 个数量级），线性刻度下低端
+   *   （0.02%–1%）只占滑块行程的百分之一、根本拖不到；而低端恰恰是最需要精细控制的
+   *   区域（"要看到所有节面"的阈值常常在 1% 以下）。故滑块用 0–1000 的整数刻度，
+   *   等比映射到 [LEVEL_MIN, LEVEL_MAX]。
+   */
+  const LEVEL_MIN = 0.0002, LEVEL_MAX = 0.80;          // 占峰值的比值
+  const LEVEL_LOG_SPAN = Math.log(LEVEL_MAX) - Math.log(LEVEL_MIN);
+  const levelFromSlider = (v) => Math.exp(Math.log(LEVEL_MIN) + (v / 1000) * LEVEL_LOG_SPAN);
+  const levelToSlider = (f) => Math.round(1000 * (Math.log(f) - Math.log(LEVEL_MIN)) / LEVEL_LOG_SPAN);
+
+  // 用户是否"明确指定过"阈值（拖过滑块 / 改过数字框 / 智能体下发过 setSurfaceLevel 或
+  // restoreState）。置位后换轨道就不再套用推荐值 —— 否则会盖掉智能体演示里明确设的值。
+  let levelUserAdjusted = false;
+  let lastOrbKeyForLevel = null;                        // 上次套用推荐值时的轨道标识
+
+  /**
+   * 该轨道的推荐等值面阈值（占峰值的比值，按**当前判据**给出）。
+   *
+   * 依据：等值面沿 |Y| 最大的方向能否出现，只看该壳的 max R(r)² 够不够高。实测各壳
+   *   峰值占比 —— 3p 100/11.9、4p 100/11.1/4.2、5d 100/17.4/8.1、4s 100/1.8/0.42/0.18。
+   *   默认的 10% 只对 3p（恰好是默认轨道）勉强成立：4p 会切掉第三层壳、3s 只显示
+   *   1.4% 的概率（看起来是个光滑小球），与"展示节面"的教学目标直接冲突。
+   *
+   * 取最弱壳峰值的 40%：既保证**每一层壳都显示得出来**（0.4 < 1），又留出形态余地
+   * （贴着峰值取会让最外壳缩成一个点）。单壳轨道没有"看全节面"的约束，沿用 10%。
+   *
+   * 下限 0.04% 是防呆而非妥协：n ≤ 6 时实测最弱壳峰值 ≥ 0.05%，所以 0.04% 仍然显示
+   * 得出所有壳，只是不让推荐值无限逼近滑块下限。
+   */
+  function recommendedLevel(n, l, psiCrit) {
+    if (!window.OM || !OM.shellPeakFractions) return 0.10;
+    let fr;
+    try { fr = OM.shellPeakFractions(n, l); } catch (e) { return 0.10; }
+    if (!fr || fr.length <= 1) return 0.10;             // 单壳：无约束
+    const rec = Math.max(0.0004, Math.min(0.8, 0.4 * Math.min.apply(null, fr)));
+    // 判据换算：同一读数下 |ψ| 判据对应 f² 倍峰值（见 render3d.js 的 levelAbsFor）
+    return (psiCrit === 'psi') ? Math.sqrt(rec) : rec;
+  }
+
+  /**
+   * 把推荐阈值写进 state 与滑块。只在"用户没明确指定过"时调用。
+   * ★ 此处**直接赋值、不派发 input 事件** —— 派发会触发滑块监听里的
+   *   levelUserAdjusted = true，等于自己把自己锁死（推荐值只生效一次）。
+   */
+  function applyRecommendedLevel() {
+    state.level = recommendedLevel(state.n, state.l, state.psiCrit);
+    if (els.levelSlider) els.levelSlider.value = levelToSlider(state.level);
+  }
+
+  /** 把数值写回数字框 */
   function syncNumBox(el, v) {
     if (!el || document.activeElement === el) return;
-    const s = String(Math.round(v * 10) / 10);
+    // ★ 精度按量级取：阈值低端可到 0.02%，固定一位小数会把它舍成 0.0
+    //   （"0.0"既看不出是多少，再键入还会被判非法）；粒子数（万）0.8–8 两位足够。
+    const av = Math.abs(v);
+    const digits = (av >= 10) ? 1 : (av >= 1 ? 2 : 3);
+    const s = String(+v.toFixed(digits));
     if (el.value !== s) el.value = s;
   }
 
@@ -184,6 +266,14 @@
   // ---- 主重算 ---------------------------------------------------------------
   function recompute() {
     readFromControls();
+    // ★ 换轨道时套用该轨道的推荐阈值（用户/智能体明确指定过就不动，见 levelUserAdjusted）。
+    //   必须放在 readFromControls 之后：那时 n/l/m 已是新值，而 level 刚被滑块覆盖成旧值，
+    //   正需要在这里改掉。轨道标识不含 psiCrit —— 切判据按既有设计保持读数不变。
+    const orbKey = state.n + ',' + state.l + ',' + state.m + ',' + state.mode;
+    if (orbKey !== lastOrbKeyForLevel) {
+      lastOrbKeyForLevel = orbKey;
+      if (!levelUserAdjusted) applyRecommendedLevel();
+    }
     updateOutputs();
     updateViewer();
     updateCharts();
@@ -255,7 +345,9 @@
     }
     // 右上角轨道标签：n + 支壳层字母 + m 下标（此前漏了 m），实函数附化学惯用名
     const sub = OM.SUBSHELL[Math.min(state.l, OM.SUBSHELL.length - 1)];
-    const realName = (state.mode === 'real') ? Formula.realOrbitalName(state.l, state.m) : '';
+    // ★ 用 HTML 版：realName 会经 innerHTML 插入右上角标签，纯文本版会把下标原样
+    //   显示成 "p_z"（d 轨道更扎眼 —— 它内部是 LaTeX 花括号语法，显示成 "d_{xz}"）
+    const realName = (state.mode === 'real') ? Formula.realOrbitalNameHtml(state.l, state.m) : '';
     els.orbitTitle.innerHTML =
       state.n + sub + '<sub>' + f.mLabel + '</sub>' +
       (realName ? '<span class="orbit-real">' + realName + '</span>' : '');
@@ -286,10 +378,24 @@
     numBind(els.mInput, 'm');
     // 等值阈值 / 粒子数：滑块仍是真值来源，数字框用更贴近显示的"人类单位"
     // （百分比 / 万），换算在绑定时给。
-    bindNumToSlider(els.levelInput, els.levelSlider, (v) => v / 100, 0.5, 80);
+    // 阈值：数字框用"百分比"作人类单位，滑块是 0–1000 的对数刻度（见 levelFromSlider）
+    bindNumToSlider(els.levelInput, els.levelSlider, (v) => levelToSlider(v / 100), 0.02, 80);
     bindNumToSlider(els.pointCountInput, els.pointCountSlider, (v) => v * 10000, 0.8, 8);
-    els.levelSlider.addEventListener('input', () => scheduleUpdate());
+    // ★ 任何一次阈值输入都算"用户明确指定过"：此后换轨道不再自动套推荐值，免得盖掉
+    //   智能体演示里明确设的阈值。（setSlider 也会派发 input，故数字框那条路径一并覆盖）
+    els.levelSlider.addEventListener('input', () => { levelUserAdjusted = true; scheduleUpdate(); });
     els.pointCountSlider.addEventListener('input', () => scheduleUpdate());
+    // 「采用推荐值」是提示行里的内联按钮；用**事件委托**，因为 hint 每次重算都会重建
+    // （直接给按钮绑 onclick 会在第一次重建后失效）。
+    if (els.psiHint) {
+      els.psiHint.addEventListener('click', (e) => {
+        if (!e.target || e.target.id !== 'levelRecBtn') return;
+        levelUserAdjusted = false;          // 交回自动模式并立刻套用
+        applyRecommendedLevel();
+        updateOutputs();
+        scheduleUpdate(0);
+      });
+    }
     // 径向图的特征标注：单选，再点一次取消（与曲线开关并列在卡片头，不再是"看不见的"状态）
     const markSeg = $('#radialMarkSeg');
     if (markSeg) {
@@ -413,7 +519,7 @@
         const db = document.querySelector('#radialSeg .seg-btn[data-k="D"]');
         if (db) db.classList.add('active');
       }
-      if (els.levelSlider) els.levelSlider.value = s.levelFraction;
+      if (els.levelSlider) els.levelSlider.value = levelToSlider(s.levelFraction);
       if (els.pointCountSlider) els.pointCountSlider.value = s.pointCount;
 
       const cb = document.querySelector('#autoRotate');
@@ -445,9 +551,21 @@
     },
     setWavefunctionMode(p) { return setSeg('#modeSeg', 'data-mode', p.mode); },
     setRenderMode(p) { return setSeg('#renderSeg', 'data-mode', p.mode); },
-    setColorMode(p) { return setSeg('#colorSeg', 'data-mode', p.mode); },
+    setColorMode(p) {
+      // ★ l = 0（s 轨道）时角向函数是常数、ψ 的符号在整块空间恒定，相位色退化成
+      //   一整块同色（s 蓝变纯红）—— 无信息且易误解，故拒绝（界面上该按钮也置灰）
+      if (p.mode === 'phase' && state.l === 0) return false;
+      return setSeg('#colorSeg', 'data-mode', p.mode);
+    },
     setPsiCriterion(p) { return setSeg('#psiSeg', 'data-mode', p.criterion); },
-    setIsosurfaceLevel(p) { return setSlider(els.levelSlider, p.fraction); },
+    setIsosurfaceLevel(p) {
+      // ★ 滑块现在是 0–1000 的**对数刻度**（见 levelFromSlider），必须换算 ——
+      //   把 fraction（0–1 的比值）直接写进滑块会落到刻度底部，阈值变得极小。
+      //   setSlider 会派发 input，于是 levelUserAdjusted 自动置位：智能体明确指定过
+      //   阈值，此后换轨道就不再套推荐值（否则会盖掉演示里设的值）。
+      const f = Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, +p.fraction || LEVEL_MIN));
+      return setSlider(els.levelSlider, levelToSlider(f));
+    },
     setParticleCount(p) { return setSlider(els.pointCountSlider, p.count); },
     setAngularView(p) { return setSeg('#angSeg', 'data-k', p.which); },
     setSectionPlane(p) { return setSeg('#planeSeg', 'data-p', p.plane); },

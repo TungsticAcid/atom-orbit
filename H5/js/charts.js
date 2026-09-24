@@ -510,7 +510,8 @@ window.Charts = (function () {
         if (dd > maxV) maxV = dd;
         if (sectionMode === 'phase') {
           phases[j * G + i] = (mode === 'real')
-            ? (OM.angularReal(l, m, th, ph) >= 0 ? 0 : Math.PI)
+            // ★ 完整 ψ 的符号（含 R(r)）—— 只看 Y 会漏掉径向节点处的符号翻转
+            ? (OM.radialR(n, l, r) * OM.angularReal(l, m, th, ph) >= 0 ? 0 : Math.PI)
             : OM.angularComplex(l, m, th, ph).arg();
         }
       }

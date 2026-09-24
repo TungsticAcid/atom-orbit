@@ -332,9 +332,11 @@ window.OM = (function () {
       tmpDensity[count] = density;
       if (density > maxShiftDensity) maxShiftDensity = density;
       if (usePhase) {
-        // 相位：复函数取 arg ψ（R≥0，故等于 arg Y）；实函数取符号 → 0 或 π
+        // 相位：复函数取 arg ψ；实函数取**完整 ψ 的符号** → 0 或 π。
+        // ★ 不能只取 sign(Y)：径向节点两侧 R(r) 会变号，只看 Y 会让内外壳同色 ——
+        //   而那正是相位色最该显示的东西（与等值面、截面的判据统一）。
         tmpPhase[count] = (mode === 'real')
-          ? (Yre >= 0 ? 0 : Math.PI)
+          ? (radialR(n, l, r) * Yre >= 0 ? 0 : Math.PI)
           : angularComplex(l, m, theta, phi).arg();
       }
       count++;
@@ -501,6 +503,47 @@ window.OM = (function () {
       });
     }
     return gaps;
+  }
+
+  /**
+   * 各层径向壳的"峰值占全局峰值的比例"（内→外）。
+   *
+   * 用途：**按轨道推荐等值面阈值**。等值面判据是 |ψ|² = R(r)²·|Y|² ≥ level，而沿
+   * |Y| 最大的那个方向，一层壳能否出现只取决于它的 max R(r)² 够不够高 —— 于是
+   * "要让第 k 层壳也显示出来"就要求 level < 该壳的峰值占比。这正是 30% 阈值下
+   * "3p 只有两瓣"、10% 阈值下"4s 是一个光滑小球"的原因（实测见 render3d.js 的
+   * planFinePatch 与 README）。
+   *
+   * 壳的边界取**径向节点**（那才是壳的严格分界，R=0）；只有一层壳时返回 [1]。
+   * 比例只涉及 R(r)，与 (m, mode) 无关，故不接收这两个参数。
+   *
+   * @returns {number[]} 各壳 maxR² / 全局 maxR²，按半径内→外排列
+   */
+  function shellPeakFractions(n, l) {
+    const zeros = radialZeros(n, l);
+    if (!zeros.length) return [1];                 // n-l-1 = 0：只有一层壳
+    const scanMax = 2 * n * n + 10;
+    const steps = 3000;
+    const R2 = new Float64Array(steps + 1);
+    let gMax = 0;
+    for (let i = 0; i <= steps; i++) {
+      const R = radialR(n, l, (scanMax * i) / steps);
+      R2[i] = R * R;
+      if (R2[i] > gMax) gMax = R2[i];
+    }
+    if (!(gMax > 0)) return [1];
+    const bounds = [0].concat(zeros, [scanMax]);
+    const out = [];
+    for (let k = 0; k + 1 < bounds.length; k++) {
+      const a = bounds[k], b = bounds[k + 1];
+      let mx = 0;
+      for (let i = 0; i <= steps; i++) {
+        const r = (scanMax * i) / steps;
+        if (r >= a && r <= b && R2[i] > mx) mx = R2[i];
+      }
+      if (mx / gMax > 1e-9) out.push(mx / gMax);
+    }
+    return out.length ? out : [1];
   }
 
   /**
@@ -884,7 +927,7 @@ window.OM = (function () {
     lColor, phaseColor, phaseColorFor, hslToRgb,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
-    isoNeckHalf, shellGaps,
+    isoNeckHalf, shellGaps, shellPeakFractions,
     makeRadialLUT, makePsiDensityFast,
     psiSuperposition, densitySuperposition, isStationary, superpositionExtent,
     maxDensitySuperposition, superpositionRefPeak, superpositionRefExtent,

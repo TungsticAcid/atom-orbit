@@ -65,7 +65,7 @@ window.SceneBridge = (function () {
     setIsosurfaceLevel: {
       group: '等值面', concept: 'K8',
       desc: '设置等值面阈值（占峰值的比例）',
-      params: { fraction: 'number 0.005–0.8' },
+      params: { fraction: 'number 0.0002–0.8（占峰值比例；低端 0.02% 用于显出全部径向壳层）' },
     },
     animateIsosurfaceLevel: {
       group: '等值面', concept: 'K5/K8', animated: true,
@@ -408,11 +408,13 @@ window.SceneBridge = (function () {
       case 'setPsiCriterion':
         return ['psi', 'psi2'].indexOf(p.criterion) >= 0 ? { params: { criterion: p.criterion } } : { err: 'criterion 非法' };
       case 'setIsosurfaceLevel': {
-        const v = clampNum(p.fraction, 0.005, 0.8);
+        // 下限与滑块一致（0.02%）：更低的阈值虽仍算得出面，但网格盒会胀得太大、
+        // 格距比壳层还粗，等值面反而更难看
+        const v = clampNum(p.fraction, 0.0002, 0.8);
         return v == null ? { err: 'fraction 非法' } : { params: { fraction: v } };
       }
       case 'animateIsosurfaceLevel': {
-        const f = clampNum(p.from, 0.005, 0.8), t = clampNum(p.to, 0.005, 0.8);
+        const f = clampNum(p.from, 0.0002, 0.8), t = clampNum(p.to, 0.0002, 0.8);
         if (f == null || t == null) return { err: 'from/to 非法' };
         return { params: { from: f, to: t, durationMs: clampNum(p.durationMs, 300, 6000) || DEFAULT_SWEEP_MS } };
       }
