@@ -40,6 +40,9 @@
 
       <aside class="card panel">
         <div class="card-head"><span class="card-title">量子数 / 显示模式</span></div>
+        <!-- ★ .panel-body 是必需的：面板高度被钉成与左侧三维卡片等高（见 layout.js 的
+             --panel-h），内容比它高时要在**内部**滚动，而不是把整行栅格撑高 -->
+        <div class="panel-body">
 
         <div class="set">
           <div class="row"><label for="nInput">主量子数 n</label>
@@ -76,10 +79,11 @@
               <button class="seg-btn" data-mode="psi">|ψ|</button>
             </div>
           </div>
-          <!-- 阈值滑块是 0–1000 的**对数刻度**（阈值跨 0.02%–80%、共 1.6 个数量级，
-               线性刻度下低端根本拖不到），换算见 main.js 的 levelFromSlider -->
+          <!-- 阈值滑块是 0–1000 的**对数刻度**（阈值跨 0.3%–80%、共 2.4 个数量级，
+               线性刻度下低端根本拖不到；中点 = √(0.3%×80%) ≈ 4.9%，落在常用阈值附近）。
+               换算与量程依据见 main.js 的 levelFromSlider -->
           <div class="row"><label for="levelInput">等值面阈值（%）</label>
-            <input type="number" id="levelInput" class="num-val" min="0.02" max="80" step="0.01" value="10" /></div>
+            <input type="number" id="levelInput" class="num-val" min="0.3" max="80" step="0.01" value="10" /></div>
           <input type="range" id="levelSlider" min="0" max="1000" step="1" value="749" />
           <div class="hint" id="psiHint">阈值＝占 |ψ|² 峰值的比例</div>
         </div>
@@ -94,8 +98,9 @@
           <button class="seg-btn" data-mode="orbital"
                   title="按支壳层上色（s 蓝 / p 绿 / d 橙 / f 紫）；不显示 ψ 的正负">支壳层色</button>
           <button class="seg-btn active" data-mode="phase"
-                  title="按 ψ 的正负上色：角向与径向节点的符号翻转都会显示出来">相位色（正负瓣）</button>
+                  title="按 ψ 的正负上色：角向与径向节点的符号翻转都会显示出来">相位色</button>
         </div>
+        </div><!-- /.panel-body -->
       </aside>
     </section>
 

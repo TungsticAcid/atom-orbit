@@ -12,6 +12,9 @@ window.Settings = (function () {
 
   const KEY = 'orbit.agent.settings';
 
+  /** 演示节奏的合法取值（与 scene-bridge 的 PACE_MS 对应） */
+  const PACE_NAMES = ['slow', 'normal', 'fast'];
+
   const DEFAULTS = {
     endpoint: 'https://api.deepseek.com',
     apiKey: '',
@@ -23,6 +26,9 @@ window.Settings = (function () {
     // 演示播放方式：'manual' 每步停下等学生点「下一步」；'auto' 按节奏自动连播。
     // 默认手动——一步一确认，学生才有时间看清画面到底变了什么。
     playback: 'manual',
+    // 演示节奏：'slow' | 'normal' | 'fast' —— 连播时每一步的停留时长（见 scene-bridge 的
+    // PACE_MS）。默认 normal（2400ms），原先写死的 1200ms 读不完一整句旁白。
+    demoPace: 'normal',
     // 单次回复的输出上限（思考 + 正文共用）。推理模型在写正文前会先花掉一大段思考，
     // 给太小会导致"正文一个字没写就截断"，界面上表现为空白回复。
     maxTokens: 8192,
@@ -153,6 +159,19 @@ window.Settings = (function () {
     pbSel.value = s.playback === 'auto' ? 'auto' : 'manual';
     g2.appendChild(field('演示播放方式', pbSel,
       '手动适合跟着讲解走；自动适合课堂一次性放完。演示条上可临时切换。'));
+
+    // 演示节奏：连播时每一步停留多久。★ 原来写死 1200ms —— 旁白是一整句中文，
+    // 1.2 秒读不完，学生看到的是"画面一直在变、话还没读完"。默认放到 2400ms。
+    const paceSel = el('select', { class: 'agent-input' });
+    [['slow', '慢（3.0 秒 / 步）'],
+     ['normal', '标准（2.4 秒 / 步）'],
+     ['fast', '快（1.2 秒 / 步）']].forEach(([v, t]) => {
+      paceSel.appendChild(el('option', { value: v, text: t }));
+    });
+    paceSel.value = PACE_NAMES.indexOf(s.demoPace) >= 0 ? s.demoPace : 'normal';
+    g2.appendChild(field('演示节奏', paceSel,
+      '只影响「连续播放」时每步停留多久；手动逐步不受影响。'));
+    paceSel.addEventListener('change', () => set({ demoPace: paceSel.value }));
 
     const spd = el('input', { class: 'agent-input', type: 'range', min: '0.5', max: '2', step: '0.25', value: String(s.animSpeed) });
     g2.appendChild(field('动画速度', spd, '×' + s.animSpeed));

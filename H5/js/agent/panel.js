@@ -15,7 +15,7 @@ window.Panel = (function () {
   const POS_KEY = 'orbit.agent.fabPos';
   let fab, drawer, msgBox, inputEl, sendBtn, stopBtn, dot;
   let demoBar, demoIdx, demoText, demoNextHint;
-  let demoPrev, demoNext, demoAuto, demoStop, demoReplay, demoDismiss;
+  let demoPrev, demoNext, demoAuto, demoManual, demoStop, demoReplay, demoDismiss;
 
   // ---------------------------------------------------------------------------
   // 极简 Markdown + LaTeX 渲染（按需，不引入 marked.js）
@@ -221,10 +221,16 @@ window.Panel = (function () {
     demoPrev = mkAct('◀ 上一步', () => window.SceneBridge.prev());
     demoNext = mkAct('下一步 ▶', () => window.SceneBridge.next(), 'primary');
     demoAuto = mkAct('连续播放', () => window.SceneBridge.autoPlay());
+    // ★ 「⏸ 逐步」是连播态的**出口**。原先 autoPlay() 之后界面上再没有任何按钮能切回
+    //   逐步（「下一步 / 连续播放」在 auto 态都被 hidden），学生一旦点了连播就只能一路看完。
+    demoManual = mkAct('⏸ 逐步', () => window.SceneBridge.setManual(true));
     demoStop = mkAct('■ 停止', () => window.SceneBridge.stop(), 'stop');
     demoReplay = mkAct('↻ 重新演示', () => window.SceneBridge.replay(), 'primary');
-    demoDismiss = mkAct('结束', () => window.SceneBridge.stop());
-    [demoPrev, demoNext, demoAuto, demoStop, demoReplay, demoDismiss].forEach((b) => demoBtns.appendChild(b));
+    // ★ 「收起」只隐藏这条控制条，**不**清空播放状态 —— 「结束」原先调的是 stop()，
+    //   会把队列一并清掉，于是"看完顺手收起"就再也重播不了了。
+    demoDismiss = mkAct('✕ 收起', () => hideBar());
+    [demoPrev, demoNext, demoAuto, demoManual, demoStop, demoReplay, demoDismiss]
+      .forEach((b) => demoBtns.appendChild(b));
     demoTop.appendChild(demoIdx);
     demoTop.appendChild(demoBtns);
     demoText = el('div', { class: 'agent-demo-text', text: '' });
@@ -477,6 +483,7 @@ window.Panel = (function () {
     const acts = (name === 'applySceneActions' && Array.isArray(argsOrActions))
       ? argsOrActions
       : [{ action: name, params: argsOrActions }];
+    d._acts = acts;                       // 供 enrichActionBubble 回填「引用 / 重播」
 
     const lines = acts.map((a) => describeAction(a.action, a.params || a));
     d.appendChild(el('summary', {
@@ -484,26 +491,89 @@ window.Panel = (function () {
         (lines.length > 1 ? '<span class="agent-act-more">等 ' + lines.length + ' 个动作</span>' : ''),
     }));
     const body = el('div', { class: 'agent-act-body' });
-    // 每步一行，各带一个「引用」按钮 —— 学生想对某一步提整改意见时，不必自己复述
-    // "那个演示的第 3 步是哪个"，点一下就把这一步写进输入框（配合 reviseDemo 用）。
+    // 每步一行。**引用 / 重播按钮与"演示 #N"标签在 enrichActionBubble 里挂**，
+    // 因为直播路径创建气泡时工具还没执行、我们手上没有 demoId 与 perAction
+    // （结果要等 onToolResult 才回来）。
     lines.forEach((line, i) => {
       const row = el('div', { class: 'agent-act-row' });
+      row.setAttribute('data-i', String(i));
       row.appendChild(el('span', { class: 'agent-act-txt', text: line }));
-      const q = el('button', { class: 'agent-act-btn', text: '引用',
-        title: '把这一步写进输入框，便于提整改意见' });
-      q.type = 'button';
-      q.onclick = (ev) => { ev.stopPropagation(); quoteStep(acts[i]); };
-      row.appendChild(q);
       body.appendChild(row);
     });
-    if (result) {
-      body.appendChild(el('div', { class: 'agent-act-ret',
-        text: '返回：' + JSON.stringify(result).slice(0, 400) }));
-    }
     d.appendChild(body);
     msgBox.appendChild(d);
     scrollDown();
+    if (result) enrichActionBubble(d, result);
     return d;
+  }
+
+  /**
+   * 把工具回执里的地址信息回填到动作气泡上（「引用」与「重播这个演示」）。
+   *
+   * ★ 为什么单独一个函数：**直播路径创建气泡时还不知道结果**（工具是随后才执行的），
+   *   所以这两条路径必须在同一个地方汇合 —— 恢复路径在 `addActionBubbleForCall` 里
+   *   一次性带结果调用，直播路径在 `onToolResult` 里回填。写在两处必然会漂移，
+   *   而上一轮"图表浮窗完全画不出内容"的教训正是"同一件事写在两处"。
+   *
+   * ★ demoId 与 perAction 是「气泡上的第 i 行 ↔ 演示里的第几步」的对应表：
+   *   气泡渲染的是模型**原始**的动作数组，队列里只有校验通过的部分，两者会错位。
+   *   有了这张表，「引用」才能写出"演示 #3 的第 5 步"这种**可寻址**的引用 ——
+   *   而它随工具结果一起存档，所以刷新之后引用依然准确。
+   */
+  function enrichActionBubble(d, result) {
+    if (!d || !result || d.dataset.enriched) return;
+    d.dataset.enriched = '1';
+    const acts = d._acts || [];
+    const demoId = (result.demoId != null) ? result.demoId : null;
+    const per = Array.isArray(result.perAction) ? result.perAction : null;
+    const body = d.querySelector('.agent-act-body');
+    if (!body) return;
+
+    Array.prototype.forEach.call(body.querySelectorAll('.agent-act-row[data-i]'), function (row) {
+      const i = Number(row.getAttribute('data-i'));
+      const pa = per ? per[i] : null;
+      // ① 被校验退回的动作：标出来，否则学生会以为"这一步也演过了"
+      if (pa && !pa.ok) {
+        row.appendChild(el('span', { class: 'agent-act-skip',
+          text: '未执行：' + (pa.error || '参数不合法') }));
+        return;
+      }
+      // ② 可寻址的引用
+      const stepIndex = (pa && pa.stepIndex != null) ? pa.stepIndex : (demoId != null && !per ? i : null);
+      if (demoId == null || stepIndex == null) return;
+      const q = el('button', { class: 'agent-act-btn', text: '引用',
+        title: '把「演示 #' + demoId + ' 的第 ' + (stepIndex + 1) + ' 步」写进输入框，便于提整改意见' });
+      q.type = 'button';
+      q.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        quoteStep(acts[i], {
+          demoId: demoId, stepIndex: stepIndex,
+          total: result.totalSteps || (per ? per.length : acts.length),
+        });
+      });
+      row.appendChild(q);
+    });
+
+    // ③ 「重播这个演示」：演示记录独立于播放队列存在（见 scene-bridge 的"演示记录"），
+    //    所以哪怕这条演示早就播完、甚至刷新过页面，也还能整条重播。
+    if (demoId != null && window.SceneBridge && window.SceneBridge.replayDemo) {
+      const foot = el('div', { class: 'agent-act-row agent-act-foot' });
+      const rp = el('button', { class: 'agent-act-btn', type: 'button',
+        text: '↻ 重播这个演示', title: '从第 1 步重新播放演示 #' + demoId });
+      rp.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        const r = window.SceneBridge.replayDemo(demoId);
+        if (r && r.ok) addChip('正在重播演示 #' + demoId + '（共 ' + r.total + ' 步）');
+        else addChip((r && r.error) || '重播失败', 'warn');
+      });
+      foot.appendChild(rp);
+      body.appendChild(foot);
+      const sm = d.querySelector('summary');
+      if (sm) sm.insertAdjacentHTML('beforeend',
+        '<span class="agent-act-more">演示 #' + demoId + '</span>');
+    }
+    body.appendChild(el('div', { class: 'agent-act-ret',
+      text: '返回：' + JSON.stringify(result).slice(0, 400) }));
   }
 
   // ---------------------------------------------------------------------------
@@ -541,16 +611,30 @@ window.Panel = (function () {
     };
   }
 
-  /** 恢复路径的动作气泡：判据与直播路径完全一致（applySceneActions 或 ACTION_LABEL 里有名字的） */
-  function addActionBubbleForCall(tc, toolNode) {
+  /**
+   * 恢复路径的动作气泡：判据与直播路径完全一致（applySceneActions 或 ACTION_LABEL 里有名字的）。
+   * @param {Array=} demoReg 演示记录的重建清单；applySceneActions 会把真正入队的动作追加进去
+   */
+  function addActionBubbleForCall(tc, toolNode, demoReg) {
     const name = tc.function && tc.function.name;
     if (!name) return;
     let args = {};
     try { args = JSON.parse((tc.function && tc.function.arguments) || '{}'); } catch (e) { args = {}; }
     let result = null;
     if (toolNode) { try { result = JSON.parse(toolNode.content); } catch (e) { result = null; } }
-    if (name === 'applySceneActions') addActionBubble(name, (args && args.actions) || [], result);
-    else if (ACTION_LABEL[name]) addActionBubble(name, args, result);
+    if (name === 'applySceneActions') {
+      const acts = (args && args.actions) || [];
+      addActionBubble(name, acts, result);
+      if (demoReg && result && result.demoId != null) {
+        // ★ 只登记**真正入队**的动作（perAction 标了 ok 的那些）：被校验退回的动作不在
+        //   队列里、也不该出现在重播的演示里。perAction 缺失（旧存档）时退回全量。
+        const per = Array.isArray(result.perAction) ? result.perAction : null;
+        const steps = acts
+          .filter((a, i) => (!per || (per[i] && per[i].ok)))
+          .map((a) => ({ action: a && a.action, params: (a && a.params) || null, speech: a && a.speech }));
+        if (steps.length) demoReg.push({ demoId: result.demoId, origin: 'agent', steps: steps });
+      }
+    } else if (ACTION_LABEL[name]) addActionBubble(name, args, result);
   }
 
   /**
@@ -568,13 +652,23 @@ window.Panel = (function () {
     if (!S) return;
     msgBox.innerHTML = '';
     const chain = S.path();
-    if (!chain.length) { renderEmptyState(); return; }
+    if (!chain.length) {
+      // 空白起点也要把演示登记清掉（否则切到空分支后，上一条演示还留在清单里）
+      if (window.SceneBridge && SceneBridge.syncDemosFromHistory) SceneBridge.syncDemosFromHistory([]);
+      renderEmptyState();
+      return;
+    }
     const ids = S.idMap ? S.idMap() : {};
     const idOf = (n) => ids[n.seq] || null;
     const toolByCall = Object.create(null);
     chain.forEach(function (n) {
       if (n.role === 'tool' && n.tool_call_id) toolByCall[n.tool_call_id] = n;
     });
+    // ★ 演示记录的重建清单（按渲染顺序累积）。渲染完后一次性交给 SceneBridge ——
+    //   演示记录不单独持久化，**对话历史本身就是它的真相**：每个 applySceneActions
+    //   的 tool_call 带着动作、紧跟的 tool 结果带着 demoId 与逐步的入队结果。
+    //   于是"重播之前对话里的演示"刷新后依然成立。
+    const demoReg = [];
 
     let turn = null;
     let turnMid = null;      // 当前回合**起始 user 节点**的 id —— 组的 dataset.mid 取它
@@ -597,11 +691,15 @@ window.Panel = (function () {
         if (n.reasoning) turn.setReasoning(n.reasoning);
         turn.addText(n.content);
         (n.tool_calls || []).forEach(function (tc) {
-          addActionBubbleForCall(tc, toolByCall[tc.id]);
+          addActionBubbleForCall(tc, toolByCall[tc.id], demoReg);
         });
         return;
       }
     });
+    // 一次性重建演示记录（幂等：见 syncDemosFromHistory 的说明）
+    if (window.SceneBridge && SceneBridge.syncDemosFromHistory) {
+      try { SceneBridge.syncDemosFromHistory(demoReg); } catch (e) { /* 记录重建失败不该影响渲染 */ }
+    }
     scrollDown();
   }
 
@@ -644,17 +742,24 @@ window.Panel = (function () {
     done(ok);
   }
 
-  /** 设备/浏览器通常不在 hover 状态下的兜底见 CSS；这里只管把这一步写进输入框 */
   /**
    * 把"这一步"写进输入框，光标留在末尾等学生补"改成什么"。
-   * ★ 刻意**不写步号**：动作气泡里的这批动作与当前队列的步号未必对得上（队列里可能
-   *   还有之前下发的步骤），硬写一个号反而会把模型带偏。写成可读的动作描述，让模型
-   *   自己对照 getSnapshot 的 steps 去定位。
+   * ★ 现在**会写明演示编号与步号**（演示 #N 的第 M 步），因为这两个值有了确切来源：
+   *   动作气泡的 perAction → 该动作在这条演示里的 stepIndex，配合 result.demoId。
+   *   原先只能写成一段可读描述、让模型自己"对照 getSnapshot 去定位"—— 演示一多或
+   *   一播完，模型定位不到就只能重发整条，于是"新演示只剩这一条"。
+   * @param {Object} act  动作对象 {action, params}
+   * @param {Object} info {demoId, stepIndex, total}
    */
-  function quoteStep(act) {
+  function quoteStep(act, info) {
     if (!inputEl) return;
     const a = act || {};
-    const txt = '关于演示里的这一步：' + describeAction(a.action || '', a.params || a)
+    const inf = info || {};
+    const addr = (inf.demoId != null && inf.stepIndex != null)
+      ? '【整改演示】演示 #' + inf.demoId + ' 的第 ' + (inf.stepIndex + 1) + ' 步'
+        + (inf.total ? '（共 ' + inf.total + ' 步）' : '')
+      : '【整改演示】';
+    const txt = addr + '\n这一步是：' + describeAction(a.action || '', a.params || a)
       + '\n我想改成：';
     inputEl.value = txt;
     inputEl.focus();
@@ -693,10 +798,10 @@ window.Panel = (function () {
     }));
     if (role === 'user') {
       bar.appendChild(mk('编辑', '改这条提问并从它重新提问（原分支保留）', () => editUserMsg(mid)));
-      bar.appendChild(mk('分支', '从这条提问之前另起一个分支（原分支保留）', () => forkFrom(mid)));
+      bar.appendChild(mk('另起', '从这条提问之前另起一条分支，文字不变（原分支保留）', () => forkFrom(mid)));
     } else if (role === 'turn') {
-      bar.appendChild(mk('重答', '让智能体重新回答这一轮', () => reanswer(mid)));
-      bar.appendChild(mk('分支', '从这一轮末尾另起一个分支（原分支保留）', () => forkFrom(mid, true)));
+      bar.appendChild(mk('重答', '让智能体重新回答这一轮（原回答保留为另一条分支）', () => reanswer(mid)));
+      bar.appendChild(mk('追问', '从这一轮末尾另起一条分支，接着问（原分支保留）', () => forkFrom(mid, true)));
     }
     node.appendChild(bar);
   }
@@ -750,16 +855,35 @@ window.Panel = (function () {
     S.branchFrom(from);
     renderPath();
     refreshBranchBars();
-    addChip('已切到新分支（原分支保留，可在「会话」页切回）');
+    addChip('已另起一条分支（原分支保留 —— 分叉处的分支片与「会话」页都能切回）');
     if (inputEl) inputEl.focus();
   }
 
   // ---------------------------------------------------------------------------
-  // 分支条：只在"真正分叉"的地方出现
+  // 分支切换片：只在"真正分叉"的地方出现
   // ---------------------------------------------------------------------------
   /**
-   * 给"同一 parent 下 ≥2 个子节点"的节点前面插一条分支切换条。
-   * 懒渲染 —— 绝大多数会话一条都不显示，零视觉噪音。
+   * 一个节点在分支片上的短标签（首条内容摘要）。
+   * ★ 必须取自 ConvStore 的源文本，不解析 DOM（DOM 里是渲染后的 HTML，公式会变成
+   *   一堆上下标数字），与「复制」的取法保持一致。
+   */
+  function branchLabel(id, S) {
+    const nd = S.nodeById(id);
+    if (!nd) return '（未知）';
+    if (nd.role === 'card') return nd.kind === 'quiz' ? '（练习题）' : '（卡片）';
+    const t = String(nd.content || '').replace(/\s+/g, ' ').trim();
+    if (t) return t.slice(0, 14);
+    return nd.role === 'assistant' ? '（回答）' : '（动作记录）';
+  }
+
+  /**
+   * 给"同一 parent 下 ≥2 个子节点"的地方插一条分支切换片。
+   *
+   * ★ 为什么是**可点的分支片**而不是原来的 `分支 1/2 ‹ ›`：
+   *   原样式独占一行、带两个箭头，看着像"整段对话的分页器"，而且不点开根本不知道
+   *   另一条是什么。现在把**每条分支的首句**直接列出来，当前那条高亮且不可点 ——
+   *   "这里有 N 个版本、各是什么、我现在看的是哪个"一眼可见，"怎么切"只剩一个动作。
+   *   懒渲染：绝大多数会话一条都不显示，零视觉噪音。
    */
   function refreshBranchBars() {
     const S = window.ConvStore;
@@ -769,6 +893,7 @@ window.Panel = (function () {
     const ids = S.idMap();
     chain.forEach(function (n) {
       const myId = ids[n.seq];
+      if (!myId) return;
       const sibs = S.siblings(myId);
       if (sibs.length < 2) return;
       const here = sibs.indexOf(myId);
@@ -777,32 +902,29 @@ window.Panel = (function () {
       if (!node || !node.parentNode) return;
       const bar = el('div', { class: 'agent-branch-bar' });
       bar.appendChild(el('span', { class: 'agent-branch-label',
-        text: '分支 ' + (here + 1) + '/' + sibs.length }));
-      const go = (k) => {
-        const target = sibs[(here + k + sibs.length) % sibs.length];
-        S.switchLeaf(target);
-        renderPath();
-        refreshBranchBars();
-        const hit = msgBox.querySelector('[data-mid="' + target + '"]');
-        if (hit && hit.scrollIntoView) hit.scrollIntoView({ block: 'center' });
-      };
-      const prev = el('button', { class: 'agent-act-btn', text: '‹', title: '上一条分支' });
-      const next = el('button', { class: 'agent-act-btn', text: '›', title: '下一条分支' });
-      prev.type = next.type = 'button';
-      prev.onclick = () => go(-1);
-      next.onclick = () => go(1);
-      bar.appendChild(prev);
-      bar.appendChild(next);
-      // 预览**其他**分支的内容 —— 看分支条时想知道"另一条讲的是什么"。
-      // （自己在下面紧接着就会渲染出来，预览自己是多余的。）
-      const others = sibs.filter(function (id) { return id !== myId; }).slice(0, 2)
-        .map(function (id) {
-          const nd = S.nodeById(id);
-          return (nd && nd.content) ? nd.content.slice(0, 10) : '（动作记录）';
+        text: '⑂ 这处分出 ' + sibs.length + ' 条：' }));
+      sibs.forEach(function (id, k) {
+        const cur = (id === myId);
+        const depth = S.branchDepth ? S.branchDepth(id) : 0;
+        const chip = el('button', {
+          class: 'agent-branch-chip' + (cur ? ' active' : ''),
+          type: 'button',
+          text: (k + 1) + '. ' + branchLabel(id, S) + (depth ? ' · ' + depth + ' 条' : ''),
+          title: cur ? '当前显示的就是这一条' : '切到这一条（该分支共 ' + depth + ' 条消息）',
         });
-      if (others.length) {
-        bar.appendChild(el('span', { class: 'agent-branch-txt', text: '另一条：' + others.join(' / ') }));
-      }
+        // 当前这条不可点：留着可点只会让人以为"再点一下会有什么"
+        chip.disabled = cur;
+        if (!cur) {
+          chip.addEventListener('click', function () {
+            S.switchLeaf(id);
+            renderPath();
+            refreshBranchBars();
+            const hit = msgBox.querySelector('[data-mid="' + id + '"]');
+            if (hit && hit.scrollIntoView) hit.scrollIntoView({ block: 'center' });
+          });
+        }
+        bar.appendChild(chip);
+      });
       node.parentNode.insertBefore(bar, node);
     });
   }
@@ -860,17 +982,12 @@ window.Panel = (function () {
       const row = el('div', { class: 'agent-conv-row' + (s.id === active ? ' active' : '') });
       const t = el('span', { class: 'agent-conv-t', text: s.title || '（未命名）' });
       row.appendChild(t);
-      // 当前会话的行内直接给分支切换器，避免"点进去再切分支"的两跳
+      // 当前会话标出"分过几次叉" —— 只读文本足矣，切分支的入口在下方的分支点清单里
+      // （原先这里写的是"分支 1/2"，与消息区的分支片重复，且看不出切哪儿去）
       if (s.id === active) {
-        const chain = S.path();
-        const leaf = chain.length ? chain[chain.length - 1] : null;
-        const ids = S.idMap();
-        if (leaf && ids[leaf.seq]) {
-          const sibs = S.siblings(ids[leaf.seq]);
-          if (sibs.length > 1) {
-            row.appendChild(el('span', { class: 'agent-conv-meta',
-              text: '分支 ' + (sibs.indexOf(ids[leaf.seq]) + 1) + '/' + sibs.length }));
-          }
+        const nf = (S.forkPoints ? S.forkPoints().length : 0);
+        if (nf) {
+          row.appendChild(el('span', { class: 'agent-conv-meta', text: nf + ' 处分叉' }));
         }
       }
       row.appendChild(el('span', { class: 'agent-conv-meta',
@@ -899,6 +1016,43 @@ window.Panel = (function () {
       };
       list.appendChild(row);
     });
+    // ---- 分支点清单 ----
+    // ★ 消息区的分支片只在**当前路径**上出现：切到另一条分支后，原来那个分叉点就不在
+    //   路径上了，学生便"找不到回去的路"。这里给出全局视角，并让"在哪切分支"只有
+    //   这一个答案（另一个入口是分叉处那条分支片）。
+    const forks = S.forkPoints ? S.forkPoints() : [];
+    if (forks.length) {
+      const sec = el('div', { class: 'agent-conv-sec' });
+      sec.appendChild(el('div', { class: 'agent-conv-sec-t',
+        text: '当前会话的分支点（' + forks.length + ' 处）' }));
+      forks.forEach(function (fp) {
+        const node = fp.id ? S.nodeById(fp.id) : null;
+        const box = el('div', { class: 'agent-fork' });
+        box.appendChild(el('div', { class: 'agent-fork-at',
+          text: '分叉于：' + (fp.root ? '会话开头' : (node ? branchLabel(fp.id, S) : '（未知）')) }));
+        const chips = el('div', { class: 'agent-fork-chips' });
+        fp.children.forEach(function (id, k) {
+          const depth = S.branchDepth ? S.branchDepth(id) : 0;
+          const b = el('button', { class: 'agent-branch-chip', type: 'button',
+            text: (k + 1) + '. ' + branchLabel(id, S) + (depth ? ' · ' + depth + ' 条' : ''),
+            title: '切到这一条并收起本页' });
+          b.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            S.switchLeaf(id);
+            leaveConvPage();
+            renderPath();
+            refreshBranchBars();
+            const hit = msgBox.querySelector('[data-mid="' + id + '"]');
+            if (hit && hit.scrollIntoView) hit.scrollIntoView({ block: 'center' });
+            addChip('已切到该分支');
+          });
+          chips.appendChild(b);
+        });
+        box.appendChild(chips);
+        sec.appendChild(box);
+      });
+      list.appendChild(sec);
+    }
     const st = S.stats();
     foot.textContent = '已用 ' + st.sessions + ' 个会话 · 约 ' + Math.round(st.bytes / 1024) + ' KB'
       + ' / 上限 ' + S.MAX_SESSIONS + ' 个'
@@ -1049,7 +1203,8 @@ window.Panel = (function () {
         }
       },
       onToolResult(info) {
-        if (info.name !== 'applySceneActions' || !lastBubble) return;
+        if (!lastBubble) return;
+        if (info.name !== 'applySceneActions' && !ACTION_LABEL[info.name]) return;
         const failed = info.result && info.result.failed;
         if (failed && failed.length) {
           lastBubble.classList.add('bad');
@@ -1057,6 +1212,10 @@ window.Panel = (function () {
           if (s) s.insertAdjacentHTML('beforeend',
             '<span class="agent-act-err">· ' + failed.length + ' 个动作未执行</span>');
         }
+        // ★ 直播路径的气泡是"先建后填"：创建时工具还没执行，demoId / perAction 要等结果
+        //   回来才拿得到。这里回填「引用」与「重播这个演示」—— 与恢复路径**共用同一段
+        //   代码**（enrichActionBubble）。写在两处必然漂移。
+        enrichActionBubble(lastBubble, info.result);
         lastBubble = null;
       },
       onDone(summary) {
@@ -1127,6 +1286,7 @@ window.Panel = (function () {
     demoPrev.classList.toggle('hidden', !(isManual || isDone));   // 结束后也能退回去重看
     demoNext.classList.toggle('hidden', !isManual);
     demoAuto.classList.toggle('hidden', !isManual);
+    demoManual.classList.toggle('hidden', isManual || isDone);    // 连播态下唯一的出口
     demoStop.classList.toggle('hidden', isDone);
     demoReplay.classList.toggle('hidden', !isDone);
     demoDismiss.classList.toggle('hidden', !isDone);
@@ -1136,7 +1296,10 @@ window.Panel = (function () {
     if (!demoBar) return;
     clearTimeout(demoHideTimer);
     demoBar.classList.remove('hidden', 'bad');
-    demoIdx.textContent = '第 ' + evt.index + '/' + evt.total + ' 步' + (evt.ok === false ? '（未执行）' : '');
+    // 快进段（整改演示时把前面的步骤快速走一遍）在编号上标出来，否则学生会以为
+    // 自己的演示被"跳着播"了
+    demoIdx.textContent = (evt.fast ? '⚡快进 · 第 ' : '第 ')
+      + evt.index + '/' + evt.total + ' 步' + (evt.ok === false ? '（未执行）' : '');
     demoText.textContent = evt.speech || evt.label;
     demoText.classList.toggle('muted', !evt.speech);
     if (evt.ok === false) demoBar.classList.add('bad');
@@ -1156,7 +1319,9 @@ window.Panel = (function () {
     demoPrev.disabled = !evt.canPrev;
     const nx = evt.next || {};
     demoNextHint.classList.remove('hidden');
-    demoNextHint.textContent = '下一步：' + (nx.speech || nx.label || '');
+    // forced：整改后快进到位、特意停下来让学生看"这一步改成了什么样"
+    demoNextHint.textContent = (evt.forced ? '整改后停在这一步 · 点「下一步」看变化：'
+      : '下一步：') + (nx.speech || nx.label || '');
   }
 
   /** 退回上一步之后：显示"这一步还没执行"，预告即将重播的那一步 */
@@ -1177,6 +1342,30 @@ window.Panel = (function () {
     setBarMode('auto');
     demoIdx.textContent = '连续播放中 ' + evt.index + '/' + evt.total;
     demoNextHint.classList.add('hidden');
+  }
+
+  /** 连播中途按了「⏸ 逐步」：提示"下一步会停下来等你" */
+  function renderManual(evt) {
+    if (!demoBar) return;
+    demoBar.classList.remove('hidden');
+    setBarMode('manual');
+    demoIdx.textContent = '已切到逐步 · 第 ' + (evt.index || 0) + '/' + evt.total + ' 步';
+    demoPrev.disabled = true;                  // 当前这步正在播，还不能回退
+    demoNextHint.classList.remove('hidden');
+    demoNextHint.textContent = '当前这一步放完就会停下等你点「下一步」';
+  }
+
+  /** 队列被就地整改（reviseDemo 的 inplace 路径）后刷新控制条 */
+  function renderRevised(evt) {
+    if (!demoBar) return;
+    demoBar.classList.remove('hidden', 'done');
+    demoIdx.textContent = '已修改第 ' + ((evt.index || 0) + 1) + ' 步 · 共 ' + evt.total + ' 步';
+    demoText.textContent = '改动已生效，下面的步骤保持不变';
+    demoText.classList.add('muted');
+    demoNextHint.classList.remove('hidden');
+    const st = window.SceneBridge.state ? window.SceneBridge.state() : null;
+    const nx = st && st.pending && st.pending[0];
+    if (nx) demoNextHint.textContent = '下一步：' + (nx.speech || nx.action);
   }
 
   function renderQueued(evt) {
@@ -1227,12 +1416,24 @@ window.Panel = (function () {
         case 'replay':
           clearTimeout(demoHideTimer);
           demoBar.classList.remove('hidden', 'done');
-          demoIdx.textContent = '重新演示 · 共 ' + evt.total + ' 步';
-          demoText.textContent = '从头开始';
+          demoIdx.textContent = (evt.reason === 'revise' ? '整改后重播' : '重新演示')
+            + ' · 共 ' + evt.total + ' 步';
+          demoText.textContent = (evt.fastForwardTo > 0)
+            ? ('快速回放到第 ' + (evt.fastForwardTo + 1) + ' 步前，然后停在那里')
+            : '从头开始';
           demoText.classList.add('muted');
           break;
+        case 'fastforward':
+          clearTimeout(demoHideTimer);
+          demoBar.classList.remove('hidden');
+          demoIdx.textContent = '快速回放中 → 第 ' + (evt.to + 1) + ' 步';
+          demoText.textContent = '整改后正在把前面的步骤快速走一遍，到改动处会停下来';
+          demoText.classList.add('muted');
+          break;
+        case 'manual': renderManual(evt); break;
         case 'auto': renderAuto(evt); break;
         case 'queued': renderQueued(evt); break;
+        case 'revised': renderRevised(evt); break;
         case 'done': renderDone(evt); break;
         case 'stopped': hideBar(); break;
         default: break;

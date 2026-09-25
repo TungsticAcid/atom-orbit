@@ -169,20 +169,39 @@ window.Perception = (function () {
   }
 
   /**
-   * 演示状态的一行摘要 —— 让模型每轮都知道：哪个演示、走到第几步、下一步是什么、
-   * 以及"可以按步号修订"。没有它，模型无法把学生说的"第 3 步那个"对上号。
+   * 演示状态摘要 —— 让模型每轮都知道：现在播的是哪一条、走到第几步、下一步是什么，
+   * **以及一共有哪些演示、各自的编号**。没有后者，模型接不住学生说的"刚才那个演示"。
+   *
+   * ★ 播完的演示同样列在清单里：它们现在**可以被重播与整改**（见 scene-bridge 的
+   *   "演示记录"一节）——队列清空了不代表演示消失了。
    */
   function demoLine() {
     const S = window.SceneBridge;
     if (!S || !S.state) return null;
-    let st;
-    try { st = S.state(); } catch (e) { return null; }
-    if (!st || !st.total) return null;
-    const next = (st.steps || []).filter(function (s) { return !s.done; })[0];
-    return '【演示】' + (st.origin || '未知来源') + ' · 第 ' + (st.index + 1) + '/' + st.total + ' 步'
-      + (st.waitingForUser ? '（正在等学生点「下一步」）' : '')
-      + (next ? '；下一步：' + next.action : '；已播完')
-      + '（学生若要求改动，用 reviseDemo 按步号修订，别重发整条）';
+    const out = [];
+    let st = null;
+    try { st = S.state(); } catch (e) { st = null; }
+    if (st && st.total) {
+      const next = (st.steps || []).filter(function (s) { return !s.done; })[0];
+      out.push('【演示】#' + st.demoId + '（' + (st.origin || '未知来源') + '）'
+        + (st.playing ? '播放中' : '已播完')
+        + ' · 第 ' + (st.index + 1) + '/' + st.total + ' 步'
+        + (st.waitingForUser ? '（正在等学生点「下一步」）' : '')
+        + (next ? '；下一步：' + next.action : '；已播完'));
+    }
+    if (S.listDemos) {
+      let ds = [];
+      try { ds = S.listDemos() || []; } catch (e) { ds = []; }
+      if (ds.length) {
+        out.push('【演示清单】' + ds.map(function (d) {
+          return '#' + d.id + '(' + d.steps + '步' + (d.current ? '·当前' : '')
+            + (d.label ? '·' + String(d.label).slice(0, 14) : '') + ')';
+        }).join(' '));
+      }
+    }
+    if (!out.length) return null;
+    out.push('（学生若要求改动，用 reviseDemo 并指定 demo_id 与步号，别重发整条演示）');
+    return out.join('\n');
   }
 
   return { start, stop, snapshot, getTrace, toCompactText, poll };

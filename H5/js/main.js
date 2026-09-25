@@ -141,13 +141,16 @@
     };
     const f = state.level;
     const rec = recommendedLevel(state.n, state.l, state.psiCrit);
+    // 推荐值被下限顶住时要说出来：4s/5s/6s 的"看全所有壳"推荐值低于下限 0.3%，
+    // 直接显示 0.300% 会让学生以为那就是该轨道的推荐值。
+    const atFloor = rec > recommendedLevelRaw(state.n, state.l, state.psiCrit) + 1e-12;
     // ★ 用 innerHTML：推荐值后面挂一个「采用」内联按钮（提示行会随每次重算重建，
     //   所以按钮的点击靠事件委托绑定，见 init 里的 psiHint 监听）。内容全是自产数字，
     //   无注入面。
     els.psiHint.innerHTML = ((state.psiCrit === 'psi2')
       ? '阈值＝占 |ψ|² 峰值的比例（' + pct(f) + ' |ψ|² ⟺ ' + pct(Math.sqrt(f)) + ' |ψ|）'
       : '阈值＝占 |ψ| 峰值的比例（' + pct(f) + ' |ψ| ⟺ ' + pct(f * f) + ' |ψ|²）')
-      + '　· 本轨道推荐 <b>' + pct(rec) + '</b>'
+      + '　· 本轨道推荐 <b>' + pct(rec) + '</b>' + (atFloor ? '（已到下限）' : '')
       + '<button type="button" class="link-btn" id="levelRecBtn">采用</button>';
 
     // ★ l = 0（s 轨道）时角向函数是常数、ψ 的符号在整块空间恒定，相位色会退化成一整块
@@ -169,12 +172,20 @@
   // ---- 等值面阈值：对数刻度 + 按轨道推荐值 --------------------------------
   /**
    * 阈值滑块的刻度映射。
-   * ★ 为什么用对数：可用范围是 0.02%–80%（跨 1.6 个数量级），线性刻度下低端
-   *   （0.02%–1%）只占滑块行程的百分之一、根本拖不到；而低端恰恰是最需要精细控制的
-   *   区域（"要看到所有节面"的阈值常常在 1% 以下）。故滑块用 0–1000 的整数刻度，
-   *   等比映射到 [LEVEL_MIN, LEVEL_MAX]。
+   * ★ 为什么用对数：可用范围跨 2.4 个数量级，线性刻度下低端（0.3%–1%）只占滑块行程的
+   *   百分之几、根本拖不到；而低端恰恰是最需要精细控制的区域（"要看到所有节面"的阈值
+   *   常常在 1% 以下）。故滑块用 0–1000 的整数刻度，等比映射到 [LEVEL_MIN, LEVEL_MAX]。
+   *
+   * ★ 量程的选取（0.3% – 80%）：
+   *   · 下限原为 0.02%，实测**用不到那么低**：各轨道"看全所有壳层"所需的阈值最低是
+   *     6s 的 0.04%，而 0.04% 下画出来是一团弥散的巨球、教学上反而不如只看内几层。
+   *     0.3% 已经能覆盖到 3s 的三层壳（最弱壳峰值 0.46% > 0.3%），是"够用且不空转"的位置。
+   *   · 中点 = √(0.003 × 0.8) = **4.9%**。取对数刻度就要看中点落在哪 —— 原来的
+   *     0.02%–80% 中点是 1.26%，等于把滑块正中间浪费在了几乎没人用的量级上；
+   *     现在中点落在 5% 附近，也就是 3p/4p/4d 这些常用轨道推荐值（4.75% / 1.69% / 7.6%）
+   *     的左右，手感与直觉一致。
    */
-  const LEVEL_MIN = 0.0002, LEVEL_MAX = 0.80;          // 占峰值的比值
+  const LEVEL_MIN = 0.003, LEVEL_MAX = 0.80;           // 占峰值的比值（0.3% – 80%）
   const LEVEL_LOG_SPAN = Math.log(LEVEL_MAX) - Math.log(LEVEL_MIN);
   const levelFromSlider = (v) => Math.exp(Math.log(LEVEL_MIN) + (v / 1000) * LEVEL_LOG_SPAN);
   const levelToSlider = (f) => Math.round(1000 * (Math.log(f) - Math.log(LEVEL_MIN)) / LEVEL_LOG_SPAN);
@@ -198,7 +209,7 @@
    * 下限 0.04% 是防呆而非妥协：n ≤ 6 时实测最弱壳峰值 ≥ 0.05%，所以 0.04% 仍然显示
    * 得出所有壳，只是不让推荐值无限逼近滑块下限。
    */
-  function recommendedLevel(n, l, psiCrit) {
+  function recommendedLevelRaw(n, l, psiCrit) {
     if (!window.OM || !OM.shellPeakFractions) return 0.10;
     let fr;
     try { fr = OM.shellPeakFractions(n, l); } catch (e) { return 0.10; }
@@ -206,6 +217,17 @@
     const rec = Math.max(0.0004, Math.min(0.8, 0.4 * Math.min.apply(null, fr)));
     // 判据换算：同一读数下 |ψ| 判据对应 f² 倍峰值（见 render3d.js 的 levelAbsFor）
     return (psiCrit === 'psi') ? Math.sqrt(rec) : rec;
+  }
+
+  /**
+   * 推荐值（截断到滑块量程内）。★ 与 recommendedLevelRaw 分开是必要的：
+   * 4s/5s/6s 的"看全所有壳"推荐值（0.074% / 0.04%）已经低于新的下限 0.3%，
+   * 截断后与原始值不同 —— 提示行要据此显示"（已到下限）"，而不是把一个被顶住的
+   * 数字当成真正的推荐值报给学生。
+   */
+  function recommendedLevel(n, l, psiCrit) {
+    const raw = recommendedLevelRaw(n, l, psiCrit);
+    return Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, raw));
   }
 
   /**
@@ -221,7 +243,7 @@
   /** 把数值写回数字框 */
   function syncNumBox(el, v) {
     if (!el || document.activeElement === el) return;
-    // ★ 精度按量级取：阈值低端可到 0.02%，固定一位小数会把它舍成 0.0
+    // ★ 精度按量级取：阈值低端可到 0.3%，固定一位小数会把它舍成 0.3 与 0.4 之间跳
     //   （"0.0"既看不出是多少，再键入还会被判非法）；粒子数（万）0.8–8 两位足够。
     const av = Math.abs(v);
     const digits = (av >= 10) ? 1 : (av >= 1 ? 2 : 3);
@@ -450,7 +472,7 @@
     // 等值阈值 / 粒子数：滑块仍是真值来源，数字框用更贴近显示的"人类单位"
     // （百分比 / 万），换算在绑定时给。
     // 阈值：数字框用"百分比"作人类单位，滑块是 0–1000 的对数刻度（见 levelFromSlider）
-    bindNumToSlider(els.levelInput, els.levelSlider, (v) => levelToSlider(v / 100), 0.02, 80);
+    bindNumToSlider(els.levelInput, els.levelSlider, (v) => levelToSlider(v / 100), 0.3, 80);
     bindNumToSlider(els.pointCountInput, els.pointCountSlider, (v) => v * 10000, 0.8, 8);
     // ★ 任何一次阈值输入都算"用户明确指定过"：此后换轨道不再自动套推荐值，免得盖掉
     //   智能体演示里明确设的阈值。（setSlider 也会派发 input，故数字框那条路径一并覆盖）

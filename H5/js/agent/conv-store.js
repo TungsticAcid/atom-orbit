@@ -309,6 +309,56 @@ window.ConvStore = (function () {
     return null;
   }
 
+  /**
+   * 从 id 出发、沿"最后一个孩子"一直走到叶子的长度（含 id 自身）。
+   *
+   * ★ 与 switchLeaf 的走法必须一致：`switchLeaf(id)` 就是"切到 id 这条分支并落到它的
+   *   末尾"，那么"这条分支有多长"就该按同一条链来数。分支切换器用它显示
+   *   「① 问题一 · 3 条」，学生据此知道切过去会看到多长的一段。
+   */
+  function branchDepth(id) {
+    if (!nodeById(id)) return 0;
+    let n = 1, cur = id;
+    for (let guard = 0; guard < 1000; guard++) {
+      const ch = children(cur);
+      if (!ch.length) break;
+      cur = ch[ch.length - 1].id;
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * 本会话里所有的"分叉点"（子节点 ≥ 2 的节点），按 seq 升序。
+   *
+   * ★ 为什么需要它：消息区里的分支片只会出现在**当前路径**上 —— 切到另一条分支之后，
+   *   原来那个分叉点就不在路径上了，学生就"找不到回去的路"。「会话」页需要的是
+   *   一个**全局**视角：这条会话一共分过几次叉、分别在哪儿、各条有多长。
+   * ★ 不引用 document，可以直接进离线断言（见 D:\tmp\conv_test.js）。
+   */
+  function forkPoints() {
+    const ns = nodes();
+    const out = [];
+    const roots = [];
+    Object.keys(ns).forEach(function (id) {
+      // ★ 根节点要单独收集：**会话开头的分叉**（"编辑第一条提问"）产生的是两个根，
+      //   它们的 parent 都是 null，用"某节点有 ≥2 个孩子"的判据根本扫不到 ——
+      //   siblings() 早就为这种情况特判过，这里必须跟上，否则"从头分过的叉"在
+      //   会话页的分支点清单里凭空消失。
+      if (!ns[id].parent) { roots.push(id); return; }
+      const ch = children(id);
+      if (ch.length >= 2) {
+        out.push({ id: id, seq: ns[id].seq, root: false, children: ch.map(function (c) { return c.id; }) });
+      }
+    });
+    if (roots.length >= 2) {
+      roots.sort(function (a, b) { return ns[a].seq - ns[b].seq; });
+      out.push({ id: null, seq: -1, root: true, children: roots, label: '会话开头' });
+    }
+    out.sort(function (a, b) { return a.seq - b.seq; });
+    return out;
+  }
+
   /** 该回合在**当前路径**上的最后一个节点（「重答」要把切点放在它后面） */
   function lastNodeOfTurn(nodeId) {
     const st = turnStart(nodeId);
@@ -612,6 +662,7 @@ window.ConvStore = (function () {
     append: append, appendUser: appendUser, appendCard: appendCard, patch: patch,
     branchFrom: branchFrom, switchLeaf: switchLeaf, ensureValid: ensureValid,
     turnStart: turnStart, lastNodeOfTurn: lastNodeOfTurn, siblings: siblings,
+    branchDepth: branchDepth, forkPoints: forkPoints,
     // 会话
     newSession: newSession, switchSession: switchSession, renameSession: renameSession,
     deleteSession: deleteSession, clearActiveSession: clearActiveSession,

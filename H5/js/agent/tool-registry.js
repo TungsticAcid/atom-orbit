@@ -226,20 +226,26 @@ window.ToolRegistry = (function () {
       type: 'function',
       function: {
         name: 'reviseDemo',
-        description: '修订**已在播放队列里**的演示：改某一步 / 在某步后插入 / 删除某步 / 跳回某步。'
+        description: '修订**某一条**演示：改某一步 / 在某步后插入 / 删除某步 / 跳回某步。'
           + '★ 当学生说"刚才那个演示第 3 步不对、换个说法、阈值太高了"时用它 —— '
-          + '**不要**用 applySceneActions 把整条演示重发一遍：那会清空旧队列，学生已经看过、'
-          + '确认过的步骤也会跟着重来。'
-          + '步号取自 getSnapshot 的「演示播放 → steps」里各步的 i（也给了 action / params），'
-          + '所以不必猜。只能改**尚未执行**的步骤：已执行的步骤有快照依赖（「上一步」靠它回退），'
-          + '改动会让回退失真。',
+          + '**不要**用 applySceneActions 把整条演示重发一遍：重发会开一条**新**演示，'
+          + '学生已经看过、确认过的其他步骤会全部丢掉。'
+          + '★ 可以修订**已经播完**的演示（这是最常见的场景）：整改后程序会按整改后的'
+          + '**完整步骤**重播、并快进到被改的那一步停下，所以其他步骤一个都不会少；'
+          + '回执里的 steps 就是整改后的完整清单，用它核对。'
+          + 'demo_id 与步号取自 getSnapshot 的「演示」一行；学生在动作气泡上点「引用」时，'
+          + '输入框里写的「演示 #N 的第 M 步」正是这两个参数（N → demo_id，M-1 → index）。',
         parameters: {
           type: 'object',
           properties: {
             op: {
               type: 'string',
               enum: ['replace', 'insert', 'remove', 'jump'],
-              description: 'replace=替换某步 / insert=在该步之后插入 / remove=删除该步 / jump=回到该步',
+              description: 'replace=替换某步 / insert=在该步之后插入 / remove=删除该步 / jump=回到该步（仅当这条演示正在播放时可用）',
+            },
+            demo_id: {
+              type: 'integer',
+              description: '要改的演示编号（见 getSnapshot 的「演示」一行）。省略则改当前这条演示。',
             },
             index: { type: 'integer', description: '步号，从 0 开始（见 steps 里的 i）' },
             step: {
@@ -391,13 +397,20 @@ window.ToolRegistry = (function () {
       if (e) return e;
       const r = await window.SceneBridge.applySequence(p.actions || []);
       return {
+        // ★ demoId 与 perAction 是"动作气泡 ↔ 演示步骤"的对应表：气泡上的第 i 行
+        //   靠 perAction[i].stepIndex 才能算出它在这条演示里是第几步（气泡渲染的是
+        //   模型原始的动作数组，队列里只有校验通过的部分，两者会错位）。
+        //   学生点「引用」时给出的「演示 #N 的第 M 步」就是由这两个字段拼出来的。
+        //   它随工具结果一起存档，所以**刷新之后引用依然准确**。
+        demoId: r.demoId,
+        perAction: r.perAction,
         queued: r.queued || 0,
         accepted: r.accepted || 0,
         failed: r.failed,
         overflow: r.overflow,
         manual: r.manual,
         totalSteps: r.total,
-        note: (r.note || '') + ' 提示：学生点「下一步」后才会有下一步动作，中途可以「停止」。',
+        note: (r.note || '') + ' 提示：学生点「下一步」后才会有下一步动作，中途可以「停止」或「逐步」。',
       };
     },
 
@@ -462,17 +475,17 @@ window.ToolRegistry = (function () {
       const i = a && a.index;
       if (typeof i !== 'number' || i < 0) return { error: 'index 应为 ≥ 0 的步号' };
       const S = window.SceneBridge;
-      let r;
-      if (a.op === 'replace') r = S.replaceStep(i, a.step || {});
-      else if (a.op === 'insert') r = S.insertAfter(i, a.step || {});
-      else if (a.op === 'remove') r = S.removeStep(i);
-      else if (a.op === 'jump') r = S.jumpTo(i);
-      else return { error: 'op 应为 replace / insert / remove / jump' };
+      if (typeof S.reviseDemo !== 'function') return { error: '当前版本不支持整改演示' };
+      const demoId = (a && a.demo_id != null && a.demo_id !== '') ? a.demo_id : null;
+      const r = S.reviseDemo(demoId, (a && a.op), i, (a && a.step) || {});
       if (!r || !r.ok) return { error: (r && r.error) || '修订失败' };
-      // 回执里带上修订后的**整条队列**：模型下一步要指着它说话，省得再调一次 getSnapshot
-      return Object.assign({ ok: true, op: a.op, index: i },
-        r.step ? { step: r.step } : {},
-        { total: r.total, steps: S.queueInfo ? S.queueInfo() : null });
+      // ★ 回执里的 steps 是**整改后的完整清单**（不是"只剩被改的这一条"）——
+      //   模型据此向学生交代"其余步骤都还在"，不必再调一次 getSnapshot。
+      r.note = (r.mode === 'reload')
+        ? '已按整改后的完整步骤重播，并快进到第 ' + r.resumedAt + ' 步停下；'
+          + '请点「下一步」看这一步改成了什么样。'
+        : '已在原队列中就地修改，学生不必重看已经看过的步骤。';
+      return r;
     },
   };
 

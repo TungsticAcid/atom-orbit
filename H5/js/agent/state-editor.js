@@ -341,9 +341,12 @@ window.StateEditor = (function () {
     host.appendChild(list);
     // ★ 必须解释"为什么我填 0.35、它显示 0.37"：归一化会按比例缩放**全部**系数，
     //   所以任何单项的绝对值都只是"相对大小"。不写清楚，学生会以为工具算错了。
-    host.appendChild(el('div', { class: 'se-hint', html:
-      '系数按 $\\sum_i |c_i|^2 = 1$ 自动归一化，因此**只有比值有物理意义**：'
-      + '把某项填成 0.35，落库可能是 0.37（其余项会同比例缩放），这是归一化的必然结果。' }));
+    // ★ 这里必须过 mdInline：`$...$` 要经 KaTeX 才成公式，**加粗** 才成粗体。
+    //   原先直接塞 html，屏幕上显示的就是字面的 $\sum_i |c_i|^2 = 1$ 与两个星号。
+    host.appendChild(el('div', { class: 'se-hint', html: mdInline(
+      '系数按 $\\sum_i |c_i|^2 = 1$ **等比归一化**（本程序基组正交归一，故只需这一条），'
+      + '因此**只有比值有物理意义**：把某项填成 0.35，落库可能是 0.37（其余项会同比例缩放），'
+      + '这是归一化的必然结果。' ) }));
 
     const addRow = el('div', { class: 'se-addrow' });
     const add = el('button', { class: 'se-btn', text: '+ 添加态' });

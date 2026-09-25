@@ -16,7 +16,7 @@ window.MasteryModel = (function () {
   const KP_META = {
     K1: { name: '量子数与轨道命名', orbital: [{ n: 1, l: 0, m: 0 }, { n: 2, l: 1, m: 0 }, { n: 3, l: 2, m: 0 }] },
     K2: { name: '波函数与分离变量', orbital: [{ n: 3, l: 1, m: 0 }] },
-    K3: { name: '径向函数辨析 R/R²/D/D²', orbital: [{ n: 1, l: 0, m: 0 }, { n: 3, l: 0, m: 0 }] },
+    K3: { name: '径向函数辨析 R/R²/D', orbital: [{ n: 1, l: 0, m: 0 }, { n: 3, l: 0, m: 0 }] },
     K4: { name: '角度分布与轨道形状', orbital: [{ n: 2, l: 1, m: 0 }, { n: 3, l: 2, m: 1 }] },
     K5: { name: '节面与节点计数', orbital: [{ n: 3, l: 0, m: 0 }, { n: 3, l: 1, m: 0 }, { n: 3, l: 2, m: 0 }] },
     K6: { name: '实函数与复函数', orbital: [{ n: 2, l: 1, m: 1 }] },

@@ -115,8 +115,8 @@ html, body {
 /* 高度由 layout.js 按"窗口真实可见高度 − 画布顶端位置"算出，写进 --viewer-h，
    目的是让整块画布正好落在浏览器窗口里（不写死像素/视口单位）。
    变量尚未算出时用 44vh 兜底，属于渐进增强，不是硬编码尺寸。
-   另：align-self:start 让它**不被同行更高的面板拉伸**——否则展开右侧
-   「进阶」折叠区时，3D 画布会跟着变高。 */
+   另：align-self:start 让它**不被同行更高的面板拉伸**——面板的高度是从它这里量出去的
+   （--panel-h），它自己再被面板反向影响就会形成循环。这条是"单向依赖"的关键。 */
 .viewer-card { display: flex; flex-direction: column; min-height: 0; align-self: start; }
 .viewer {
   position: relative;
@@ -159,7 +159,27 @@ html, body {
 .viewer-chip.hidden { display: none; }
 
 /* ---------- 控制面板 ---------- */
-.panel { align-self: start; }
+/* ★ 面板高度与左侧三维卡片**等高**：高度由 layout.js 量出三维卡片后下发 --panel-h
+   （见那里关于"为什么不会自激"的说明）。变量还没算出来时退回 auto（渐进增强），
+   窄屏单列布局下 layout.js 会主动移除它、让内容自然排布。
+   .panel-body 负责在内容超出时**内部**滚动 —— 不这样做，面板就会把整行栅格撑高、
+   把底下的公式与图表往下推，而 3D 画布高度是按"窗口可见高度"算死的，于是右侧多出
+   一大截空白。 */
+.panel {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  height: var(--panel-h, auto);
+}
+.panel-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/* 面板内的细滚动条：默认滚动条在深色面板上很扎眼，且占宽会挤压滑块 */
+.panel-body { scrollbar-width: thin; scrollbar-color: rgba(106, 126, 201, .5) transparent; }
+.panel-body::-webkit-scrollbar { width: 8px; }
+.panel-body::-webkit-scrollbar-track { background: transparent; }
+.panel-body::-webkit-scrollbar-thumb {
+  background: rgba(106, 126, 201, .45); border-radius: 4px;
+}
+.panel-body::-webkit-scrollbar-thumb:hover { background: rgba(106, 126, 201, .7); }
 .set { margin: 12px 0; }
 .set.tight { margin: 4px 0 6px; }
 .row {
