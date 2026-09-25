@@ -153,7 +153,7 @@
       + '　· 本轨道推荐 <b>' + pct(rec) + '</b>' + (atFloor ? '（已到下限）' : '')
       + '<button type="button" class="link-btn" id="levelRecBtn">采用</button>';
 
-    // ★ l = 0（s 轨道）时角向函数是常数、ψ 的符号在整块空间恒定，相位色会退化成一整块
+    // ★ l = 0（s 轨道）时角度函数是常数、ψ 的符号在整块空间恒定，相位色会退化成一整块
     //   同色（s 蓝变纯红），既无信息又容易让学生以为"红色有特殊含义"。故此时禁用相位色，
     //   并把当前选择拉回支壳层色。★ state 与 DOM 必须**同时**改，否则下一帧
     //   readFromControls 会从 DOM 读回 phase。
@@ -368,27 +368,60 @@
     if (!cv) return false;
     const halfE = () => OM.rExtent(state.n, state.l) * 1.05;
     let drag = null;
+    // ★ 多点触控：单指拖动平移，**双指捏合缩放**（与三维视图同一套手势约定）。
+    //   原先只有 wheel 能缩放 —— 桌面没问题，但触屏上就完全没法放大截面图，
+    //   而"放大看暗部"恰恰是这张图的主要用法。故补上捏合。
+    const pointers = new Map();
+    let lastPinch = 0, lastMid = null;
     cv.style.cursor = 'grab';
     cv.style.touchAction = 'none';        // 触屏上自己处理拖动，别让浏览器把页面滚走
 
+    /** 屏幕坐标 → 截面平面坐标（用作缩放锚点："放大指针底下这一块"） */
+    function toPlane(clientX, clientY) {
+      const r = cv.getBoundingClientRect();
+      const hu = halfE() / Charts.sectionState().scale;
+      return {
+        u: Charts.sectionState().cu + ((clientX - r.left) / Math.max(1, r.width) - 0.5) * 2 * hu,
+        v: Charts.sectionState().cv + ((clientY - r.top) / Math.max(1, r.height) - 0.5) * 2 * hu,
+      };
+    }
+
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const r = cv.getBoundingClientRect();
-      const st = Charts.sectionState();
-      const hu = halfE() / st.scale;
-      // 指针位置 → 平面坐标，作为缩放锚点（"放大看指针底下这一块"）
-      const au = st.cu + ((e.clientX - r.left) / Math.max(1, r.width) - 0.5) * 2 * hu;
-      const av = st.cv + ((e.clientY - r.top) / Math.max(1, r.height) - 0.5) * 2 * hu;
-      if (Charts.zoomSection(Math.exp(-e.deltaY * 0.0015), au, av)) onChange();
+      const a = toPlane(e.clientX, e.clientY);
+      if (Charts.zoomSection(Math.exp(-e.deltaY * 0.0015), a.u, a.v)) onChange();
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      drag = { x: e.clientX, y: e.clientY };
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
-      cv.style.cursor = 'grabbing';
+      if (pointers.size === 2) {
+        drag = null;                     // 双指落下即转入缩放，不再平移
+        const p = [...pointers.values()];
+        lastPinch = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        lastMid = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+      } else {
+        drag = { x: e.clientX, y: e.clientY };
+        cv.style.cursor = 'grabbing';
+      }
     });
     cv.addEventListener('pointermove', (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        const p = [...pointers.values()];
+        const pinch = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+        const mid = { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+        let dirty = false;
+        if (lastPinch > 0 && pinch > 0) {
+          const a = toPlane(mid.x, mid.y);
+          if (Charts.zoomSection(pinch / lastPinch, a.u, a.v)) dirty = true;
+        }
+        lastPinch = pinch; lastMid = mid;
+        if (dirty) onChange();
+        return;
+      }
       if (!drag) return;
       const st = Charts.sectionState();
       // 每像素对应多少平面坐标：视窗全宽 2·E/scale 铺满画布宽度
@@ -399,6 +432,8 @@
       onChange();
     });
     const endDrag = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) { lastPinch = 0; lastMid = null; }
       if (!drag) return;
       drag = null;
       cv.style.cursor = 'grab';
@@ -646,7 +681,7 @@
     setWavefunctionMode(p) { return setSeg('#modeSeg', 'data-mode', p.mode); },
     setRenderMode(p) { return setSeg('#renderSeg', 'data-mode', p.mode); },
     setColorMode(p) {
-      // ★ l = 0（s 轨道）时角向函数是常数、ψ 的符号在整块空间恒定，相位色退化成
+      // ★ l = 0（s 轨道）时角度函数是常数、ψ 的符号在整块空间恒定，相位色退化成
       //   一整块同色（s 蓝变纯红）—— 无信息且易误解，故拒绝（界面上该按钮也置灰）
       if (p.mode === 'phase' && state.l === 0) return false;
       return setSeg('#colorSeg', 'data-mode', p.mode);
