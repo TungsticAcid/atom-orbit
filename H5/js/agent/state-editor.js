@@ -551,7 +551,11 @@ window.StateEditor = (function () {
       const body = el('div', { class: 'adv-body' });
       body.appendChild(el('div', { id: 'stateEditor' }));
       d.appendChild(body);
-      panel.appendChild(d);
+      // ★ 必须挂进 .panel-body 而不是 .panel：面板高度被钉成与三维卡片等高
+      //   （见 layout.js 的 --panel-h），.panel 带 overflow:hidden。挂成 .panel 的
+      //   第二个 flex 子项时，这块**展开后会超出面板高度被裁掉**；挂进 .panel-body
+      //   才与其它控件共用同一条滚动条。
+      (panel.querySelector('.panel-body') || panel).appendChild(d);
     }
     host = document.getElementById('stateEditor');
     if (!host) return;

@@ -565,7 +565,15 @@ window.OM = (function () {
     for (let i = 1; i <= steps; i++) {
       const r = (rMax * i) / steps;
       const v = radialR(n, l, r);
-      if (prev !== 0 && v !== 0 && (v > 0) !== (prev > 0)) {
+      // ★ 零点**恰好落在扫描网格点上**时 v 是精确的 0：原判据里的 `v !== 0` 会把这个
+      //   变号整个跳过（prev 也跟着变成 0，下一轮再比还是被跳过），于是这个节点
+      //   被静默漏掉。实测 R_53(20)：rho = 2·20/5 = 8 为整数，L_1^7(8) = 8 − 8 = 0
+      //   是**精确零**，而 20 又正好是网格点（rMax=60、steps=3000），于是 5f 的径向
+      //   节点在界面上标不出来、推荐阈值也跟着算偏。
+      //   处理：把网格点上的 0 直接记为一个零点，并用 NaN 断开"上一个值"的比较链，
+      //   避免下一轮拿它当相反符号再数一次。
+      if (v === 0) { zeros.push(r); prev = NaN; continue; }
+      if (!Number.isNaN(prev) && prev !== 0 && (v > 0) !== (prev > 0)) {
         let a = (rMax * (i - 1)) / steps, b = r;
         for (let k = 0; k < 50; k++) {
           const c = (a + b) / 2;
