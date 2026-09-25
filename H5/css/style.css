@@ -295,7 +295,7 @@ input[type="range"]::-moz-range-thumb {
   color: #0b1224;
   font-weight: 700;
 }
-/* 禁用的分段按钮（如 l=0 时的相位色：角向函数是常数，没有正负可分） */
+/* 禁用的分段按钮（如 l=0 时的相位色：角度函数是常数，没有正负可分） */
 .seg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .seg-btn:disabled:hover { color: var(--text-dim); }
 
