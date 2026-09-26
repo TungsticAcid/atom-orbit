@@ -101,6 +101,9 @@ window.AgentCore = (function () {
       '        setAngularView{which:Y|Y2}（球谐曲面的判据；只在 spherical 档有效）',
       '        setSectionPlane{plane:xy|xz|yz} ｜ setSectionMode{mode:intensity|phase|contour}',
       '        focusChart{target:radial|section|none}（把页面底部那两张图放大到浮窗里讲）',
+      '        setChartTerm{term:"super"|0|1|…}（有叠加态时 2D 图各自画哪一份：super=叠加态整体，'
+        + '只有**截面密度**图支持；径向分布与 Θ/Φ 卡画不了叠加态、只能画某一个分量 —— '
+        + '界面上写明了"叠加态本身请看三维视图"，你讲的时候也要交代）',
       '三维    linkRadialTo3D{radius}（radius=0 清除参考球） ｜ spotlightNodes{type,on}（on=false 清除）',
       '        setFormulaHighlight{part:R|L|F|T|Y|P|N}（F=Φ(φ) T=Θ(θ) Y=Θ·Φ；讲"Y 是两个因子相乘"时依次点亮 F→T→Y）',
       '叠加态  loadPreset{key} ｜ setSuperposition{terms} ｜ setCoefficient{index,re,im} ｜ setRelPhase{phase} ｜ clearSuperposition{}',

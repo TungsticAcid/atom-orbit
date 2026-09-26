@@ -162,6 +162,16 @@ window.SceneBridge = (function () {
         + '自动提到批首，但你自己排对更省事。',
       params: { target: "'radial'|'section'|'none'" },
     },
+    setChartTerm: {
+      group: '图表', concept: '',
+      desc: '★ 有叠加态时，三张 2D 图**各自在画哪一份**。'
+        + 'term="super" → 叠加态整体（**只有截面密度图**能这么画，在平面上求 |ψ_super|² 即可）；'
+        + 'term=0/1/2… → 叠加态中的第 i 个分量（从 0 起，与状态里的 terms 同序）。'
+        + '★ 径向分布与 Θ/Φ 卡**画不了叠加态** —— Σcᵢψᵢ 只有在各分量 n 相同时才能因子化出'
+        + '角度部分，一般做不到（预设 ψ_1s+ψ_2s 恰恰不是）；所以这两张图始终只显示某一个分量，'
+        + '界面上也写明了"叠加态本身请看三维视图"。没有叠加态时该动作无效果。',
+      params: { term: "'super'|number（分量序号，从 0 起）" },
+    },
     loadPreset: {
       group: '叠加态', concept: 'K9',
       desc: '载入预设量子态：叠加态示例或杂化轨道（sp / sp² / sp³）',
@@ -962,6 +972,15 @@ window.SceneBridge = (function () {
           return { err: 'target 应为 radial / section / none' };
         }
         return { params: { target: p.target } };
+      case 'setChartTerm': {
+        // 'super' = 叠加态整体（只有截面图支持）；其余按分量序号（从 0 起）校验
+        if (p.term === 'super' || p.term == null) return { params: { term: 'super' } };
+        const i = Number(p.term);
+        if (!Number.isFinite(i) || i < 0 || Math.floor(i) !== i) {
+          return { err: 'term 应为 "super" 或从 0 起的整数分量序号' };
+        }
+        return { params: { term: i } };
+      }
       default:
         return { err: '未知动作：' + name };
     }
@@ -1017,6 +1036,8 @@ window.SceneBridge = (function () {
       case 'focusChart':
         window.dispatchEvent(new CustomEvent('orbit:chart-focus', { detail: p }));
         return { ok: true };
+      case 'setChartTerm':
+        return A.applyAction({ action: 'setChartTerm', params: { term: p.term } });
 
       // ---- 叠加态（辅助功能）----
       case 'loadPreset': {
@@ -1452,7 +1473,7 @@ window.SceneBridge = (function () {
     spotlightNodes: '高亮节面', setAutoRotate: '自动旋转', resetCamera: '复位视角',
     resetSectionView: '复位截面缩放',
     setFormulaHighlight: '高亮公式项', showReferenceTable: '打开教材对照表',
-    focusChart: '放大图表讲解',
+    focusChart: '放大图表讲解', setChartTerm: '切换 2D 图的分量',
     loadPreset: '载入预设态', setSuperposition: '构造叠加态',
     setCoefficient: '改系数', setRelPhase: '调相对相位', clearSuperposition: '回到纯态',
     savePreset: '存为预设', deletePreset: '删除预设',

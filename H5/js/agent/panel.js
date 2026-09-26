@@ -1105,7 +1105,7 @@ window.Panel = (function () {
     setAngularView: '切换 |Y| / |Y|² 判据', setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
     spotlightNodes: '高亮节面', setFormulaHighlight: '高亮公式项',
     setAutoRotate: '自动旋转', resetCamera: '复位视角', resetSectionView: '复位截面缩放',
-    showReferenceTable: '打开教材对照表', focusChart: '放大图表讲解',
+    showReferenceTable: '打开教材对照表', focusChart: '放大图表讲解', setChartTerm: '切换 2D 图的分量',
   };
   function describeAction(name, args) {
     const label = ACTION_LABEL[name] || name;

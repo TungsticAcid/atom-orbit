@@ -595,7 +595,7 @@ window.Charts = (function () {
   }
 
   // 无填色等高线 + 节面(白线) + 数值标注
-  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z) {
+  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z, sup, supPhases) {
     ctx.fillStyle = '#0a0f1f';                 // 暗底，突出线条
     ctx.fillRect(0, 0, w, h);
     if (nodalPlane) {                          // 整面为节面
@@ -623,7 +623,24 @@ window.Charts = (function () {
     }
     // 节面（ψ=0）：实函数用符号变化线；复函数用极小层描出密度=0 区域
     let nodeSegs = null;
-    if (mode === 'real') {
+    if (sup) {
+      // 叠加态的节面：Σcᵢψᵢ 的**实部**过零处（各分量的径向与角度符号都算进去了）。
+      // 不能沿用下面那条 (n,l,m) 的单分量路径 —— 那样画的是某个分量的节面，
+      // 与这张图真正画着的叠加态不是一回事。
+      const sg = new Float32Array(G * G);
+      for (let j = 0; j < G; j++) {
+        for (let i = 0; i < G; i++) {
+          const u = win.u0 + (2 * win.hu * i) / (G - 1);
+          const v = win.v0 + (2 * win.hv * j) / (G - 1);
+          const [x, y, z] = uv2xyz(u, v);
+          const r = Math.hypot(x, y, z);
+          const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
+          const ph = Math.atan2(y, x);
+          sg[j * G + i] = OM.psiSuperposition(sup, r, th, ph, supPhases, Z).re;
+        }
+      }
+      nodeSegs = marchSquareSegments(sg, G, 0, w, h);
+    } else if (mode === 'real') {
       const sg = new Float32Array(G * G);
       for (let j = 0; j < G; j++) {
         for (let i = 0; i < G; i++) {
@@ -683,13 +700,22 @@ window.Charts = (function () {
     ctx.restore();
   }
 
-  function drawSection(canvas, n, l, m, mode, plane, sectionMode, Z) {
+  function drawSection(canvas, n, l, m, mode, plane, sectionMode, Z, terms, relPhase) {
     const { ctx, w, h } = setup(canvas);
+    // ★ 叠加态（第 G 批）：截面图是四张 2D 图里**唯一**能直接画叠加态的 —— 在平面上求
+    //   |ψ_super|² 即可，densitySuperposition 已经算得动。Θ/Φ 卡与径向分布不行：
+    //   Σcᵢψᵢ 只有在各分量 n 相同时才能因子化出角度部分，一般做不到。
+    const sup = (terms && terms.length) ? terms : null;
+    const supPhases = sup ? sup.map(function (t, i) { return i * (relPhase || 0); }) : null;
     // ★ 计算分辨率随缩放提高：视窗缩到 1/4 后仍用 160² 拉大到画布就是插值糊，
     //   "放大"等于没做。上限 512²（约 26 万次 psiDensity，仍是可接受的开销）。
     const G = Math.max(160, Math.min(512, Math.round(160 * sectionView.scale)));
-    // 视窗（半宽 + 中心）；scale = 1 时即原来的 [-E, E]
-    const hu = sectionHalfWidth(n, l, Z);
+    // 视窗（半宽 + 中心）；scale = 1 时即原来的 [-E, E]。
+    // ★ 叠加态要按**叠加态自己的尺度**取景：它可能含有 n 比滑块大的分量（如 ψ_1s+ψ_3s），
+    //   沿用 rExtent(n,l) 会把外层分量裁掉。
+    const hu = sup
+      ? (OM.superpositionExtent(sup, Z) * 1.05) / sectionView.scale
+      : sectionHalfWidth(n, l, Z);
     const win = { u0: sectionView.cu - hu, v0: sectionView.cv - hu, hu: hu, hv: hu };
     // 平面内坐标 (u,v) → 空间 (x,y,z)
     const uv2xyz = (u, v) => {
@@ -710,14 +736,18 @@ window.Charts = (function () {
         const r = Math.hypot(x, y, z);
         const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
         const ph = Math.atan2(y, x);
-        const dd = OM.psiDensity(n, l, m, r, th, ph, mode, Z);
+        const dd = sup
+          ? OM.densitySuperposition(sup, r, th, ph, supPhases, Z)
+          : OM.psiDensity(n, l, m, r, th, ph, mode, Z);
         vals[j * G + i] = dd;
         if (dd > maxV) maxV = dd;
         if (sectionMode === 'phase') {
           // 与三维等值面**共用同一个判据**（OM.psiPhase）。原先这里独立写了一遍，
           // 且复函数分支同样写成 arg(Y)、漏掉 R(r) —— 与三维错得一模一样，所以
           // 两张图"看起来很一致"、也就没人发现它们一起错了。
-          phases[j * G + i] = OM.psiPhase(mode, n, l, m, r, th, ph, null, null);
+          phases[j * G + i] = sup
+            ? OM.psiSuperposition(sup, r, th, ph, supPhases, Z).arg()
+            : OM.psiPhase(mode, n, l, m, r, th, ph, null, null);
         }
       }
     }
@@ -728,7 +758,7 @@ window.Charts = (function () {
     if (sectionMode === 'contour') {
       // ★ maxV 是**视窗内**的峰值：放大后颜色映射与 8 层等高线会整体重标定（越放大越亮）。
       //   这是有意选择 —— 放大看暗部（外层壳、概率尾巴）正是这个功能的目的。
-      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z);
+      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z, sup, supPhases);
       drawSectionFrame(ctx, w, h, plane, win);
       return;
     }

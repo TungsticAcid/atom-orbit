@@ -211,6 +211,15 @@
             </div>
           </div>
         </div>
+        <!-- ★ 分量选择器（第 G 批）：叠加态下这三张 2D 图**只能**画某一个分量 ——
+             Σcᵢψᵢ 只有在各分量 n 相同时才能因子化出角度部分，一般做不到。
+             原先它们一律画滑块上的纯态，与三维画的叠加态对不上，学生无从察觉。
+             有叠加态时才出现；选哪一项由 state.chartTerm 统一记录（也进感知快照）。 -->
+        <div class="hint" id="radialTermBar" style="display:none">
+          显示的是叠加态中的
+          <select class="chart-term" id="radialTermSel"></select>
+          分量 —— 叠加态本身请看三维视图
+        </div>
         <canvas id="radialChart" class="chart"></canvas>
         <div class="hint">各曲线分别按自身峰值归一化，故看形状与峰值位置、不比绝对高度；竖线标的是选中曲线的峰值 / 节点半径（峰值实线、节点虚线）</div>
       </div>
@@ -220,6 +229,11 @@
           <span class="card-title">角度部分的两个因子</span>
         </div>
         <div class="hint" style="margin-top:2px">Y(θ,φ) = Θ(θ) · Φ(φ)　—　左图极角自 +z 起，右图自 +x 起</div>
+        <div class="hint" id="thetaPhiTermBar" style="display:none">
+          显示的是叠加态中的
+          <select class="chart-term" id="thetaPhiTermSel"></select>
+          分量 —— 叠加态本身请看三维视图
+        </div>
         <canvas id="thetaPhiChart" class="chart"></canvas>
         <div class="hint">上面三维里看到的是两者相乘的结果；这里看两个因子各自长什么样</div>
       </div>
@@ -232,6 +246,13 @@
             <button class="seg-btn active" data-p="xz">xz</button>
             <button class="seg-btn" data-p="yz">yz</button>
           </div>
+        </div>
+        <!-- ★ 截面图**可以**直接画叠加态（在平面上求 |ψ_super|² 即可，densitySuperposition 已有），
+             所以它的选择器多列一项「叠加态」并默认选中 —— 这是四张图里唯一能真正
+             把叠加态画出来的 2D 图。 -->
+        <div class="hint" id="sectionTermBar" style="display:none">
+          显示
+          <select class="chart-term" id="sectionTermSel"></select>
         </div>
         <div class="seg small" id="phaseSeg" style="margin:2px 0 6px">
           <button class="seg-btn active" data-mode="intensity">密度着色</button>

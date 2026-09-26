@@ -37,6 +37,10 @@
     // ★ 叠加态（辅助功能）：terms 为空时退化为单一本征态 ψ_{n,l,m}
     terms: [],               // [{n,l,m,mode,c:{re,im}}]
     relPhase: 0,             // 相对相位 φ（≠ 真实时间，见方案 §5.3）
+    // ★ 2D 图表画哪一份（第 G 批）：'super' = 叠加态整体（**只有截面图支持** ——
+    //   Θ/Φ 卡与径向分布画不了叠加态，Σcᵢψᵢ 未必能因子化出角度部分），
+    //   0/1/2… = 叠加态中的第 i 个分量。没有叠加态时这个字段不起作用（画滑块上的纯态）。
+    chartTerm: 'super',
   };
   let lastFieldKey = null;
   const isMobile = window.matchMedia('(max-width: 768px)').matches;
@@ -479,12 +483,74 @@
     if (realMode) syncRealOrbitButtons();
   }
 
+  /**
+   * 2D 图表当前该画哪一份（第 G 批）。
+   *
+   * ★ 三张 2D 图的能力**不一样**，不能一律对待：
+   *   · 径向分布、Θ/Φ 卡 —— 画不了叠加态。Σcᵢψᵢ 只有在各分量 n 相同时才能因子化出
+   *     角度部分，一般做不到（内置预设 ψ_1s+ψ_2s 恰恰不是）。所以它们只能画**某一个分量**。
+   *   · 截面密度 —— **可以**直接画叠加态：在平面上求 |ψ_super|² 即可，
+   *     densitySuperposition 已经算得动。这是四张图里唯一能真正画出叠加态的那张。
+   * 原先三张图一律画滑块上的纯态，与三维画的叠加态对不上，而界面上没有任何提示 ——
+   * 学生看着"三维是叠加态、2D 图是另一个轨道"，无从察觉。
+   */
+  function chartTermState(allowSuper) {
+    const t = state.terms || [];
+    if (!t.length) {
+      return { kind: 'pure', idx: -1, n: state.n, l: state.l, m: state.m, mode: state.mode };
+    }
+    if (allowSuper && state.chartTerm === 'super') {
+      return { kind: 'super', idx: -1, terms: t, n: state.n, l: state.l, m: state.m, mode: state.mode };
+    }
+    let idx = (state.chartTerm === 'super') ? 0 : Number(state.chartTerm);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= t.length) idx = 0;
+    const x = t[idx];
+    return { kind: 'term', idx: idx, terms: t, n: x.n, l: x.l, m: x.m, mode: x.mode || 'real' };
+  }
+
+  /** 分量选择器：有叠加态才出现；选项按各分量**自己的解型**取标记（实项名字 / 复项 m） */
+  function syncChartTermBars() {
+    const t = state.terms || [];
+    const has = t.length > 0;
+    const labelOf = (x, i) => {
+      const md = x.mode || 'real';
+      const nm = (md === 'real' && window.Formula && window.Formula.realOrbitalLabelPlain)
+        ? window.Formula.realOrbitalLabelPlain(x.l, x.m) : '';
+      return '#' + (i + 1) + ' ' + x.n +
+        (md === 'real' && nm ? nm : '（m=' + (x.m > 0 ? '+' + x.m : x.m) + '）');
+    };
+    const cur = (state.chartTerm === 'super') ? 'super' : String(state.chartTerm);
+    [['#radialTermBar', '#radialTermSel', false],
+      ['#thetaPhiTermBar', '#thetaPhiTermSel', false],
+      ['#sectionTermBar', '#sectionTermSel', true]].forEach(function (spec) {
+      const bar = $(spec[0]), sel = $(spec[1]);
+      if (!bar || !sel) return;
+      bar.style.display = has ? '' : 'none';
+      if (!has) { sel.innerHTML = ''; return; }
+      let html = '';
+      if (spec[2]) html += '<option value="super">叠加态 ψ = Σcᵢψᵢ（本图可直接画）</option>';
+      t.forEach(function (x, i) { html += '<option value="' + i + '">' + labelOf(x, i) + '</option>'; });
+      sel.innerHTML = html;
+      // 不支持叠加态的图：当前选的是 'super' 时落到第 1 个分量（state.chartTerm 不动，
+      // 这样从截面图切回来时仍记得"要看叠加态"）
+      sel.value = (spec[2] || cur !== 'super') ? cur : '0';
+      sel.onchange = function () {
+        state.chartTerm = (sel.value === 'super') ? 'super' : Number(sel.value);
+        updateCharts();
+      };
+    });
+  }
+
   function updateCharts() {
-    Charts.drawRadial(els.radialChart, state.n, state.l, state.radial, state.Z);
+    syncChartTermBars();
+    const rt = chartTermState(false);        // 径向与 Θ/Φ：不支持叠加态，落到某个分量
+    const st = chartTermState(true);         // 截面：支持叠加态
+    Charts.drawRadial(els.radialChart, rt.n, rt.l, state.radial, state.Z);
     // Θ/Φ 卡片画的是 Y 的**两个因子**（不随 |Y|/|Y|² 判据变 —— 判据改的是三维里
     // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）
-    Charts.drawThetaPhi(els.thetaPhiChart, state.l, state.m, state.mode);
-    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
+    Charts.drawThetaPhi(els.thetaPhiChart, rt.l, rt.m, rt.mode);
+    Charts.drawSection(els.sectionChart, st.n, st.l, st.m, st.mode, state.plane, state.sectionMode, state.Z,
+      (st.kind === 'super') ? st.terms : null, state.relPhase);
     // 换轨道 / 换平面都会改变"这一面是不是节面"，光标与触摸策略要跟着变（第 11 条）
     syncSectionUI();
   }
@@ -494,11 +560,13 @@
    * 缩放/平移时用它而不是 updateCharts —— 后者会顺带重算径向与角度图，纯属浪费。
    */
   function redrawSection() {
-    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
+    const st = chartTermState(true);
+    Charts.drawSection(els.sectionChart, st.n, st.l, st.m, st.mode, state.plane, state.sectionMode, state.Z,
+      (st.kind === 'super') ? st.terms : null, state.relPhase);
     // ★ 节面上不显示「复位缩放」小控件 —— 那上面本来就没有可缩放的内容（第 11 条）
     const chip = $('#sectionResetChip');
-    const st = Charts.sectionState();
-    if (chip) chip.style.display = (!st.nodal && st.userAdjusted) ? '' : 'none';
+    const s = Charts.sectionState();
+    if (chip) chip.style.display = (!s.nodal && s.userAdjusted) ? '' : 'none';
   }
 
   /**
@@ -848,6 +916,7 @@
   function exitSuperposition() {
     if (!(state.terms && state.terms.length)) return false;
     state.terms = []; state.relPhase = 0;
+    state.chartTerm = 'super';                 // 分量选择器随之复位（第 G 批）
     if (window.StateEditor && window.StateEditor.clear) window.StateEditor.clear();
     return true;
   }
@@ -1040,7 +1109,21 @@
       state.relPhase = 0;
       return true;
     },
-    clearSuperposition() { state.terms = []; state.relPhase = 0; return true; },
+    clearSuperposition() { state.terms = []; state.relPhase = 0; state.chartTerm = 'super'; return true; },
+    /**
+     * 2D 图表画哪一份（第 G 批）：'super' = 叠加态整体（**只有截面图**能这么画），
+     * 数字 = 叠加态中的第 i 个分量（从 0 起）。没有叠加态时该动作无效果。
+     */
+    setChartTerm(p) {
+      const t = state.terms || [];
+      if (!t.length) return false;
+      const v = p && p.term;
+      if (v === 'super' || v == null) { state.chartTerm = 'super'; return true; }
+      const i = Number(v);
+      if (!Number.isFinite(i) || i < 0 || i >= t.length) return false;
+      state.chartTerm = Math.floor(i);
+      return true;
+    },
     setRelPhase(p) {
       const v = Number(p && p.phase);
       if (!Number.isFinite(v)) return false;
@@ -1075,6 +1158,7 @@
         autoRotate: !!(document.querySelector('#autoRotate') || {}).checked,
         terms: state.terms.map(function (t) { return { n: t.n, l: t.l, m: t.m, mode: t.mode || 'real', c: { re: t.c.re, im: t.c.im } }; }),
         relPhase: state.relPhase,
+        chartTerm: state.chartTerm,
       };
     },
 

@@ -31,6 +31,7 @@ window.Perception = (function () {
     angularWhich: 'setAngularView',
     radial: 'setRadial',
     autoRotate: 'setAutoRotate',
+    chartTerm: 'setChartTerm',
   };
 
   const trace = {
@@ -149,6 +150,10 @@ window.Perception = (function () {
         radial: s.radial,
         angular: s.angularWhich,
         section: { plane: s.plane, mode: s.sectionMode },
+        // ★ 有叠加态时，三张 2D 图各自在画哪一份（第 G 批）：'super' = 叠加态整体
+        //   （只有截面图支持），数字 = 第 i 个分量。没有它，模型会以为 2D 图与三维
+        //   画的是同一个东西，然后指着分量说"这就是叠加态"。
+        term: (s.terms && s.terms.length) ? (s.chartTerm == null ? 'super' : s.chartTerm) : null,
       },
       camera: { autoRotate: s.autoRotate },
       interaction: getTrace(),
@@ -192,7 +197,12 @@ window.Perception = (function () {
         ' / ' + s.mode.wavefunction + ' / ' + s.mode.render + ' / 着色:' + s.mode.color,
       '【等值面】判据 ' + s.isosurface.criterion + '，阈值 ' + (s.isosurface.levelFraction * 100).toFixed(1) + '%',
       '【图表】径向 [' + (s.charts.radial || []).join(',') + ']；球谐判据 ' + s.charts.angular +
-        '；截面 ' + s.charts.section.plane + '/' + s.charts.section.mode,
+        '；截面 ' + s.charts.section.plane + '/' + s.charts.section.mode +
+        // 有叠加态时才写：这三张 2D 图各自在画哪一份（第 G 批）
+        (s.charts.term != null
+          ? '；分量 径向/ΘΦ=' + (s.charts.term === 'super' ? '第1个分量（这两张图不支持叠加态）' : '#' + (Number(s.charts.term) + 1)) +
+            '、截面=' + (s.charts.term === 'super' ? '叠加态整体' : '#' + (Number(s.charts.term) + 1))
+          : ''),
       '【交互】空闲 ' + Math.round((it.idleMs || 0) / 1000) + 's' +
         '；切换次数 ' + JSON.stringify(it.toggleCounts || {}) +
         '；最近动作 ' + (it.recentActions || []).join('→'),

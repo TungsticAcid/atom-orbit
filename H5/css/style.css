@@ -314,6 +314,12 @@ input[type="range"]::-moz-range-thumb {
   transition: all 0.15s ease;
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
+/* 2D 图表的分量选择器（第 G 批）：内嵌在提示行里，尽量不抢视觉 */
+.chart-term {
+  background: var(--active, #1b2440); border: 1px solid var(--line, #2a3558);
+  border-radius: 6px; color: var(--text, #e8ecf7); font-family: inherit; font-size: 12px;
+  padding: 1px 4px; margin: 0 2px; outline: none; cursor: pointer;
+}
 .btn-ghost { background: transparent; }
 /* 点亮态（「节面」按钮）：与分段控件的 active 同色系，看得出"这个标注正开着" */
 .btn-ghost.active {
