@@ -396,14 +396,24 @@ window.Charts = (function () {
     ctx.font = 'bold 15px system-ui, sans-serif';
     ctx.fillText('×', w * 0.5, cy + 5);
 
-    // 极角基准：两幅不同，各自标出
-    ctx.textAlign = 'left';
+    // 极角基准：两幅不同，各自标出。
+    // ★ 位置取"圆内、离描边约 14px"（贴边写会被描边压住）；并且**先描一圈底色再填字** ——
+    //   浅色文字直接压在橙/青填充上对比度不够，实测 −z 几乎看不出来。光晕让它在任何
+    //   瓣色下都读得清，代价只是多一次 strokeText。
     ctx.font = '10px system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(170,190,225,0.85)';
-    ctx.fillText('+z', cxT + 3, cy - Rho + 11);
-    ctx.fillText('−z', cxT + 3, cy + Rho - 2);
-    ctx.fillText('+x', cxP + Rho - 15, cy - 3);
-    ctx.fillText('+y', cxP + 3, cy - Rho + 11);
+    const axisLabel = function (t, x, y, align) {
+      ctx.textAlign = align || 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(10,15,31,0.9)';
+      ctx.strokeText(t, x, y);
+      ctx.fillStyle = 'rgba(206,219,244,0.98)';
+      ctx.fillText(t, x, y);
+    };
+    const INSET = 15;
+    axisLabel('+z', cxT, cy - Rho + INSET);
+    axisLabel('−z', cxT, cy + Rho - 4);
+    axisLabel('+y', cxP, cy - Rho + INSET);
+    axisLabel('+x', cxP + Rho - 8, cy - 4, 'right');
 
     // ---- 底部：把"相乘"落成可核对的数字 ----
     // ★ max|Y| 取两因子峰值之积。Y = Θ·Φ 且两个自变量独立，所以 |Y| 的最大值
