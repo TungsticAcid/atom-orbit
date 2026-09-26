@@ -35,9 +35,19 @@ window.SceneBridge = (function () {
   // 动作词汇表 —— 既用于执行，也用于 listSceneActions 告知模型
   // ---------------------------------------------------------------------------
   const VOCAB = {
+    setNuclearCharge: {
+      group: '原子', concept: 'K1',
+      desc: '设置核电荷数 Z（类氢原子）：1 氢、2 氦离子 He⁺、3 锂离子 Li²⁺。'
+          + '类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），**角向部分与 Z 无关** —— '
+          + '所以换 Z 会改变三维尺度、径向分布图横轴、截面视窗与能级，但球谐曲面纹丝不动。'
+          + '★ 与量子数不同，换 Z **不会**退出叠加态（Z 是原子的属性，叠加态整体跟着缩放）。',
+      params: { Z: 'int 1–3' },
+    },
     setQuantumNumbers: {
       group: '量子数', concept: 'K1',
-      desc: '跳转到指定量子数（n/l/m），越界自动夹紧',
+      desc: '跳转到指定量子数（n/l/m），越界自动夹紧。'
+          + '★ 指定了具体量子数即意味着"要看这个单一本征态"，因此会**自动退出叠加态**'
+          + '（回纯态）；拖界面滑块同理。',
       params: { n: 'int? 1–6', l: 'int? 0–n-1', m: 'int? -l–l' },
     },
     sweepQuantumNumber: {
@@ -783,6 +793,11 @@ window.SceneBridge = (function () {
   function validate(name, p) {
     const S = () => (window.OrbitApp ? window.OrbitApp.getState() : {});
     switch (name) {
+      case 'setNuclearCharge': {
+        const v = clampInt(p.Z, 1, 3);
+        return (v == null) ? { err: 'Z 应为 1–3 的整数（1 氢 / 2 氦离子 / 3 锂离子）' }
+                           : { params: { Z: v } };
+      }
       case 'setQuantumNumbers': {
         const s = S();
         const out = {};
@@ -953,6 +968,7 @@ window.SceneBridge = (function () {
     const A = window.OrbitApp;
     if (!A) return { ok: false, error: '应用未就绪' };
     switch (name) {
+      case 'setNuclearCharge': return A.applyAction({ action: 'setNuclearCharge', params: p });
       case 'setQuantumNumbers': return A.applyAction({ action: 'setQuantumNumbers', params: p });
       case 'setWavefunctionMode': return A.applyAction({ action: 'setWavefunctionMode', params: p });
       case 'setRenderMode': return A.applyAction({ action: 'setRenderMode', params: p });
@@ -1419,7 +1435,7 @@ window.SceneBridge = (function () {
 
   /** 给播放进度用的中文动作名（与 panel 的气泡文案保持一致的语感） */
   const LABEL = {
-    setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
+    setNuclearCharge: '设置核电荷数 Z', setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
     setWavefunctionMode: '切换实/复函数', setRenderMode: '切换渲染方式',
     setColorMode: '切换着色', setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',

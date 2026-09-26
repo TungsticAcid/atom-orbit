@@ -10,6 +10,10 @@
 
   // ---- 状态 ----------------------------------------------------------------
   const state = {
+    // ★ 核电荷数 Z（类氢）：Z=1 氢原子、2 氦离子 He⁺、3 锂离子 Li²⁺。
+    //   类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），角向部分与 Z 无关 ——
+    //   所以引入 Z 没有改变任何公式的形状，只是把"这个原子带几份核电荷"接进来。
+    Z: 1,
     n: 3, l: 1, m: 0,
     // ★ 三维里"看什么"：'wave' = 完整波函数 ψ（等值面 / 粒子云）；
     //   'spherical' = 角度部分 Y 的球谐曲面。两者在 render3d.js 里是**两套几何**
@@ -40,6 +44,7 @@
   // ---- DOM ----------------------------------------------------------------
   const $ = (s) => document.querySelector(s);
   const els = {
+    zSlider: $('#zSlider'), zInput: $('#zInput'),
     nSlider: $('#nSlider'), nInput: $('#nInput'),
     lSlider: $('#lSlider'), lInput: $('#lInput'),
     mSlider: $('#mSlider'), mInput: $('#mInput'),
@@ -94,7 +99,8 @@
     els.nInput.value = n;
     els.lInput.value = l;
     els.mInput.value = els.mSlider.value;
-    [els.nInput, els.lInput, els.mInput].forEach((el) => el.classList.remove('invalid'));
+    els.zInput.value = els.zSlider.value;      // Z 的范围固定 1–3，不随 n/l/m 变，回写即可
+    [els.nInput, els.lInput, els.mInput, els.zInput].forEach((el) => el.classList.remove('invalid'));
   }
 
   /**
@@ -106,7 +112,8 @@
     const v = Number(raw);
     if (raw === '' || !Number.isFinite(v) || !Number.isInteger(v)) { el.classList.add('invalid'); return; }
     let lo, hi, slider;
-    if (which === 'n') { lo = 1; hi = 6; slider = els.nSlider; }
+    if (which === 'z') { lo = 1; hi = 3; slider = els.zSlider; }
+    else if (which === 'n') { lo = 1; hi = 6; slider = els.nSlider; }
     else if (which === 'l') { lo = 0; hi = Math.min(+els.nSlider.value - 1, 5); slider = els.lSlider; }
     else { lo = -(+els.lSlider.value); hi = +els.lSlider.value; slider = els.mSlider; }
     if (v < lo || v > hi) { el.classList.add('invalid'); return; }
@@ -118,6 +125,7 @@
 
   function readFromControls() {
     syncRanges();                       // 先确保依赖滑块范围正确
+    state.Z = +els.zSlider.value;
     state.n = +els.nSlider.value;
     state.l = +els.lSlider.value;
     state.m = +els.mSlider.value;
@@ -219,7 +227,7 @@
   function recommendedLevelRaw(n, l, psiCrit) {
     if (!window.OM || !OM.shellPeakFractions) return 0.10;
     let fr;
-    try { fr = OM.shellPeakFractions(n, l); } catch (e) { return 0.10; }
+    try { fr = OM.shellPeakFractions(n, l, state.Z); } catch (e) { return 0.10; }
     if (!fr || fr.length <= 1) return 0.10;             // 单壳：无约束
     const rec = Math.max(0.0004, Math.min(0.8, 0.4 * Math.min.apply(null, fr)));
     // 判据换算：同一读数下 |ψ| 判据对应 f² 倍峰值（见 render3d.js 的 levelAbsFor）
@@ -313,7 +321,8 @@
     const sig = (state.terms || []).map(function (t) {
       return t.n + ',' + t.l + ',' + t.m + ',' + t.c.re.toFixed(3) + ',' + t.c.im.toFixed(3);
     }).join('|');
-    return state.n + '-' + state.l + '-' + state.m + '-' + state.mode + '-' + state.psiCrit +
+    // ★ Z 必须进 key —— 不进就会"换了 Z 画面不变"（走缓存复用分支）
+    return 'Z' + state.Z + '-' + state.n + '-' + state.l + '-' + state.m + '-' + state.mode + '-' + state.psiCrit +
       (sig ? '-S:' + sig + '@' + state.relPhase : '');
   }
 
@@ -324,6 +333,7 @@
     //   所以这里用 if/else 而不是在渲染模式里再加一个维度。
     const sph = (state.viewTarget === 'spherical');
     if (sph) {
+      // 球谐曲面是**纯角度函数**，与 Z 无关 —— 所以这一档不传 Z，也不需要传
       Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich);
     } else if (state.renderMode === 'surface') {
       const key = currentFieldKey();
@@ -333,7 +343,7 @@
         const preview = !!window.__ORBIT_PREVIEW__;
         const gridRes = preview ? (isMobile ? 30 : 40) : (isMobile ? 46 : 68);
         Orbit3D.updateSurface(state.n, state.l, state.m, state.mode, gridRes, state.level,
-          state.colorMode, state.psiCrit, state.terms, state.relPhase);
+          state.colorMode, state.psiCrit, state.terms, state.relPhase, state.Z);
         lastFieldKey = key;
       } else {
         // 仅阈值/着色变化：复用已缓存的标量场与网格
@@ -342,8 +352,8 @@
     } else {
       const cloud = (state.terms && state.terms.length)
         ? OM.samplePointsSuperposition(state.terms, state.pointCount, state.colorMode,
-            state.terms.map(function (t, i) { return i * state.relPhase; }))
-        : OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, state.colorMode);
+            state.terms.map(function (t, i) { return i * state.relPhase; }), state.Z)
+        : OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, state.colorMode, state.Z);
       Orbit3D.updateCloud(cloud);
     }
     Orbit3D.setVisibility(sph ? 'spherical' : state.renderMode);
@@ -359,11 +369,11 @@
   }
 
   function updateCharts() {
-    Charts.drawRadial(els.radialChart, state.n, state.l, state.radial);
+    Charts.drawRadial(els.radialChart, state.n, state.l, state.radial, state.Z);
     // Θ/Φ 卡片画的是 Y 的**两个因子**（不随 |Y|/|Y|² 判据变 —— 判据改的是三维里
     // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）
     Charts.drawThetaPhi(els.thetaPhiChart, state.l, state.m, state.mode);
-    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
+    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
   }
 
   /**
@@ -371,7 +381,7 @@
    * 缩放/平移时用它而不是 updateCharts —— 后者会顺带重算径向与角度图，纯属浪费。
    */
   function redrawSection() {
-    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
+    Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
     const chip = $('#sectionResetChip');
     if (chip) chip.style.display = Charts.sectionState().userAdjusted ? '' : 'none';
   }
@@ -387,7 +397,7 @@
    */
   function attachSectionView(cv, onChange) {
     if (!cv) return false;
-    const halfE = () => OM.rExtent(state.n, state.l) * 1.05;
+    const halfE = () => OM.rExtent(state.n, state.l, state.Z) * 1.05;
     let drag = null;
     // ★ 多点触控：单指拖动平移，**双指捏合缩放**（与三维视图同一套手势约定）。
     //   原先只有 wheel 能缩放 —— 桌面没问题，但触屏上就完全没法放大截面图，
@@ -512,9 +522,16 @@
 
   // ---- 事件绑定 -----------------------------------------------------------
   function bindEvent() {
-    // 量子数滑块（n/l 变更需先同步依赖范围内的，再异步重算）
-    [els.nSlider, els.lSlider, els.mSlider].forEach((el) => {
-      el.addEventListener('input', () => { syncRanges(); scheduleUpdate(); });
+    // 量子数滑块（n/l 变更需先同步依赖范围内的，再异步重算）。
+    // Z 也走同一条通路 —— 它与 n/l/m 一样是"改了就整场重算"的参数。
+    [els.zSlider, els.nSlider, els.lSlider, els.mSlider].forEach((el) => {
+      el.addEventListener('input', () => {
+        // ★ 拖 n/l/m 与"用动作设量子数"是同一个意图（要看这个单一本征态），
+        //   所以走同一层保护；Z 不指定本征态，故不退出叠加态（见 exitSuperposition）。
+        if (el !== els.zSlider) exitSuperposition();
+        syncRanges();
+        scheduleUpdate();
+      });
     });
     // 量子数数字框：键入即校验；回车提交；失焦时把非法输入还原为当前真值
     const numBind = (el, which) => {
@@ -522,6 +539,7 @@
       el.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { commitNumber(el, which); el.blur(); } });
       el.addEventListener('blur', () => syncRanges());
     };
+    numBind(els.zInput, 'z');
     numBind(els.nInput, 'n');
     numBind(els.lInput, 'l');
     numBind(els.mInput, 'm');
@@ -621,6 +639,23 @@
     return true;
   }
 
+  /**
+   * 退出叠加态，回到"当前滑块的纯态"。返回是否真的退出了。
+   *
+   * ★ 两条入口必须共用它：受控动作 `setQuantumNumbers` 与**界面上的 n/l/m 滑块**。
+   *   原先只有动作路径有这层保护（那里的注释写得很清楚："指定了具体量子数即意味着
+   *   要看这个单一本征态"），滑块路径没有 —— 于是"设好叠加态后拖一下滑块"会出现：
+   *   三维与公式仍是叠加态（terms 优先于 n/l/m），而三张 2D 图已经变成纯态图
+   *   （charts.js 不支持叠加态），三者当场矛盾。
+   *   **同一个建模意图走两条入口却有两种行为**，就是这类错位的来源。
+   */
+  function exitSuperposition() {
+    if (!(state.terms && state.terms.length)) return false;
+    state.terms = []; state.relPhase = 0;
+    if (window.StateEditor && window.StateEditor.clear) window.StateEditor.clear();
+    return true;
+  }
+
   // 动作表：每个动作用最朴素的方式驱动既有控件
   const ACTIONS = {
     // 仅供"只重算、不改参数"的场景（如叠加态系数/相位变化后触发一次重绘）
@@ -644,6 +679,9 @@
         btn.parentElement.querySelectorAll('.seg-btn').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
       };
+      // ★ 直接写 value、不派发 input 事件 —— 所以不会触发 exitSuperposition
+      //   （恢复一套含叠加态的状态时，若在这里退出叠加态就会把刚恢复的 terms 清掉）。
+      if (els.zSlider) els.zSlider.value = s.nuclearCharge || 1;
       // 量子数：先设 n 再设 l/m，范围才正确
       if (els.nSlider) els.nSlider.value = s.n;
       syncRanges();
@@ -689,18 +727,25 @@
       return true;
     },
     setQuantumNumbers(p) {
-      // ★ 指定了具体量子数即意味着"要看这个单一本征态" → 自动退出叠加态。
-      //   否则会出现"演示脚本设了 n/l/m，画面却仍是叠加态"的错位
-      //   （叠加态优先于 n/l/m，不退出就看不到任何变化）。
+      // ★ 指定了具体量子数即意味着"要看这个单一本征态" → 自动退出叠加态
+      //   （判据与界面滑块共用 exitSuperposition，两条入口行为一致）。
       const given = (p.n != null) || (p.l != null) || (p.m != null);
-      if (given && state.terms && state.terms.length) {
-        state.terms = []; state.relPhase = 0;
-        if (window.StateEditor && window.StateEditor.clear) window.StateEditor.clear();
-      }
+      if (given) exitSuperposition();
       // n → l → m 依次设置，每步都收敛范围，避免越界被夹紧而丢失意图
       if (p.n != null) { setSlider(els.nSlider, p.n); syncRanges(); }
       if (p.l != null) { setSlider(els.lSlider, p.l); syncRanges(); }
       if (p.m != null) { setSlider(els.mSlider, p.m); syncRanges(); }
+    },
+    /**
+     * 设置核电荷数 Z（类氢）。
+     * ★ 与量子数不同，**换 Z 不退出叠加态** —— Z 是"原子"的属性，叠加态整体跟着
+     *   缩放即可（psiSuperposition 已接受 Z），不需要退回纯态。
+     */
+    setNuclearCharge(p) {
+      const v = Math.round(+p.Z);
+      if (!(v >= 1 && v <= 3)) return false;
+      setSlider(els.zSlider, v);
+      return true;
     },
     setWavefunctionMode(p) { return setSeg('#modeSeg', 'data-mode', p.mode); },
     setRenderMode(p) { return setSeg('#renderSeg', 'data-mode', p.mode); },
@@ -801,6 +846,7 @@
       };
       return {
         n: state.n, l: state.l, m: state.m,
+        nuclearCharge: state.Z,
         viewTarget: state.viewTarget,
         wavefunction: state.mode,
         render: state.renderMode,
@@ -855,11 +901,11 @@
     drawChartInto(target, canvas) {
       if (!canvas) return false;
       if (target === 'radial') {
-        Charts.drawRadial(canvas, state.n, state.l, state.radial);
+        Charts.drawRadial(canvas, state.n, state.l, state.radial, state.Z);
         return true;
       }
       if (target === 'section') {
-        Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
+        Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
         return true;
       }
       // 球谐曲面不是图表（它是主三维视图本身）；下面那张 Θ/Φ 卡片倒是普通 2D canvas，

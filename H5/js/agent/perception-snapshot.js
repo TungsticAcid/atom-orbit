@@ -18,6 +18,7 @@ window.Perception = (function () {
 
   // 状态字段 → 简短的"动作名"（用于痕迹可读性）
   const FIELD_LABEL = {
+    nuclearCharge: 'setNuclearCharge',
     n: 'setN', l: 'setL', m: 'setM',
     wavefunction: 'setWavefunctionMode',
     render: 'setRenderMode',
@@ -120,6 +121,9 @@ window.Perception = (function () {
 
     const snap = {
       orbital: {
+        // 核电荷数（类氢）：Z=1 氢 / 2 氦离子 / 3 锂离子。放进 orbital 而非单独一层 ——
+        // 它和 n/l/m 一起决定"这是哪个原子轨道"，模型读一行就够。
+        nuclearCharge: s.nuclearCharge,
         n: s.n, l: s.l, m: s.m,
         name: '' + s.n + sub,
         chemName: (s.wavefunction === 'real' && window.Formula && window.Formula.realOrbitalName)
@@ -155,7 +159,10 @@ window.Perception = (function () {
     const lines = [
       '【当前视图】' + s.orbital.name +
         (s.orbital.chemName ? '(' + s.orbital.chemName + ')' : '') +
-        '  n=' + s.orbital.n + ' l=' + s.orbital.l + ' m=' + s.orbital.m,
+        '  n=' + s.orbital.n + ' l=' + s.orbital.l + ' m=' + s.orbital.m +
+        // Z 只有非 1 时才写出来 —— 默认的氢原子不必每轮占一个字段的位置
+        (s.orbital.nuclearCharge && s.orbital.nuclearCharge !== 1
+          ? ' Z=' + s.orbital.nuclearCharge + '（类氢，非氢原子）' : ''),
       '【模式】看' + (s.mode.target === 'spherical' ? '球谐函数 Y' : '完整波函数 ψ') +
         ' / ' + s.mode.wavefunction + ' / ' + s.mode.render + ' / 着色:' + s.mode.color,
       '【等值面】判据 ' + s.isosurface.criterion + '，阈值 ' + (s.isosurface.levelFraction * 100).toFixed(1) + '%',

@@ -1095,7 +1095,7 @@ window.Panel = (function () {
   }
 
   const ACTION_LABEL = {
-    setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
+    setNuclearCharge: '设置核电荷数 Z', setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
     setWavefunctionMode: '切换实/复函数', setRenderMode: '切换渲染方式',
     setColorMode: '切换着色', setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',

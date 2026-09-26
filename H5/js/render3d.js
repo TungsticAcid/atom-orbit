@@ -381,7 +381,8 @@ window.Orbit3D = (function () {
    * 的格距会相差 3 倍——格距过粗时，节面附近两瓣之间约 1 a₀ 的缝只有一两个格子宽，
    * 行进算法无法分辨，会把两瓣连成一体并被切出"平底贴合"的丑陋形状。
    */
-  function computeField(n, l, m, mode, res, level, terms, relPhase, extentOverride, grading) {
+  function computeField(n, l, m, mode, res, level, terms, relPhase, extentOverride, grading, Z) {
+    const zc = (Z > 0) ? Z : 1;
     const iso = (level > 0) ? level : 0;
     // 叠加态：范围取各分量外延的最大值；否则按单一本征态
     const useSuper = !!(terms && terms.length);
@@ -389,11 +390,11 @@ window.Orbit3D = (function () {
       ? extentOverride            // 局部精细化的细网格：盒子必须正好等于节点球半径
       : (useSuper
         ? Math.max(
-          OM.superpositionRefExtent(terms) * 1.15,          // 取景基准（与阈值无关，保证常见阈值下盒子稳定）
-          OM.superpositionIsoRadius(terms, iso) * 1.12,     // ★ 还要装得下当前阈值对应的等值面
+          OM.superpositionRefExtent(terms, zc) * 1.15,      // 取景基准（与阈值无关，保证常见阈值下盒子稳定）
+          OM.superpositionIsoRadius(terms, iso, zc) * 1.12, // ★ 还要装得下当前阈值对应的等值面
           //    （阈值越低面越大；少了这一项，低阈值下曲面会被盒子切出平边）
           1.5)
-        : Math.max(OM.isoRadius(n, l, m, mode, iso) * 1.12, 1.2));
+        : Math.max(OM.isoRadius(n, l, m, mode, iso, zc) * 1.12, 1.2));
     nGrid = res;
     gridExtent = extent;
     const NN = nGrid * nGrid * nGrid;      // 节点总数
@@ -408,9 +409,9 @@ window.Orbit3D = (function () {
     const psi2Fast = useSuper
       ? (function () {
           const phases = terms.map((t, i) => i * (relPhase || 0));
-          return function (r, theta, phi) { return OM.densitySuperposition(terms, r, theta, phi, phases); };
+          return function (r, theta, phi) { return OM.densitySuperposition(terms, r, theta, phi, phases, zc); };
         })()
-      : OM.makePsiDensityFast(n, l, m, mode, extent * 1.8);
+      : OM.makePsiDensityFast(n, l, m, mode, extent * 1.8, zc);
     const xs = makeAxisCoords(nGrid, extent, grading || 0);
     gridXs = xs;
 
@@ -633,8 +634,8 @@ window.Orbit3D = (function () {
     // ★ 叠加态用「无干涉参考峰值」Σ|cᵢ|²peakᵢ 作基准，而不是实际扫描峰值：
     //   干涉会让实际峰值高出近 2 倍，若按它取 30%，曲面会远小于单一轨道并碎成几块。
     const peak = (P.terms && P.terms.length)
-      ? OM.superpositionRefPeak(P.terms)
-      : OM.maxDensity(P.n, P.l, P.m, P.mode);
+      ? OM.superpositionRefPeak(P.terms, P.Z)
+      : OM.maxDensity(P.n, P.l, P.m, P.mode, P.Z);
     return (psiCrit === 'psi') ? fraction * fraction * peak : fraction * peak;
   }
 
@@ -669,7 +670,7 @@ window.Orbit3D = (function () {
         // ★ terms / relPhase 必须一起传下去。漏了它们，computeField 会把叠加态当成
         //   单一本征态重算 —— 盒子按单轨道定尺寸（可塌到 1.2 的下限）、内容也不是叠加态。
         //   叠加态"一调阈值体积就变 0"正是这么来的。
-        computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs, P.terms, P.relPhase);
+        computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs, P.terms, P.relPhase, 0, 0, P.Z);
       }
       rebuildSurface(false);   // 仅阈值/着色变化：相机原则上不动
       // ★ 但阈值低到曲面胀出当前取景时就必须拉远，否则曲面被裁。
@@ -871,7 +872,7 @@ window.Orbit3D = (function () {
     //   否则两套网格会在交界处各画一遍 → 重叠、z-fighting、碎三角片。
     //   放在径向节点上也**不行**：节点虽然 |ψ|²=0，但两侧的曲面都贴着它，跨界的单元
     //   里照样含曲面。
-    const gaps = OM.shellGaps(P.n, P.l, P.m, P.mode, iso);
+    const gaps = OM.shellGaps(P.n, P.l, P.m, P.mode, iso, P.Z);
     if (!gaps.length) return null;                             // 只有一层壳 → 无需分层
     const cellCoarse = (2 * gridExtent) / (nGrid - 1);
     // 细网格覆盖到第几层？盒子越大、远处的单元格越粗，所以要权衡：
@@ -936,7 +937,7 @@ window.Orbit3D = (function () {
       n: nGrid, ext: gridExtent, mx: fieldMax, xs: gridXs };
     let soup = null;
     try {
-      computeField(P.n, P.l, P.m, P.mode, plan.res, iso, null, 0, plan.radius, plan.grade);
+      computeField(P.n, P.l, P.m, P.mode, plan.res, iso, null, 0, plan.radius, plan.grade, P.Z);
       soup = extractSurface(iso, plan.radius, true);           // 只取中心在球内的单元
     } finally {
       field = saved.field; gradX = saved.gx; gradY = saved.gy; gradZ = saved.gz;
@@ -1084,8 +1085,8 @@ window.Orbit3D = (function () {
   const FRAME_REF_LEVEL = 0.30;
   function refExtentFor(P) {
     if (!P) return gridExtent;
-    const refAbs = FRAME_REF_LEVEL * OM.maxDensity(P.n, P.l, P.m, P.mode);
-    return Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, refAbs) * 1.12, 1.2);
+    const refAbs = FRAME_REF_LEVEL * OM.maxDensity(P.n, P.l, P.m, P.mode, P.Z);
+    return Math.max(OM.isoRadius(P.n, P.l, P.m, P.mode, refAbs, P.Z) * 1.12, 1.2);
   }
 
   /**
@@ -1102,7 +1103,7 @@ window.Orbit3D = (function () {
     if (!P) return Math.max(gridExtent, 1.5);
     if (P.terms && P.terms.length) {
       // 用"等值面实际外延"而非渐近尾部，否则叠加态会缩成一小团
-      return Math.max(OM.superpositionRefExtent(P.terms) * 1.25, 1.5);
+      return Math.max(OM.superpositionRefExtent(P.terms, P.Z) * 1.25, 1.5);
     }
     return Math.max(refExtentFor(P) * 1.25, 1.5);
   }
@@ -1125,22 +1126,25 @@ window.Orbit3D = (function () {
     // 与 n 无关。所以它不参与下面那套"按阈值算需要多大"的推导 —— 一并跳过，
     // 免得切档时相机按上一个轨道的尺度乱动。
     if (S.viewTarget === 'spherical') return ANGULAR_FRAME_EXTENT;
+    // Z 一并带进下面构造的两个 P 对象 —— 取景尺度随 1/Z 缩，不带就会出现
+    // "换了 Z 相机不动、轨道胀出画面"
+    const Z = S.nuclearCharge || 1;
     const base = S.terms && S.terms.length
-      ? Math.max(OM.superpositionRefExtent(S.terms) * 1.25, 1.5)
-      : frameExtentFor({ n: S.n, l: S.l, m: S.m, mode: S.wavefunction, psiCrit: S.psiCriterion, terms: null });
+      ? Math.max(OM.superpositionRefExtent(S.terms, Z) * 1.25, 1.5)
+      : frameExtentFor({ n: S.n, l: S.l, m: S.m, mode: S.wavefunction, psiCrit: S.psiCriterion, terms: null, Z: Z });
     const levelAbs = levelAbsFor(
-      { n: S.n, l: S.l, m: S.m, mode: S.wavefunction, terms: S.terms },
+      { n: S.n, l: S.l, m: S.m, mode: S.wavefunction, terms: S.terms, Z: Z },
       S.levelFraction, S.psiCriterion);
     const need = frameExtentForLevel(
-      { n: S.n, l: S.l, m: S.m, mode: S.wavefunction, terms: S.terms }, levelAbs);
+      { n: S.n, l: S.l, m: S.m, mode: S.wavefunction, terms: S.terms, Z: Z }, levelAbs);
     return Math.max(base, need);
   }
 
   /** 按"给定绝对阈值"取景的尺度（与 frameExtentFor 同构，只把基准换成实际阈值） */
   function frameExtentForLevel(P, levelAbs) {
     const r = (P.terms && P.terms.length)
-      ? OM.superpositionIsoRadius(P.terms, levelAbs)
-      : OM.isoRadius(P.n, P.l, P.m, P.mode, levelAbs);
+      ? OM.superpositionIsoRadius(P.terms, levelAbs, P.Z)
+      : OM.isoRadius(P.n, P.l, P.m, P.mode, levelAbs, P.Z);
     return Math.max(r * 1.12 * 1.25, 1.5);      // 与 refExtentFor × frameExtentFor 的系数保持一致
   }
 
@@ -1150,18 +1154,21 @@ window.Orbit3D = (function () {
   let surfaceParams = null;            // 当前等值面对应的 (n,l,m,mode)，供重涂/重算时用
   let lastRes = 68;                    // 上次使用的网格分辨率
 
-  function updateSurface(n, l, m, mode, res, levelFraction, colorMode, psiCrit, terms, relPhase) {
+  function updateSurface(n, l, m, mode, res, levelFraction, colorMode, psiCrit, terms, relPhase, Z) {
     currentL = l;
     currentColorMode = colorMode || 'phase';
     lastRes = res;
     surfaceParams = {
       n: n, l: l, m: m, mode: mode, psiCrit: psiCrit || 'psi2',
+      // ★ Z 进 surfaceParams —— 它是"只改着色/阈值"那条复用分支重算时的唯一来源，
+      //   不进的话切 Z 后走复用分支、用旧的 Z 重算，画面就错了。
+      Z: (Z > 0) ? Z : 1,
       terms: (terms && terms.length) ? terms : null,
       relPhase: relPhase || 0,
     };
     // 叠加态时阈值按各分量峰值的加权和为基准；单一态时按解析峰值
     const levelAbs = levelAbsFor(surfaceParams, levelFraction, surfaceParams.psiCrit);
-    computeField(n, l, m, mode, res, levelAbs, surfaceParams.terms, surfaceParams.relPhase);
+    computeField(n, l, m, mode, res, levelAbs, surfaceParams.terms, surfaceParams.relPhase, 0, 0, surfaceParams.Z);
     buildSurface(levelFraction, true);   // 换轨道 → 尺度变了，重新取景
   }
 
@@ -1524,6 +1531,7 @@ window.Orbit3D = (function () {
 
     const S = (window.OrbitApp && window.OrbitApp.getState()) || {};
     const n = S.n, l = S.l, m = S.m, mode = S.wavefunction || 'real';
+    const Zn = S.nuclearCharge || 1;            // 径向节面半径随 1/Z 缩，不带 Z 会画错位置
     if (n == null || l == null) return;
     const R = gridExtent || 10;
 
@@ -1532,7 +1540,7 @@ window.Orbit3D = (function () {
 
     if (type === 'radial') {
       // 径向节面：以核为中心的球壳
-      const zeros = OM.radialZeros(n, l);
+      const zeros = OM.radialZeros(n, l, Zn);
       const seg = 48;
       for (const r of zeros) {
         const geo = new THREE.SphereGeometry(r, seg, 24);

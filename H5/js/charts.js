@@ -72,9 +72,10 @@ window.Charts = (function () {
   //   画出来只是同一条曲线换个纵轴刻度，对"辨析径向节点"这个教学目的没有增量，
   //   故从界面、函数表、配色表、名称表一并移除。
   const RADIAL_FN = {
-    R:  (n, l, r) => OM.radialR(n, l, r),
-    R2: (n, l, r) => OM.radialR2(n, l, r),
-    D:  (n, l, r) => OM.radialDistribution(n, l, r),
+    // Z 作最后一个参数（类氢）—— 径向曲线随 Z 缩为 1/Z，不传就画错
+    R:  (n, l, r, Z) => OM.radialR(n, l, r, Z),
+    R2: (n, l, r, Z) => OM.radialR2(n, l, r, Z),
+    D:  (n, l, r, Z) => OM.radialDistribution(n, l, r, Z),
   };
   const RADIAL_PALETTE = {
     R: [120, 200, 255],
@@ -93,20 +94,20 @@ window.Charts = (function () {
    *   R 的零点与 D 相同（R=0 ⟺ r²R²=0），峰值需自行扫描 |R|
    * 全部由计算层给出，不依赖视觉推断。
    */
-  function computeFeature(target, feature, n, l) {
+  function computeFeature(target, feature, n, l, Z) {
     if (target === 'D') {
-      return feature === 'peak' ? OM.radialPeaks(n, l) : OM.radialZeros(n, l);
+      return feature === 'peak' ? OM.radialPeaks(n, l, Z) : OM.radialZeros(n, l, Z);
     }
-    if (feature === 'zeros') return OM.radialZeros(n, l);
+    if (feature === 'zeros') return OM.radialZeros(n, l, Z);
     // |R| 的局部极大
-    const rMax = OM.rExtent(n, l);
+    const rMax = OM.rExtent(n, l, Z);
     const steps = 1200;
     const h = rMax / steps;
     const out = [];
-    let a = Math.abs(OM.radialR(n, l, 1e-9));
-    let b = Math.abs(OM.radialR(n, l, h));
+    let a = Math.abs(OM.radialR(n, l, 1e-9, Z));
+    let b = Math.abs(OM.radialR(n, l, h, Z));
     for (let i = 2; i <= steps; i++) {
-      const c = Math.abs(OM.radialR(n, l, (rMax * i) / steps));
+      const c = Math.abs(OM.radialR(n, l, (rMax * i) / steps, Z));
       if (b > a && b >= c && b > 1e-12) out.push((rMax * (i - 1)) / steps);
       a = b; b = c;
     }
@@ -121,17 +122,17 @@ window.Charts = (function () {
    *   于是"关了 R 却还留着 R 的峰值线"，很难控制。
    * @returns {Array<{r:number, col:number[]}>}
    */
-  function computeMarks(n, l, whichList) {
+  function computeMarks(n, l, whichList, Z) {
     if (!radialHighlight) return [];
     const t = radialHighlight.target, f = radialHighlight.feature;
     const showR = whichList.indexOf('R') >= 0 || whichList.indexOf('R2') >= 0;
     const showD = whichList.indexOf('D') >= 0;
     const marks = [];
     if ((t === 'R' || t === 'ALL') && showR) {
-      computeFeature('R', f, n, l).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.R }));
+      computeFeature('R', f, n, l, Z).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.R }));
     }
     if ((t === 'D' || t === 'ALL') && showD) {
-      computeFeature('D', f, n, l).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.D }));
+      computeFeature('D', f, n, l, Z).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.D }));
     }
     // 去重：R 与 D 的零点完全相同（D = r²R²），重复画只会叠成一条
     const uniq = [];
@@ -146,18 +147,18 @@ window.Charts = (function () {
     radialHighlight = target ? { target: target, feature: feature } : null;
     if (lastRadialArgs) {
       const a = lastRadialArgs;
-      drawRadial(a.canvas, a.n, a.l, a.whichList);
+      drawRadial(a.canvas, a.n, a.l, a.whichList, a.Z);
     }
   }
 
-  function drawRadial(canvas, n, l, whichList) {
-    lastRadialArgs = { canvas: canvas, n: n, l: l, whichList: whichList.slice() };
+  function drawRadial(canvas, n, l, whichList, Z) {
+    lastRadialArgs = { canvas: canvas, n: n, l: l, whichList: whichList.slice(), Z: Z };
     const { ctx, w, h } = setup(canvas);
     const pad = { l: 46, r: 16, t: 16, b: 34 };
     drawFrame(ctx, w, h, pad);
     const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
 
-    const rEnd = OM.rExtent(n, l) * 1.02;
+    const rEnd = OM.rExtent(n, l, Z) * 1.02;
     const N = 360;
     const curves = whichList.map((key) => {
       const fn = RADIAL_FN[key];
@@ -165,7 +166,7 @@ window.Charts = (function () {
       const pts = [];
       for (let i = 0; i <= N; i++) {
         const r = (rEnd * i) / N;
-        const v = fn(n, l, r);
+        const v = fn(n, l, r, Z);
         pts.push(v);
         if (Math.abs(v) > mx) mx = Math.abs(v);
       }
@@ -220,7 +221,7 @@ window.Charts = (function () {
     });
 
     // 特征标注（峰值 / 零点）—— 辨析 R 与 D 的核心手段（口径见 computeMarks）
-    const marks = computeMarks(n, l, whichList);
+    const marks = computeMarks(n, l, whichList, Z);
     if (marks.length) {
       ctx.save();
       ctx.setLineDash([4, 4]);
@@ -447,8 +448,8 @@ window.Charts = (function () {
   const sectionView = { scale: 1, cu: 0, cv: 0, userAdjusted: false };
 
   /** 截面视窗的半宽（世界单位）：缺省时跟随全范围 E = rExtent × 1.05 */
-  function sectionHalfWidth(n, l) {
-    return (OM.rExtent(n, l) * 1.05) / sectionView.scale;
+  function sectionHalfWidth(n, l, Z) {
+    return (OM.rExtent(n, l, Z) * 1.05) / sectionView.scale;
   }
   // 数值格式化：小的概率密度用科学计数法
   function fmtNum(x) {
@@ -555,7 +556,7 @@ window.Charts = (function () {
   }
 
   // 无填色等高线 + 节面(白线) + 数值标注
-  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane) {
+  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z) {
     ctx.fillStyle = '#0a0f1f';                 // 暗底，突出线条
     ctx.fillRect(0, 0, w, h);
     if (nodalPlane) {                          // 整面为节点面
@@ -593,7 +594,7 @@ window.Charts = (function () {
           const r = Math.hypot(x, y, z);
           const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
           const ph = Math.atan2(y, x);
-          sg[j * G + i] = OM.psiComplex(n, l, m, r, th, ph, 'real').re;   // 含径向+角度符号
+          sg[j * G + i] = OM.psiComplex(n, l, m, r, th, ph, 'real', Z).re;   // 含径向+角度符号
         }
       }
       nodeSegs = marchSquareSegments(sg, G, 0, w, h);
@@ -643,13 +644,13 @@ window.Charts = (function () {
     ctx.restore();
   }
 
-  function drawSection(canvas, n, l, m, mode, plane, sectionMode) {
+  function drawSection(canvas, n, l, m, mode, plane, sectionMode, Z) {
     const { ctx, w, h } = setup(canvas);
     // ★ 计算分辨率随缩放提高：视窗缩到 1/4 后仍用 160² 拉大到画布就是插值糊，
     //   "放大"等于没做。上限 512²（约 26 万次 psiDensity，仍是可接受的开销）。
     const G = Math.max(160, Math.min(512, Math.round(160 * sectionView.scale)));
     // 视窗（半宽 + 中心）；scale = 1 时即原来的 [-E, E]
-    const hu = sectionHalfWidth(n, l);
+    const hu = sectionHalfWidth(n, l, Z);
     const win = { u0: sectionView.cu - hu, v0: sectionView.cv - hu, hu: hu, hv: hu };
     // 平面内坐标 (u,v) → 空间 (x,y,z)
     const uv2xyz = (u, v) => {
@@ -670,7 +671,7 @@ window.Charts = (function () {
         const r = Math.hypot(x, y, z);
         const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
         const ph = Math.atan2(y, x);
-        const dd = OM.psiDensity(n, l, m, r, th, ph, mode);
+        const dd = OM.psiDensity(n, l, m, r, th, ph, mode, Z);
         vals[j * G + i] = dd;
         if (dd > maxV) maxV = dd;
         if (sectionMode === 'phase') {
@@ -687,7 +688,7 @@ window.Charts = (function () {
     if (sectionMode === 'contour') {
       // ★ maxV 是**视窗内**的峰值：放大后颜色映射与 8 层等高线会整体重标定（越放大越亮）。
       //   这是有意选择 —— 放大看暗部（外层壳、概率尾巴）正是这个功能的目的。
-      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane);
+      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z);
       drawSectionFrame(ctx, w, h, plane, win);
       return;
     }
@@ -768,6 +769,6 @@ window.Charts = (function () {
     /** 截面视图控制（缩放 / 平移 / 复位），由 main.js 的事件绑定驱动 */
     zoomSection, panSection, resetSectionView, sectionState, sectionHalfWidth,
     /** 调试/测试：给定曲线显隐时实际会画的标线（只读，不改变状态） */
-    _marksDebug: (n, l, whichList) => computeMarks(n, l, whichList),
+    _marksDebug: (n, l, whichList, Z) => computeMarks(n, l, whichList, Z),
   };
 })();

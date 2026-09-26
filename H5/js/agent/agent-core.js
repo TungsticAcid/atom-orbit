@@ -89,7 +89,9 @@ window.AgentCore = (function () {
       '· 不要把公式拆到多行；不要用 \\( \\) 或 \\[ \\]。',
       '',
       '【常用动作速查】（完整清单与参数说明可用 listSceneActions 拉取）',
-      '量子数  setQuantumNumbers{n,l,m} ｜ sweepQuantumNumber{axis,from,to}',
+      '原子    setNuclearCharge{Z:1|2|3}（类氢：1 氢 / 2 氦离子 He⁺ / 3 锂离子 Li²⁺。'
+        + '角向部分与 Z 无关，换 Z 只把径向与能级按 r→r/Z、E∝Z² 缩放；**不退出叠加态**）',
+      '量子数  setQuantumNumbers{n,l,m}（会**自动退出叠加态**，回到纯态） ｜ sweepQuantumNumber{axis,from,to}',
       '模式    setWavefunctionMode{mode:real|complex} ｜ setRenderMode{mode:points|surface} ｜ setColorMode{mode:orbital|phase}',
       '等值面  setPsiCriterion{criterion:psi|psi2} ｜ setIsosurfaceLevel{fraction} ｜ animateIsosurfaceLevel{from,to}',
       '图表    showRadial{which:[R,R2,D]} ｜ highlightRadialFeature{target:R|D,feature:peak|zeros}',
