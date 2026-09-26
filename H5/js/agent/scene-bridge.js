@@ -807,9 +807,14 @@ window.SceneBridge = (function () {
     const S = () => (window.OrbitApp ? window.OrbitApp.getState() : {});
     switch (name) {
       case 'setNuclearCharge': {
-        const v = clampInt(p.Z, 1, 3);
-        return (v == null) ? { err: 'Z 应为 1–3 的整数（1 氢 / 2 氦离子 / 3 锂离子）' }
-                           : { params: { Z: v } };
+        // ★ Z 是**枚举**（1 氢 / 2 氦离子 / 3 锂离子），不是连续量 —— 这里必须拒绝而不是钳制：
+        //   钳制会变成"静默改请求"（模型说 Z=9、画面给 Li²⁺），而它很可能照旧按 9 去讲。
+        //   半径、阈值这类连续量才适合钳制（模型说 99% → 给到上限 80% 是它想要的意思）。
+        const z = Number(p.Z);
+        if (!Number.isInteger(z) || z < 1 || z > 3) {
+          return { err: 'Z 应为 1–3 的整数（1 氢 / 2 氦离子 He⁺ / 3 锂离子 Li²⁺）' };
+        }
+        return { params: { Z: z } };
       }
       case 'setQuantumNumbers': {
         const s = S();
@@ -960,7 +965,10 @@ window.SceneBridge = (function () {
         return { params: { key: String(p.key) } };
       }
       case 'setAutoRotate':
-        return { params: { on: !!p.on } };
+        // 布尔也按枚举处理：传 'x' 这类既非 true 也非 false 的值时，`!!p.on` 会静默当成 true，
+        // 模型以为"关了自动旋转"而画面还在转。
+        if (typeof p.on !== 'boolean') return { err: 'on 应为 true 或 false' };
+        return { params: { on: p.on } };
       case 'resetCamera':
       case 'resetSectionView':
         return { params: {} };
@@ -1036,8 +1044,16 @@ window.SceneBridge = (function () {
       case 'focusChart':
         window.dispatchEvent(new CustomEvent('orbit:chart-focus', { detail: p }));
         return { ok: true };
-      case 'setChartTerm':
+      case 'setChartTerm': {
+        // ★ 先给出**具体**的错误，别让它落到 applyAction 那句笼统的"参数无效或目标不存在" ——
+        //   模型看到那句话只会反复重试同一个调用，而真正的原因是"现在根本没有叠加态"。
+        const S = window.OrbitApp.getState();
+        if (!S.terms || !S.terms.length) {
+          return { ok: false, error: '当前不是叠加态，2D 图表的分量选择器不存在 —— '
+            + '先用 loadPreset 或 setSuperposition 建立叠加态' };
+        }
         return A.applyAction({ action: 'setChartTerm', params: { term: p.term } });
+      }
 
       // ---- 叠加态（辅助功能）----
       case 'loadPreset': {
@@ -1511,6 +1527,11 @@ window.SceneBridge = (function () {
 
   return {
     applySequence, applyInstant, stop, listActions, registerHooks,
+    // ★ 参数校验（纯函数）也导出：模型走的是"先 validate 再 applyInstant"，而
+    //   applyInstant 本身**不校验**（它是演示脚本用的快速通道，参数由脚本作者保证）。
+    //   审计脚本要逐条验证"非法参数被拒、错误可读"就必须能单独调用它；
+    //   放在这里比让审计去构造一整条演示队列要直接得多。
+    validate,
     onProgress, next, prev, autoPlay, replay, state, setManual,
     // 队列的只读 / 可寻址接口（reviseDemo 工具与感知层用）
     queueInfo, getStep, replaceStep, insertAfter, removeStep, jumpTo,

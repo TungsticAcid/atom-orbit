@@ -95,6 +95,12 @@ window.AgentCore = (function () {
       '模式    setWavefunctionMode{mode:real|complex}（real=波函数**实数解**，用实轨道名标记如 p_x；'
         + 'complex=**复数解**，用 m 标记。切换时会顺带把三维着色重置为该档默认）'
         + ' ｜ setRenderMode{mode:points|surface}（points 即"电子云"） ｜ setColorMode{mode:orbital|phase}',
+      '        ★ **球谐档（setViewTarget{spherical}）没有叠加态** —— 叠加态说的是完整波函数',
+      '          ψ = Σcᵢψᵢ，而球谐曲面画的是角度部分 Y，渲染时各分量的 n 会被整块丢弃。',
+      '          切到这一档会自动回到单一本征态并收起量子态入口；切回来**不会**自动恢复。',
+      '        ★ **2D 图与叠加态的关系**：截面密度图能直接画叠加态；径向分布与 Θ/Φ 卡画不了',
+      '          （Σcᵢψᵢ 未必能因子化出角度部分），它们只显示某一个分量 —— 讲的时候要交代清楚，',
+      '          否则学生会把分量图当成叠加态本身。用 setChartTerm 切换它们画哪一份。',
       '等值面  setPsiCriterion{criterion:psi|psi2} ｜ setIsosurfaceLevel{fraction} ｜ animateIsosurfaceLevel{from,to}',
       '图表    showRadial{which:[R,R2,D]} ｜ highlightRadialFeature{target:R|D,feature:peak|zeros}',
       '        setViewTarget{target:spherical|wave}（三维里看球谐曲面 Y，还是完整波函数 ψ）',
