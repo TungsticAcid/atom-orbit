@@ -47,7 +47,8 @@
     zSlider: $('#zSlider'), zInput: $('#zInput'),
     nSlider: $('#nSlider'), nInput: $('#nInput'),
     lSlider: $('#lSlider'), lInput: $('#lInput'),
-    mSlider: $('#mSlider'), mInput: $('#mInput'),
+    mSlider: $('#mSlider'), mInput: $('#mInput'), mSet: $('#mSet'),
+    realOrbSet: $('#realOrbSet'), realOrbSeg: $('#realOrbSeg'), realOrbHint: $('#realOrbHint'),
     levelSlider: $('#levelSlider'), levelInput: $('#levelInput'), levelSet: $('#levelSet'), psiHint: $('#psiHint'),
     pointCountSlider: $('#pointCountSlider'), pointCountInput: $('#pointCountInput'), pointSet: $('#pointSet'),
     thetaPhiChart: $('#thetaPhiChart'),
@@ -104,6 +105,44 @@
   }
 
   /**
+   * 实轨道选择器：按当前 l 列出该支壳层的全部实轨道。
+   *
+   * ★ 为什么实档不用 m 滑块：m 是**复**球谐 Y_l^m 的本征值指标，而实数解由 ±m 两个
+   *   复解线性组合而来，**不再是 L̂z 的本征函数**（教材原话）。用它给实轨道当名字，
+   *   等于把一个它不再拥有的量子数贴上去。所以实档直接选"哪个实轨道"，按钮上的字
+   *   就是它的名字（p_x、d_{xy}、f_{z³}…）；g、h 没有公认名，改用直角坐标多项式。
+   *
+   * 顺序取化学惯例 m = 0, +1, −1, +2, −2, …（cos 型在前、sin 型在后）。
+   * 只在 l 变化时重建按钮，其余只同步选中态 —— 重建会打断点击反馈与键盘焦点。
+   */
+  let realOrbL = -1;
+  function syncRealOrbitButtons() {
+    const l = state.l;
+    if (l !== realOrbL) {
+      realOrbL = l;
+      const order = [0];
+      for (let mm = 1; mm <= l; mm++) { order.push(mm, -mm); }
+      els.realOrbSeg.innerHTML = order.map(function (mm) {
+        const named = !!Formula.realOrbitalName(l, mm);
+        // ★ 用 HTML 版：l≥4 的标签是直角坐标多项式（含 x^{4} 这类记号），
+        //   直接塞纯文本会原样显示成 "x^{4}"。
+        return '<button class="seg-btn" data-m="' + mm + '"' +
+          (named ? '' : ' title="该支壳层没有公认的惯用名，这里用角向部分的直角坐标多项式标记"') +
+          '>' + Formula.realOrbitalLabelHtml(l, mm) + '</button>';
+      }).join('');
+      // 没有惯用名的支壳层给一句说明，否则学生会以为程序忘了起名
+      els.realOrbHint.textContent = (l >= 4)
+        ? '这一支壳层没有公认的惯用名（高角动量轨道在文献里只按对称性分类），'
+          + '故用角向部分的直角坐标多项式标记。'
+        : '';
+    }
+    const btns = els.realOrbSeg.querySelectorAll('.seg-btn');
+    for (let i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', +btns[i].dataset.m === state.m);
+    }
+  }
+
+  /**
    * 数字框键入提交：解析 → 类型/范围校验 → 合法则写回滑块并即时重算；
    * 非法（空、非整数、越界）只标红提示，不改变当前状态。
    */
@@ -141,6 +180,8 @@
     state.sectionMode = activeValue('#phaseSeg', 'data-mode') || 'intensity';
     state.angWhich = activeValue('#yCritSeg', 'data-k') || 'Y';
     state.radial = Array.from(document.querySelectorAll('#radialSeg .seg-btn.active')).map((b) => b.getAttribute('data-k'));
+    // 实轨道按钮要与 state.m 保持一致（智能体改 m、拖滑块、点按钮三条路都会走到这里）
+    syncRealOrbitButtons();
   }
 
   function updateOutputs() {
@@ -366,6 +407,13 @@
     document.getElementById('colorGroup').style.display  = sph ? 'none' : '';
     els.levelSet.style.display = (!sph && state.renderMode === 'surface') ? '' : 'none';
     els.pointSet.style.display = (!sph && state.renderMode === 'points') ? '' : 'none';
+    // ★ 「磁量子数 m」与「实轨道」**互斥显示**：m 是复解的本征值指标，实解不用它
+    //   （理由见 syncRealOrbitButtons 的说明）。两档各留一个，避免出现"两个控件说的是
+    //   同一件事、却可能对不上"的局面。
+    const realMode = (state.mode === 'real');
+    els.mSet.style.display = realMode ? 'none' : '';
+    els.realOrbSet.style.display = realMode ? '' : 'none';
+    if (realMode) syncRealOrbitButtons();
   }
 
   function updateCharts() {
@@ -502,14 +550,22 @@
       els.modeBadge.textContent = '叠加态';
       return;
     }
-    // 右上角轨道标签：n + 支壳层字母 + m 下标（此前漏了 m），实函数附化学惯用名
+    // 右上角轨道标签。
+    // ★ 实档**不写 m**：m 是复球谐 Y_l^m 的本征值指标，而实解由 ±m 组合而来、
+    //   不再是 L̂z 的本征函数 —— 把它贴在实解上等于用一个它已不拥有的量子数命名。
+    //   实档直接显示该实轨道的名字（3p_x 显示成 "3p" + 下标 x）；l≥4 没有惯用名，
+    //   显示直角坐标多项式。复档保留 m 下标（在那里 m 名副其实）。
     const sub = OM.SUBSHELL[Math.min(state.l, OM.SUBSHELL.length - 1)];
-    // ★ 用 HTML 版：realName 会经 innerHTML 插入右上角标签，纯文本版会把下标原样
-    //   显示成 "p_z"（d 轨道更扎眼 —— 它内部是 LaTeX 花括号语法，显示成 "d_{xz}"）
-    const realName = (state.mode === 'real') ? Formula.realOrbitalNameHtml(state.l, state.m) : '';
-    els.orbitTitle.innerHTML =
-      state.n + sub + '<sub>' + f.mLabel + '</sub>' +
-      (realName ? '<span class="orbit-real">' + realName + '</span>' : '');
+    if (state.mode === 'real') {
+      // 有惯用名时名字里已含支壳层字母（p_z、d_{xy}），前缀只写 n，得 3p_z；
+      // l≥4 的多项式不含字母，才需要 n + 支壳层字母，得 "6h 3xyz³−xyzr²"。
+      const named = !!Formula.realOrbitalName(state.l, state.m);
+      els.orbitTitle.innerHTML = state.n +
+        (named ? '' : sub + ' ') +
+        '<span class="orbit-real">' + Formula.realOrbitalLabelHtml(state.l, state.m) + '</span>';
+    } else {
+      els.orbitTitle.innerHTML = state.n + sub + '<sub>' + f.mLabel + '</sub>';
+    }
     els.modeBadge.textContent = f.modeName;
   }
 
@@ -532,6 +588,17 @@
         syncRanges();
         scheduleUpdate();
       });
+    });
+    // 实轨道按钮组：实档下取代 m 滑块。
+    // ★ 不写进 state 里另立一份"实轨道"真值 —— 它仍然是 m，只是换了个呈现方式。
+    //   另立一份就会出现两套状态互相追着改的经典问题（谁是真值、谁该跟谁走）。
+    els.realOrbSeg.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      exitSuperposition();               // 与拖 m 滑块同一意图：要看单一本征态
+      els.mSlider.value = btn.dataset.m;
+      readFromControls();
+      recompute();
     });
     // 量子数数字框：键入即校验；回车提交；失焦时把非法输入还原为当前真值
     const numBind = (el, which) => {

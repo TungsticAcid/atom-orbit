@@ -447,11 +447,16 @@ window.Formula = (function () {
     // 复解的第三下标是 m 本身（m 是复球谐的本征值指标，在这里有意义）；
     // 实解换成该支壳层的**实轨道名**（ψ_{3p_x}）—— 这正是教材 ψ_{nlf(r)} 的写法，
     // 也让"实解不该用 m 标记"这件事在记号上直接看得出来。
+    // ★ l≥4 没有惯用名（g、h 在文献里只按对称性分类），此时用教材的 f(r) 记号本身
+    //   作第三下标，而不是退回 m —— 退回 m 等于把复解的指标又贴回实解上。
     const realName = (mode === 'real') ? realOrbitalName(l, m) : '';
     const useName = (mode === 'real' && realName);
-    const psiTag = useName ? '\\psi_{' + n + realName + '}'
-                           : '\\psi_{' + n + ',' + l + ',' + m + '}';
-    const yTag = useName ? 'Y_{' + realName + '}' : 'Y_{' + l + ',' + m + '}';
+    const useFR = (mode === 'real' && !realName);
+    const psiTag = useName ? ('\\psi_{' + n + realName + '}')
+      : (useFR ? ('\\psi_{' + n + ',' + l + ',f(r)}')
+               : ('\\psi_{' + n + ',' + l + ',' + m + '}'));
+    const yTag = useName ? ('Y_{' + realName + '}')
+      : (useFR ? ('Y_{' + l + ',f(r)}') : ('Y_{' + l + ',' + m + '}'));
 
     const rows = [];
 
@@ -605,19 +610,179 @@ window.Formula = (function () {
   }
 
   /**
-   * 实轨道的化学惯用名（d_z²、d_xz…），仅 l ≤ 2 有公认命名。
+   * 实轨道的化学惯用名（d_z²、d_xz…）。
+   *
+   * ★ 覆盖范围是**有公认命名**的那三档，再多就没有了：
+   *     l=0  s
+   *     l=1  p_z / p_x / p_y
+   *     l=2  d_{z²} / d_{xz} / d_{yz} / d_{x²−y²} / d_{xy}
+   *     l=3  f_{z³} / f_{xz²} / f_{yz²} / f_{z(x²−y²)} / f_{xyz} / f_{x(x²−3y²)} / f_{y(3x²−y²)}
+   *          （f 这七个是**惯例**，各书用字略有出入，这一套最常见）
+   *     l≥4  **没有公认命名** —— g、h 在文献里只按对称性分类（立方谐函数），
+   *          不存在 g_{xy} 这样的通名。所以这里返回空串，由调用方改用直角坐标多项式
+   *          （realOrbitalCartesian）作标记，见那里的说明。
+   *
    * 与 angularReal 的组合约定一致：m>0 → cos(|m|φ) 型，m<0 → sin(|m|φ) 型。
    */
   function realOrbitalName(l, m) {
-    if (l === 0) return 's';    if (l === 1) return ['p_z', 'p_x', 'p_y'][m === 0 ? 0 : (m > 0 ? 1 : 2)];
+    if (l === 0) return 's';
+    if (l === 1) return ['p_z', 'p_x', 'p_y'][m === 0 ? 0 : (m > 0 ? 1 : 2)];
     if (l === 2) {
       return { '0': 'd_{z^2}', '1': 'd_{xz}', '-1': 'd_{yz}', '2': 'd_{x^2-y^2}', '-2': 'd_{xy}' }[String(m)] || '';
+    }
+    if (l === 3) {
+      return {
+        '0': 'f_{z^3}', '1': 'f_{xz^2}', '-1': 'f_{yz^2}',
+        '2': 'f_{z(x^2-y^2)}', '-2': 'f_{xyz}',
+        '3': 'f_{x(x^2-3y^2)}', '-3': 'f_{y(3x^2-y^2)}',
+      }[String(m)] || '';
     }
     return '';
   }
 
+  // ---- 实轨道的直角坐标多项式（无惯用名时的标记法） ---------------------------
+  //
+  // ★ 依据就是教材自己的写法：实球谐记为 Y_{lf(r)}，而 Y_{lf(r)} = f(x,y,z)/r^l，
+  //   其中 f 是关于坐标 x、y、z 的**谐多项式**。于是"这个轨道叫什么"等价于"f 是什么"，
+  //   而 f 对任何 l 都存在、且唯一确定 —— g、h 虽无通名，却有 f。本程序据此给 l≥4
+  //   起标记（如 4g 的某个轨道记作 `35z⁴−30z²r²+3r⁴`），既不借 m 下标，也不生造名字。
+  //
+  // ★ 单子式保留 r² 作**符号**而不展开：d_{z²} 因此写成 `3z²−r²`（与教材一字不差），
+  //   而不是展开后的 `2z²−x²−y²`；g、h 的四次、五次式也才短得下来。
+  //
+  // 递推依据：r^l·sinᵃθ·cosᵖθ·{cos,sin}(aφ) = r^(l−a−p)·(r sinθ)ᵃ·(r cosθ)ᵖ·{cos,sin}(aφ)，
+  //   而 (r sinθ)ᵃ·{cos,sin}(aφ) = {Re, Im}[(x+iy)ᵃ]，r² = x²+y²+z²。
+  //   l−a−p 恒为偶数（P_l^m 各项同奇偶），故 r^(l−a−p) 也是多项式，结果仍是多项式。
+
+  /** 稀疏三元多项式：键 'i,j,k,q' 表示 xⁱyʲzᵏ·(r²)^q */
+  function polyMul(A, B) {
+    const out = new Map();
+    A.forEach((ca, ka) => {
+      const a = ka.split(',').map(Number);
+      B.forEach((cb, kb) => {
+        const b = kb.split(',').map(Number);
+        const key = (a[0] + b[0]) + ',' + (a[1] + b[1]) + ',' + (a[2] + b[2]) + ',' + (a[3] + b[3]);
+        out.set(key, (out.get(key) || 0) + ca * cb);
+      });
+    });
+    return out;
+  }
+  function polyAdd(A, B, s) {
+    const out = new Map(A);
+    B.forEach((c, k) => out.set(k, (out.get(k) || 0) + s * c));
+    return out;
+  }
+  function polyPow(base, n) {
+    let r = new Map([['0,0,0,0', 1]]);
+    for (let i = 0; i < n; i++) r = polyMul(r, base);
+    return r;
+  }
+  const P_X = new Map([['1,0,0,0', 1]]), P_Y = new Map([['0,1,0,0', 1]]), P_Z = new Map([['0,0,1,0', 1]]);
+  /** r^(2q) —— 保留成单个符号，不展开成 (x²+y²+z²)^q */
+  const r2Pow = (q) => new Map([[('0,0,0,' + q), 1]]);
+  /** (x+iy)ᵃ 的实部 / 虚部 —— 即 ρᵃcos(aφ) 与 ρᵃsin(aφ) */
+  function rhoPow(a, isSin) {
+    let out = new Map();
+    for (let k = isSin ? 1 : 0; k <= a; k += 2) {
+      // ★ 两个坑，都踩过：
+      //   ① x^{a−k} 与 y^k 是**相乘**（同一个单项式），不是相加 —— 写成 polyAdd 会得到
+      //      x+y 这种完全无关的式子，而且因为项数看着对，很容易以为算对了。
+      //   ② i^k 的符号：k 偶数时为 (−1)^{k/2}（k=2 是 −1，不是 +1），k 奇数时为
+      //      (−1)^{(k−1)/2}。原先写成"偶数就 +1"，在 k ≡ 2 (mod 4) 时符号反了 ——
+      //      于是 (x+iy)⁴ 的实部会算成 x⁴+6x²y²+y⁴，与正确的 x⁴−6x²y²+y⁴ 差在中间项。
+      const half = isSin ? (k - 1) / 2 : k / 2;
+      const coef = binom(a, k) * ((half % 2 === 0) ? 1 : -1);
+      const t = polyMul(polyPow(P_X, a - k), polyPow(P_Y, k));
+      t.forEach((c, key) => out.set(key, (out.get(key) || 0) + c * coef));
+    }
+    return out;
+  }
+
+  /** 实轨道的直角坐标多项式 f（Y_{l,f} = f/r^l）的 LaTeX，不出现 m */
+  function realOrbitalCartesian(l, m) {
+    const a = Math.abs(m);
+    let c = legendreCoeffs(l, m);
+    if (a % 2 === 1) c = c.map((v) => -v);                  // 去掉 Condon–Shortley
+    const base = (a === 0) ? new Map([['0,0,0,0', 1]]) : rhoPow(a, m < 0);
+    let acc = new Map();
+    for (let p = 0; p < c.length; p++) {
+      if (Math.abs(c[p]) < 1e-12) continue;
+      const q = (l - a - p) / 2;
+      if (q < 0 || Math.abs(q - Math.round(q)) > 1e-9) continue;
+      acc = polyAdd(acc, polyMul(polyMul(r2Pow(Math.round(q)), polyPow(P_Z, p)), base), c[p]);
+    }
+    // 系数清成互素整数（全是二进小数，toFraction 精确）
+    let L = 1;
+    acc.forEach((v) => { if (Math.abs(v) > 1e-12) { const d = toFraction(v).den; L = L / gcd(L, d) * d; } });
+    const ints = new Map();
+    let G = 0;
+    acc.forEach((v, k) => {
+      const iv = Math.abs(v) < 1e-12 ? 0 : Math.round(toFraction(v).num * (L / toFraction(v).den));
+      if (iv) { ints.set(k, iv); G = gcd(Math.abs(iv), G || Math.abs(iv)); }
+    });
+    if (!G) return '1';
+    // ★ 提出**公因式**（各单项式指数的最小值）。不提取的话 h 轨道的标签会是
+    //   `27x^{2}yz^{2} - 9y^{3}z^{2} - 3x^{2}yr^{2} + y^{3}r^{2}` 这种一长串，
+    //   按钮排出来没法看；提出 y 之后是 `y(27x²z²−9y²z²−3x²r²+y²r²)`，短了一半，
+    //   也更接近它作为"某个球谐的角向部分"的本来面目。
+    const keys = [...ints.keys()];
+    const pow = keys.map((k) => k.split(',').map(Number));
+    const fac = [0, 1, 2, 3].map((d) => Math.min.apply(null, pow.map((p) => p[d])));
+    const mono = (p) => (p[0] ? (p[0] === 1 ? 'x' : 'x^{' + p[0] + '}') : '') +
+                        (p[1] ? (p[1] === 1 ? 'y' : 'y^{' + p[1] + '}') : '') +
+                        (p[2] ? (p[2] === 1 ? 'z' : 'z^{' + p[2] + '}') : '') +
+                        (p[3] ? (p[3] === 1 ? 'r^{2}' : 'r^{' + (2 * p[3]) + '}') : '');
+    const order = (A, B) => (B[0][2] - A[0][2]) || (B[0][3] - A[0][3]) ||
+                            (B[0][0] - A[0][0]) || (B[0][1] - A[0][1]);
+    const renderInner = (list) => {
+      list.sort(order);
+      const parts = [];
+      list.forEach(([p, v]) => {
+        const m2 = [p[0] - fac[0], p[1] - fac[1], p[2] - fac[2], p[3] - fac[3]];
+        let mo = mono(m2);
+        const abs = Math.abs(v);
+        let sc;
+        if (!mo) sc = String(abs);                        // 常数项：只写系数
+        else sc = ((abs === 1) ? '' : String(abs)) + mo;  // 带变量：系数为 1 时省略
+        parts.push({ sign: v < 0 ? '-' : '+', s: sc });
+      });
+      let out = '';
+      parts.forEach((pt, i) => {
+        out += (i === 0) ? (pt.sign === '-' ? '-' : '') + pt.s : (pt.sign === '-' ? ' - ' : ' + ') + pt.s;
+      });
+      return out;
+    };
+    const list = keys.map((k) => [k.split(',').map(Number), ints.get(k) / G]);
+    const inner = renderInner(list);
+    const fm = mono(fac);
+    if (!fm) return inner;
+    if (inner === '1') return fm;                          // 提出公因式后括号里只剩 1
+    return / [+\-] /.test(inner) ? (fm + '\\left(' + inner + '\\right)') : (fm + inner);
+  }
+
   /**
-   * 实轨道惯用名的 **HTML 版**（真下标）：`p_z` → `p<sub>z</sub>`、
+   * 实轨道的**显示名**：有惯用名就用惯用名（p_x / d_{xy} / f_{z^3}），
+   * 没有（l≥4）就退到直角坐标多项式。两条路都**不含 m** —— 这是"实解不该用 m 标记"
+   * 的兜底：宁可用一个长一点的多项式，也不把复解的本征值指标贴到实解上。
+   */
+  function realOrbitalLabel(l, m) {
+    return realOrbitalName(l, m) || realOrbitalCartesian(l, m);
+  }
+
+  /**
+   * 反向查：给定支壳层 l 与实轨道惯用名，返回对应的 m；查不到返回 null。
+   * 供智能体动作（按名字指定实轨道）与自检脚本使用；正向映射在 realOrbitalName。
+   */
+  function realOrbitalM(l, name) {
+    if (!name) return null;
+    const key = String(name).replace(/\s+/g, '');
+    for (let m = -l; m <= l; m++) {
+      if (realOrbitalName(l, m) === key) return m;
+    }
+    return null;
+  }
+
+  /** 实轨道惯用名的 **HTML 版**（真下标）：`p_z` → `p<sub>z</sub>`、
    * `d_{x^2-y^2}` → `d<sub>x²-y²</sub>`。
    *
    * ★ 必须与 realOrbitalName 分开：那个用于**纯文本**场合（公式区标题走 textContent，
@@ -632,6 +797,27 @@ window.Formula = (function () {
         return '<sub>' + inner.replace(/\^2/g, '²') + '</sub>';
       })
       .replace(/_([a-z])/g, function (mm, c) { return '<sub>' + c + '</sub>'; });
+  }
+
+  /**
+   * 实轨道**显示名**的 HTML 版（供 innerHTML 用：右上角轨道标签、实轨道按钮）。
+   * 有惯用名走 realOrbitalNameHtml（p_z → p<sub>z</sub>）；
+   * 没有（l≥4）则把直角坐标多项式的 `^{n}` 转成 <sup>n</sup>。
+   */
+  function realOrbitalLabelHtml(l, m) {
+    if (realOrbitalName(l, m)) return realOrbitalNameHtml(l, m);
+    return realOrbitalCartesian(l, m)
+      .replace(/\\left\(/g, '(').replace(/\\right\)/g, ')')
+      .replace(/\^\{(\d+)\}/g, '<sup>$1</sup>');
+  }
+
+  /**
+   * 实轨道显示名的**纯文本**版（不给 HTML 用的场合，如 console 与标题字符串）。
+   */
+  function realOrbitalLabelPlain(l, m) {
+    return realOrbitalLabelHtml(l, m)
+      .replace(/<sup>([^<]*)<\/sup>/g, '$1')
+      .replace(/<sub>([^<]*)<\/sub>/g, '$1');
   }
 
   /** 针对常见情况给出教育性解说 */
@@ -658,8 +844,26 @@ window.Formula = (function () {
               : (m < 0 ? 'sin(' + am + 'φ) 型：瓣与同 |m| 的 cos(' + am + 'φ) 型绕 z 轴相差 '
                   + (90 / am) + '°。'
                        : 'm=0 型：沿 z 轴的"橄榄"形。'));
-    return '径向节点 ' + radialNodes + ' 个、角度节面 ' + l + ' 个；' + orient;
+    // ★ 命名这件事要主动交代，学生问过（"4f 的七个有各自的名字吗？g、h 呢？"）：
+    //   p、d 有公认名，f 的七个是惯例用法，g、h 没有通名。界面上给不出名字时，
+    //   与其默默写个 m，不如把"为什么没有"和"改用什么标记"一起说清楚。
+    let naming = '';
+    if (mode === 'real') {
+      if (l === 3) naming = '（f 这七个名是惯例用法，各书用字略有出入。）';
+      else if (l >= 4) {
+        naming = '（' + sub + ' 支壳层没有公认的通名 —— 高角动量轨道在文献里只按对称性分类。'
+          + '故这里按教材 Y_{lf(r)} 的写法，把角向部分记作 f(r) = '
+          + realOrbitalCartesian(l, m) + '，Y = f(r)/r^' + l + '。）';
+      }
+    }
+    return '径向节点 ' + radialNodes + ' 个、角度节面 ' + l + ' 个；' + orient + naming;
   }
 
-  return { buildPsi, buildSuperposition, legendreCoeffs, laguerreCoeffs, realOrbitalName, realOrbitalNameHtml };
+  return {
+    buildPsi, buildSuperposition, legendreCoeffs, laguerreCoeffs,
+    realOrbitalName, realOrbitalNameHtml, realOrbitalLabel, realOrbitalLabelHtml,
+    realOrbitalCartesian, realOrbitalM, realOrbitalLabelPlain,
+    /** 把实数写成精确闭式（叠加态系数用），供自检脚本调用 */
+    exactTex, plainName,
+  };
 })();

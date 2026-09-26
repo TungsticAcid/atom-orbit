@@ -126,8 +126,13 @@ window.Perception = (function () {
         nuclearCharge: s.nuclearCharge,
         n: s.n, l: s.l, m: s.m,
         name: '' + s.n + sub,
-        chemName: (s.wavefunction === 'real' && window.Formula && window.Formula.realOrbitalName)
-          ? window.Formula.realOrbitalName(s.l, s.m) : '',
+        // ★ 实数解的**名字**（p_x / d_{xy} / f_{z³}…）。l≥4 没有公认惯用名，此时
+        //   realOrbitalLabel 会给出角向部分的直角坐标多项式 —— 总之不退回 m：
+        //   m 是复球谐的本征值指标，实解不是 L̂z 的本征函数（教材原话），
+        //   拿它给实解命名会把一个它不再拥有的量子数写进模型看到的状态里。
+        //   m 字段本身仍保留（动作 setQuantumNumbers 要用，且它是渲染的真值来源）。
+        chemName: (s.wavefunction === 'real' && window.Formula && window.Formula.realOrbitalLabel)
+          ? window.Formula.realOrbitalLabel(s.l, s.m) : '',
       },
       mode: {
         // 三维里正在看哪一层：'spherical' 球谐曲面（角度部分）| 'wave' 完整波函数

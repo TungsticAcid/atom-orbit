@@ -62,10 +62,22 @@
             <input type="number" id="lInput" class="num-val" min="0" max="2" step="1" value="1" /></div>
           <input type="range" id="lSlider" min="0" max="2" step="1" value="1" />
         </div>
-        <div class="set">
+        <div class="set" id="mSet">
           <div class="row"><label for="mInput">磁量子数 m</label>
             <input type="number" id="mInput" class="num-val" min="-1" max="1" step="1" value="0" /></div>
           <input type="range" id="mSlider" min="-1" max="1" step="1" value="0" />
+        </div>
+
+        <!-- ★ 实轨道选择器：只在「波函数实数解」档出现，取代上面的 m 滑块（见 main.js
+             的 syncRealOrbitButtons）。依据是 m 的归属：m 是**复**球谐 Y_l^m 的本征值
+             指标，而实数解由 ±m 两个复解线性组合而来，**不再是 L̂z 的本征函数** ——
+             把 m 当作实解的名字，等于把一个它不再拥有的量子数贴上去。
+             有惯用名的支壳层直接用名字（p_x、d_{xy}、f_{z³}…）；g、h 没有公认名，
+             程序改用直角坐标多项式标记（见 formula.js 的 realOrbitalCartesian）。 -->
+        <div class="set" id="realOrbSet" style="display:none">
+          <div class="divider"><span>实轨道</span></div>
+          <div class="seg wrap" id="realOrbSeg"></div>
+          <div class="hint" id="realOrbHint"></div>
         </div>
 
         <div class="divider"><span>视图对象</span></div>

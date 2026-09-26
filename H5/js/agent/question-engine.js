@@ -159,18 +159,22 @@ window.QuestionEngine = (function () {
           presetView: { n: 1, l: 0, m: 0, radial: ['R', 'D'] } });
     },
 
-    /** 角节面几何（锥面 vs 平面） */
+    /** 角度节面几何（锥面 vs 平面） */
     angularGeometry(pick) {
       const { l, m } = pick;
       const a = OM().angularNodes(l, Math.abs(m), 'real');
       const nCones = a.cones.length, nPlanes = a.planes.length;
       const shape = (nCones && nPlanes) ? (nCones + ' 个锥面 + ' + nPlanes + ' 个平面')
         : (nCones ? nCones + ' 个锥面' : nPlanes + ' 个平面');
-      const stem = `轨道 **${subOf(pick.n, l)}**（m=${m} 的实函数）的角节面是什么形状？`;
+      // ★ 实轨道用**名字**指代，不写 m —— m 是复球谐的本征值指标，实解不是 L̂z 的
+      //   本征函数，拿它当实轨道的代号等于贴上一个它不再拥有的量子数。
+      const nm = (window.Formula && window.Formula.realOrbitalLabelPlain)
+        ? window.Formula.realOrbitalLabelPlain(l, m) : (l + ',' + m);
+      const stem = `实轨道 **${pick.n}${nm}** 的角度节面是什么形状？`;
       return assemble(stem, shape,
-        [nPlanes + ' 个锥面', nCones + ' 个平面', (nCones + nPlanes) + ' 个锥面', '没有角节面'],
+        [nPlanes + ' 个锥面', nCones + ' 个平面', (nCones + nPlanes) + ' 个锥面', '没有角度节面'],
         `由 math.js 计算：该轨道有 **${shape}**。\n` +
-        `★ 常见误解是"角节面一律是平面"——但 P_l^{|m|}(cosθ)=0 给出的是**锥面**，` +
+        `★ 常见误解是"角度节面一律是平面"——但 P_l^{|m|}(cosθ)=0 给出的是**锥面**，` +
         `只有 cos(mφ)/sin(mφ)=0 才给出平面。`,
         { kp: 'K5', difficulty: 'challenge',
           presetView: { n: pick.n, l: l, m: m, sectionMode: 'contour' } });
@@ -237,12 +241,14 @@ window.QuestionEngine = (function () {
       const a = OB.angleToZ(l, m);
       const correct = a.deg.toFixed(1) + '°';
       const deg = (x) => (Math.acos(Math.max(-1, Math.min(1, x))) * 180 / Math.PI).toFixed(1) + '°';
-      const stem = `**${subOf(n, l)}** 轨道（m=${m}）中，电子的轨道角动量矢量与 z 轴的夹角约为？`;
+      const stem = `**复函数解** $\\psi_{${n},${l},${m}}$ 中，电子的轨道角动量矢量与 z 轴的夹角约为？`;
       return assemble(stem, correct,
         [deg(m / l), deg(l / (l + 1)), (180 - a.deg).toFixed(1) + '°', '90.0°'],
         `cosθ = m / √(l(l+1)) = ${m} / √(${l}×${l + 1}) ⇒ θ = **${correct}**。\n` +
         `★ 常见错误是用 cosθ = m/l（把 $L_z/L$ 当成了 m/l），正确的分母是 √(l(l+1)) 而非 l。\n` +
-        `特别地：m = ±l 时夹角最小但不为 0（角动量不可能与 z 轴重合）；m = 0 时夹角为 90°。`,
+        `特别地：m = ±l 时夹角最小但不为 0（角动量不可能与 z 轴重合）；m = 0 时夹角为 90°。\n` +
+        `★ 这一问**只对复函数解成立**：L̂z 的本征态是 ψ_{n,l,m}（复解），而实解由 ±m 两个复解` +
+        `组合而来，不再是 L̂z 的本征函数，谈"它的 L_z 是多少"没有意义。`,
         { kp: 'K9', difficulty: 'challenge' });
     },
 

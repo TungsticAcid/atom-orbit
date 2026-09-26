@@ -277,6 +277,9 @@ input[type="range"]::-moz-range-thumb {
 /* ---------- 分段控件（按钮组） ---------- */
 .seg { display: inline-flex; background: var(--active); border-radius: 10px; padding: 3px; gap: 3px; }
 .seg.small .seg-btn { font-size: 12px; padding: 5px 10px; }
+/* 需要换行的分段组（实轨道选择器：l=5 时有 11 个选项，一行排不下） */
+.seg.wrap { display: flex; flex-wrap: wrap; }
+.seg.wrap .seg-btn { flex: 0 0 auto; padding: 6px 11px; font-size: 12.5px; }
 .seg-btn {
   border: none;
   background: transparent;
