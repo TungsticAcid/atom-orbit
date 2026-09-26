@@ -213,10 +213,7 @@ window.Orbit3D = (function () {
   let gridObj = null;
   let decorGroup = null;        // 坐标轴 + 赤道环（随轨道尺度整体缩放）
 
-  // 角度分布 3D 曲面（独立小场景）：r(θ,φ) 从原点沿 (θ,φ) 引射线
-  let angScene = null, angCamera = null, angRenderer = null, angCtl = null, angMesh = null, angAxes = null;
-  let angResizeObs = null;      // 角度小场景的尺寸观察器
-  let angLastKey = '';
+  // 球谐曲面（现为主场景内的可切换对象，见 updateAngular）
   const ANG_RES = 30;           // θ 方向网格数
 
   // 标量场（由 grid 节点构成），缓存以便调整阈值时不必重算 |ψ|²
@@ -1130,6 +1127,10 @@ window.Orbit3D = (function () {
   function currentFrameExtent() {
     const S = (window.OrbitApp && window.OrbitApp.getState()) || null;
     if (!S) return Math.max(gridExtent, 1.5);
+    // 球谐档的尺度是**固定的**：曲面归一到半径 1、参考轴 ±1.6，且形状只依赖 (l,m)、
+    // 与 n 无关。所以它不参与下面那套"按阈值算需要多大"的推导 —— 一并跳过，
+    // 免得切档时相机按上一个轨道的尺度乱动。
+    if (S.viewTarget === 'spherical') return ANGULAR_FRAME_EXTENT;
     const base = S.terms && S.terms.length
       ? Math.max(OM.superpositionRefExtent(S.terms) * 1.25, 1.5)
       : frameExtentFor({ n: S.n, l: S.l, m: S.m, mode: S.wavefunction, psiCrit: S.psiCriterion, terms: null });
@@ -1173,10 +1174,37 @@ window.Orbit3D = (function () {
   // ---------------------------------------------------------------------------
   // 显示模式
   // ---------------------------------------------------------------------------
+  /**
+   * 切换三维里"显示什么"。
+   * @param mode 'points' | 'surface' | 'spherical'
+   *   'spherical' 是球谐函数档：只显示球谐曲面（连它那组参考轴），与 ψ 的
+   *   粒子云 / 等值面互斥。
+   */
   function setVisibility(mode) {
+    const sph = (mode === 'spherical');
+    if (angGroup) angGroup.visible = sph;
     if (cloudObj) cloudObj.visible = (mode === 'points');
     if (surfaceObj) surfaceObj.visible = (mode === 'surface');
-    if (nucleusObj) nucleusObj.visible = true;
+    if (nucleusObj) nucleusObj.visible = !sph;
+    // ★ 两处补漏（原先都没有人管）：
+    //   · fineObj 是等值面在细颈处补出来的那一块，它的显隐原先从不跟随 surfaceObj ——
+    //     于是切到"粒子云"后，细颈补片会**孤零零留在场景里**。
+    //   · decorGroup（坐标轴 + 赤道环）是按**轨道尺度**缩放的，球谐只有单位球大小，
+    //     一起显示会缩成一小撮；球谐档有自己的参考轴，故此时整体隐藏。
+    if (fineObj) fineObj.visible = (mode === 'surface');
+    if (decorGroup) decorGroup.visible = !sph;
+    // ★ 档位切换时**必须重新取景**，而且只有在这里补才补得全：
+    //   两个档的尺度差十几倍（球谐恒为 ANGULAR_FRAME_EXTENT，ψ 随轨道在 1.5～16.7），
+    //   而各自的"重建分支"并不对称 —— 进球谐档要走 updateAngular（有 memo），
+    //   回 ψ 档若轨道与阈值都没变则走 setSurfaceLevel 的**复用分支，根本不重建**，
+    //   于是两条路都可能不取景。实测：漏掉后切档相机距离纹丝不动（停在 63.97），
+    //   球谐曲面小到几乎看不见。
+    //   放在 setVisibility 里而不是各重建分支里，语义也更准：**变的是档位**，
+    //   就该重取景；fitViewIfNeeded 自带"尺度没变就不动相机"的守卫，不会多动。
+    if (lastSphVisible !== sph) {
+      lastSphVisible = sph;
+      fitViewIfNeeded(currentFrameExtent());
+    }
   }
 
   // 相机取景：保持当前朝向（四元数不变），只按轨道尺度调整距离与裁剪面。
@@ -1236,13 +1264,13 @@ window.Orbit3D = (function () {
   }
   /**
    * 自动旋转开关。
-   * ★ 同时作用于**主视图与角度分布小场景**：两处都是"绕着看形状"，共用一个开关
-   *   才符合直觉，也省得再加一套控件。原先小场景在 init 时写死 setAutoRotate(true)，
-   *   用户没有任何入口关掉它 —— "角度分布图的自动旋转无法控制"就是这么来的。
+   * ★ 原先它要同时喂**主视图与角度分布小场景**两套控制器 —— 两处都是"绕着看形状"，
+   *   共用一个开关才符合直觉，也省得再加一套控件。球谐曲面合并进主场景之后只剩一套
+   *   控制器，这里自然就只剩一句了。（历史：小场景曾在 init 时写死 setAutoRotate(true)，
+   *   用户没有任何入口关掉它，"角度分布图的自动旋转无法控制"就是那么来的。）
    */
   function setAutoRotate(v) {
     if (viewCtl) viewCtl.setAutoRotate(v);
-    if (angCtl) angCtl.setAutoRotate(v);
   }
   function resetView() {
     if (!viewCtl) return;
@@ -1255,57 +1283,63 @@ window.Orbit3D = (function () {
   }
 
   // ---------------------------------------------------------------------------
-  // 角度分布 3D 曲面（独立小场景）
+  // 球谐曲面（主场景里的一个可切换对象）
   //   r(θ,φ)：从原点沿 (θ,φ) 方向引射线，长度 = |Y| 或 |Y|²。
   //   实函数按 Y 符号分色（+青 / −橙），复函数按相位（arg Y）彩虹着色。
+  //
+  // ★ 它原先是一个**独立的小场景**（自建 renderer / camera / controller，挂在页面
+  //   下方的「角度分布」卡片里）。现合并进主场景 —— 于是球谐与完整波函数共用同一套
+  //   相机、控制器、自动旋转与复位，学生在同一个三维窗口里就能把"角度部分"与
+  //   "完整波函数"对着看，而不是在两个各自能转的窗口之间来回切换。
+  //
+  // ★ 合并要解决的核心问题是**尺度**：球谐归一到半径 1，而 ψ 的取景半尺寸随轨道
+  //   在 1.5～16.7 之间（见 currentFrameExtent）。所以切档时必须把**本档自己的**
+  //   extent 交给 fitView，否则球谐要么被画成一个小点、要么撑满整个视野。
   // ---------------------------------------------------------------------------
-  function initAngular(container) {
-    const w = container.clientWidth || 300, h = container.clientHeight || 200;
-    angScene = new THREE.Scene();
-    angCamera = new THREE.PerspectiveCamera(45, w / h, 0.01, 40);
-    angRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    angRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    angRenderer.setSize(w, h);
-    container.appendChild(angRenderer.domElement);
-    // 同样使用四元数控制器（小场景不需要平移，旋转 + 缩放即可）
-    angCtl = createQuatOrbit(angCamera, angRenderer.domElement, {
-      distance: 3.4, rotateSpeed: 1.0, damping: 0.2, autoRotateSpeed: 0.006,
-    });
-    angCtl.setView(new THREE.Vector3(0, -2.6, 2.2), new THREE.Vector3(0, 0, 0));
-    angCtl.setLimits(1.2, 12);
-    angCtl.setAutoRotate(true);
-    buildAngularAxes();
+  let angGroup = null;          // 球谐曲面 + 参考坐标轴（整组一起显隐，避免"半显"状态）
+  let angMesh = null;
+  let angLastKey = '';
+  let lastSphVisible = null;    // 上一次 setVisibility 是否在球谐档（用于"档位变了才重取景"）
 
-    // 同理：小场景也要跟随容器尺寸变化（图表卡宽度随响应式布局改变）
-    if (window.ResizeObserver) {
-      const ro = new ResizeObserver(function () {
-        const w = container.clientWidth, h = container.clientHeight;
-        if (w > 0 && h > 0) resizeAngular(w, h);
-      });
-      ro.observe(container);
-      angResizeObs = ro;
-    }
-  }
+  /** 球谐档的取景半尺寸：参考轴画到 ±1.6，留一点余量（与 FIT_MARGIN 配合） */
+  const ANGULAR_FRAME_EXTENT = 1.8;
 
-  // 小坐标轴（x 红 / y 绿 / z 蓝，z 竖直）与参考球
-  function buildAngularAxes() {
+  function ensureAngGroup() {
+    if (angGroup) return angGroup;
+    angGroup = new THREE.Group();
+    angGroup.visible = false;                     // 默认在"波函数"档
+    scene.add(angGroup);
+    // 参考坐标轴。刻意用一根中性灰而不是三色轴：球谐曲面本身已经在用颜色表达
+    // 正负 / 相位，再叠三根彩轴会抢掉它要传达的信息。
     const pts = [];
-    const mk = (a, b) => { pts.push(new THREE.Vector3(...a), new THREE.Vector3(...b)); };
+    const mk = (a, b) => {
+      pts.push(new THREE.Vector3(a[0], a[1], a[2]), new THREE.Vector3(b[0], b[1], b[2]));
+    };
     mk([-1.6, 0, 0], [1.6, 0, 0]); mk([0, -1.6, 0], [0, 1.6, 0]); mk([0, 0, -1.6], [0, 0, 1.6]);
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts.flatMap(v => [v.x, v.y, v.z]), 3));
-    const mat = new THREE.LineBasicMaterial({ color: 0x77809b, transparent: true, opacity: 0.6 });
-    angAxes = new THREE.LineSegments(geo, mat);
-    angScene.add(angAxes);
+    geo.setAttribute('position',
+      new THREE.Float32BufferAttribute(pts.flatMap((v) => [v.x, v.y, v.z]), 3));
+    angGroup.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      color: 0x77809b, transparent: true, opacity: 0.6,
+    })));
+    return angGroup;
   }
 
-  // 按 (l,m,mode,which) 重建角度曲面
+  // 按 (l,m,mode,which) 重建球谐曲面。
+  // memo 守卫：同参数直接返回 —— 这个函数在每次 recompute 时都会被调用，
+  // 而建一遍网格要遍历 31×61 个点，不缓存的话拖滑块会明显卡。
   function updateAngular(l, m, mode, which) {
-    if (!angScene) return;
+    if (!scene) return;
     const key = l + '-' + m + '-' + mode + '-' + which;
-    if (key === angLastKey) return;
+    if (key === angLastKey && angMesh) return;
     angLastKey = key;
-    if (angMesh) { angScene.remove(angMesh); angMesh.geometry.dispose(); angMesh.material.dispose(); angMesh = null; }
+    ensureAngGroup();
+    if (angMesh) {
+      angGroup.remove(angMesh);
+      angMesh.geometry.dispose();
+      angMesh.material.dispose();
+      angMesh = null;
+    }
 
     const NT = ANG_RES, NP = ANG_RES * 2;
     const positions = [], colors = [], indices = [];
@@ -1372,21 +1406,11 @@ window.Orbit3D = (function () {
     geo.setIndex(indices);
     const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
     angMesh = new THREE.Mesh(geo, mat);
-    angScene.add(angMesh);
+    angGroup.add(angMesh);
   }
 
-  function renderAngular() {
-    if (angRenderer && angScene && angCamera) {
-      if (angCtl) angCtl.update();
-      angRenderer.render(angScene, angCamera);
-    }
-  }
-  function resizeAngular(w, h) {
-    if (!angCamera || !angRenderer) return;
-    angCamera.aspect = w / h;
-    angCamera.updateProjectionMatrix();
-    angRenderer.setSize(w, h);
-  }
+  /** 球谐档下"该用多大取景尺度"（供 currentFrameExtent 调用） */
+  function angularFrameExtent() { return ANGULAR_FRAME_EXTENT; }
 
   // ---------------------------------------------------------------------------
   // 教学辅助：参考球（linkRadialTo3D）与节面高亮（spotlightNodes）
@@ -1571,7 +1595,7 @@ window.Orbit3D = (function () {
     init, render, resize, setAutoRotate, resetView,
     updateCloud, updateSurface, setSurfaceLevel, setVisibility,
     disposeGrid, setNucleusVisible,
-    initAngular, updateAngular, renderAngular, resizeAngular,
+    updateAngular, angularFrameExtent,
     ringHighlight, spotlightNodes,
     /** 取当前"画上去的辅助几何"状态（参考球 / 节面高亮） */
     getAnnotations: () => ({ ring: curRingRadius, spotlight: curSpotlight }),
@@ -1589,11 +1613,6 @@ window.Orbit3D = (function () {
       dist: viewCtl ? +viewCtl.getDistance().toFixed(3) : null,
       gridExtent: +gridExtent.toFixed(3),
       autoRotate: viewCtl ? viewCtl.isAutoRotate() : null,
-    } : null),
-    /** 角度分布小场景的状态（同一开关应同时作用于它） */
-    getAngularState: () => (angCtl ? {
-      dist: +angCtl.getDistance().toFixed(3),
-      autoRotate: angCtl.isAutoRotate(),
     } : null),
   };
   return api;

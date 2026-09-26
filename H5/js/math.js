@@ -126,12 +126,68 @@ window.OM = (function () {
   function radialDistribution(n, l, r) { return r * r * radialR2(n, l, r); }
 
   // ---------------------------------------------------------------------------
+  // 角度部分的进一步分离：Y_l^m(θ,φ) = Θ_{l,m}(θ) · Φ_m(φ)
+  //
+  // ★ 为什么把它拆出来：教材讲分离变量到 ψ = R(r)·Y(θ,φ) 就停了，但 Y 还能再分，
+  //   ψ = R(r)·Θ(θ)·Φ(φ)。本程序原先只到 Y 这一层，学生看不到"角度部分其实是两个
+  //   单变量函数的乘积"。界面上 Θ 与 Φ 各占一幅极坐标图，就是为了把这一层露出来。
+  //
+  // ★ 拆分**不是重新推导**，而是把 yNorm 拆成两个常数的乘积 —— 所以下面直接把
+  //   yNorm 定义成 thetaNorm × PHI_NORM。这样"Y = Θ·Φ"在**结构上**恒成立；若两边
+  //   各写一份常数，那是"碰巧相等"，日后改归一化就会悄悄失配。
+  //   （已对拍：复球谐 max|Y − Θ·Φ| = 0，实球谐 2.2e-16，见 README 的验证一节。）
+  // ---------------------------------------------------------------------------
+  /** Φ_m(φ) 的归一化常数 1/√(2π)，使 ∫₀^{2π}|Φ|²dφ = 1 */
+  const PHI_NORM = 1 / Math.sqrt(2 * Math.PI);
+
+  /** Θ_{l,m}(θ) 的归一化常数 √((2l+1)/2 · (l−|m|)!/(l+|m|)!)，使 ∫₀^π|Θ|²sinθdθ = 1 */
+  function thetaNorm(l, m) {
+    const am = Math.abs(m);
+    return Math.sqrt(((2 * l + 1) / 2) * (factorial(l - am) / factorial(l + am)));
+  }
+
+  /** Φ_m(φ) 的归一化常数（无 l、m 依赖，单独给出以便公式卡片直接引用） */
+  function phiNorm() { return PHI_NORM; }
+
+  /**
+   * 极角函数 Θ_{l,m}(θ) —— ψ = R(r)·Θ(θ)·Φ(φ) 中间那一段，**实数**。
+   * 即关联勒让德 P_l^{|m|}(cosθ) 乘上自己的归一化常数。
+   * ★ 用的是与 angularComplex / angularReal **同一个** assocLegendre，
+   *   故 Condon–Shortley 相因子的约定自动一致，不必另行处理。
+   */
+  function thetaFunc(l, m, theta) {
+    return thetaNorm(l, m) * assocLegendre(l, Math.abs(m), Math.cos(theta));
+  }
+
+  /**
+   * 方位角函数 Φ_m(φ) 的**复数**形式：(1/√(2π))·e^{imφ}。
+   * 模恒为 1/√(2π)、与 φ 无关 —— 这正是教材所说"复数解的图像是一个圆圈"。
+   */
+  function phiFuncComplex(m, phi) {
+    return Complex.expI(m * phi).timesReal(PHI_NORM);
+  }
+
+  /**
+   * 方位角函数 Φ_m(φ) 的**实数**形式（由 ±m 两个复解线性组合并归一化而来）。
+   *   m = 0 → 1/√(2π)（常数，与 φ 无关）
+   *   m > 0 → √(2/π)·cos(mφ)
+   *   m < 0 → √(2/π)·sin(|m|φ)
+   * ★ 那个 √2 与 angularReal 里的 √2 同源（实解要重新归一化，因为
+   *   ∫cos²(mφ)dφ = π 而非 2π），**不能漏**，漏了就不是 Y 的因子了。
+   */
+  function phiFuncReal(m, phi) {
+    const am = Math.abs(m);
+    if (am === 0) return PHI_NORM;
+    const c = Math.SQRT2 * PHI_NORM;                 // = √2/√(2π) = 1/√π
+    return m > 0 ? c * Math.cos(am * phi) : c * Math.sin(am * phi);
+  }
+
+  // ---------------------------------------------------------------------------
   // 角度部分：复球谐 Y_l^m 与 实球谐 Y_{l,m}
   // ---------------------------------------------------------------------------
-  /** 球谐归一化系数 N_l^m（不含相因子） */
+  /** 球谐归一化系数 N_l^m（不含相因子）= Θ 的常数 × Φ 的常数（见上面那段说明） */
   function yNorm(l, m) {
-    const am = Math.abs(m);
-    return Math.sqrt(((2 * l + 1) / (4 * Math.PI)) * (factorial(l - am) / factorial(l + am)));
+    return thetaNorm(l, m) * PHI_NORM;
   }
 
   /**
@@ -936,6 +992,9 @@ window.OM = (function () {
     Complex, factorial, laguerre, assocLegendre,
     radialR, radialR2, radialDistribution,
     angularComplex, angularReal,
+    // 角度部分的两个因子（Y = Θ·Φ）与各自的归一化常数：界面上的 Θ/Φ 卡片、
+    // 公式卡片的分段展示都用它们，不要在图里另写一份归一化
+    thetaFunc, thetaNorm, phiFuncComplex, phiFuncReal, phiNorm,
     psiComplex, psiDensity,
     samplingRadius, samplingAngleMax,
     samplePoints,

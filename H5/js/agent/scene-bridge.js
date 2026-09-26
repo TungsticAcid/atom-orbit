@@ -92,9 +92,17 @@ window.SceneBridge = (function () {
         + '画布左下角也会出现一枚可点击的撤销标签。',
       params: { radius: 'number (a0)；传 0 表示清除' },
     },
+    setViewTarget: {
+      group: '角度', concept: 'K4',
+      desc: '三维里看哪一层：spherical = 角度部分 Y 的球谐曲面；wave = 完整波函数 ψ 的'
+          + '等值面 / 粒子云。两者是**两套几何**（球谐是解析形状直接三角化，ψ 是标量场 + '
+          + '等值面提取），切档会换掉整个画面与取景尺度。想看"角度部分长什么样"就用 spherical。',
+      params: { target: "'spherical'|'wave'" },
+    },
     setAngularView: {
       group: '角度', concept: 'K4',
-      desc: '角度分布曲面显示 |Y| 或 |Y|²',
+      desc: '球谐曲面的判据：|Y| 还是 |Y|²（把半径画成函数值还是它的平方）。'
+          + '★ 只在 target=spherical 档可见、有效；|Y|² 的曲面比 |Y| 的"瘦"。',
       params: { which: "'Y'|'Y2'" },
     },
     setSectionPlane: {
@@ -121,8 +129,11 @@ window.SceneBridge = (function () {
     resetSectionView: { group: '截面', concept: '', desc: '把截面图的缩放/平移复位到全范围', params: {} },
     setFormulaHighlight: {
       group: '公式', concept: 'K1/K2',
-      desc: '★ 高亮 KaTeX 公式中的某一项（R/Y/L/P/N，null 取消），实现公式—图形—数值三向联动',
-      params: { part: "'R'|'Y'|'L'|'P'|'N'|null" },
+      desc: '★ 高亮 KaTeX 公式中的某一项（null 取消），实现公式—图形—数值三向联动。'
+          + '可选：R 径向部分、L 拉盖尔多项式、F 方位角函数 Φ、T 极角函数 Θ、'
+          + 'Y 球谐函数（= Θ·Φ）、P 关联勒让德、N 归一化常数。'
+          + '讲"Y 是两个因子相乘"时依次点亮 F → T → Y 最直观。',
+      params: { part: "'R'|'L'|'F'|'T'|'Y'|'P'|'N'|null" },
     },
     showReferenceTable: {
       group: '导航', concept: '',
@@ -826,6 +837,10 @@ window.SceneBridge = (function () {
       }
       case 'setAngularView':
         return ['Y', 'Y2'].indexOf(p.which) >= 0 ? { params: { which: p.which } } : { err: 'which 非法' };
+      case 'setViewTarget':
+        return ['spherical', 'wave'].indexOf(p.target) >= 0
+          ? { params: { target: p.target } }
+          : { err: 'target 应为 spherical（球谐函数）或 wave（完整波函数）' };
       case 'setSectionPlane':
         return ['xy', 'xz', 'yz'].indexOf(p.plane) >= 0 ? { params: { plane: p.plane } } : { err: 'plane 非法' };
       case 'setSectionMode':
@@ -834,8 +849,8 @@ window.SceneBridge = (function () {
         return ['radial', 'angular'].indexOf(p.type) >= 0 ? { params: { type: p.type, on: p.on !== false } } : { err: 'type 非法' };
       case 'setFormulaHighlight': {
         const part = p.part || null;
-        if (part !== null && ['R', 'Y', 'L', 'P', 'N'].indexOf(part) < 0) {
-          return { err: "part 应为 'R'|'Y'|'L'|'P'|'N' 或 null" };
+        if (part !== null && ['R', 'L', 'F', 'T', 'Y', 'P', 'N'].indexOf(part) < 0) {
+          return { err: "part 应为 'R'|'L'|'F'|'T'|'Y'|'P'|'N' 或 null" };
         }
         return { params: { part: part } };
       }
@@ -946,6 +961,7 @@ window.SceneBridge = (function () {
       case 'setIsosurfaceLevel': return A.applyAction({ action: 'setIsosurfaceLevel', params: p });
       case 'showRadial': return A.applyAction({ action: 'showRadial', params: p });
       case 'setAngularView': return A.applyAction({ action: 'setAngularView', params: p });
+      case 'setViewTarget': return A.applyAction({ action: 'setViewTarget', params: p });
       case 'setSectionPlane': return A.applyAction({ action: 'setSectionPlane', params: p });
       case 'setSectionMode': return A.applyAction({ action: 'setSectionMode', params: p });
       case 'setAutoRotate': return A.applyAction({ action: 'setAutoRotate', params: p });
@@ -1408,7 +1424,7 @@ window.SceneBridge = (function () {
     setColorMode: '切换着色', setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',
     showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值/零点',
-    linkRadialTo3D: '画出参考球', setAngularView: '切换角度分布',
+    linkRadialTo3D: '画出参考球', setViewTarget: '切换球谐/波函数', setAngularView: '切换角度判据',
     setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
     spotlightNodes: '高亮节面', setAutoRotate: '自动旋转', resetCamera: '复位视角',
     resetSectionView: '复位截面缩放',

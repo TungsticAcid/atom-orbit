@@ -223,9 +223,9 @@ window.Formula = (function () {
       : 'Y_{' + l + ',' + m + '}';
 
     const rows = [];
-    rows.push(psiTag + '(r,\\theta,\\phi) &= R_{' + n + ',' + l + '}(r)\\,' + yTag + '(\\theta,\\phi)');
 
-    // ---- 径向：教科书形式 R = N ρˡ e^{-ρ/2} L_k^{2l+1}(ρ)，ρ = 2r/(na₀) ----
+    // ---- ① 径向部分 R_{n,l}(r) ----
+    // 教科书形式 R = N ρˡ e^{-ρ/2} L_k^{2l+1}(ρ)，ρ = 2r/(na₀)
     const rParts = [W('N', 'N_{' + n + ',' + l + '}')];
     if (l >= 1) rParts.push(l === 1 ? '\\rho' : '\\rho^{' + l + '}');     // ρ⁰ ≡ 1，省略
     rParts.push('e^{-\\rho/2}');
@@ -234,11 +234,24 @@ window.Formula = (function () {
     rows.push('N_{' + n + ',' + l + '} &= ' +
       '\\sqrt{\\frac{4\\cdot ' + k + '!}{' + n + '^{4}\\cdot ' + (n + l) + '!}}\\approx ' + f4(Nrad));
     if (k > 0) {
-      rows.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho) &= ' +
-        W('L', laguerreExp(k, 2 * l + 1)));
+      rows.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho) &= ' + W('L', laguerreExp(k, 2 * l + 1)));
     }
 
-    // ---- 角度：P 展开为显式多项式，并清理所有冗余的 1 ----
+    // ---- ②③④⑤ 角度部分：按 Φ(φ) → Θ(θ) → Y = Θ·Φ 的顺序写 ----
+    // ★ 这个顺序是**有意**的。教材讲分离变量多停在 ψ = R(r)·Y(θ,φ) 就停了，学生看不到
+    //   "角度部分自己还是两个单变量函数的乘积"。把 Φ、Θ 各自单列一行、再写相乘，
+    //   这件事才在公式上看得见 —— 与界面下方那张 Θ/Φ 卡片是同一个论点。
+    //
+    // ★ 归一化常数也拆开：把球谐的 N_lm 分给 Θ 与 Φ 各一份，乘积才逐点等于 Y
+    //   （见 math.js 的说明）。数值直接取自那里的导出，避免两处各写一份而漂移。
+    const Ntheta = OM.thetaNorm(l, m);
+    const Nphi = OM.phiNorm();                                   // 1/√(2π)
+    const phiIsReal = (mode === 'real' && am > 0);
+    // 实解 m≠0 的 √2 正是 Φ 那一侧重新归一化的因子（∫cos²(mφ)dφ = π 而非 2π）
+    const phiConst = phiIsReal ? '\\frac{1}{\\sqrt{\\pi}}' : '\\frac{1}{\\sqrt{2\\pi}}';
+    const NphiVal = phiIsReal ? Math.SQRT2 * Nphi : Nphi;
+
+    // 角度：P 展开为显式多项式，并清理所有冗余的 1
     // ⚠️ 次序很关键：先提取首字符负号，再做高亮包裹。
     //    否则 \htmlClass{...} 会挡住负号判断，使 "√2N −3sinθcosθ" 被误读为减法。
     let pExpRaw = legendreExp(l, am);
@@ -246,32 +259,47 @@ window.Formula = (function () {
     if (pExpRaw.charAt(0) === '-') { leadSign = '-'; pExpRaw = pExpRaw.slice(1); }
     const pExp = W('P', pExpRaw);
 
-    const factors = [];
-    if (pExpRaw !== '1') factors.push(pExp);                             // P₀⁰ ≡ 1，省略
-    let coef, coefRow;
+    // Φ 一侧的因子：复解 e^{imφ}；实解 cos(mφ) / sin(mφ)（m=0 时为常数，无因子）
+    let phiTrig = '';
     if (mode === 'complex') {
-      coef = 'N_{' + l + ',' + m + '}';
-      if (m !== 0) factors.push('e^{' + mExponent(m) + '}');             // m=0 时 e⁰ ≡ 1，省略
-      coefRow = 'N_{' + l + ',' + m + '} &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}\\cdot' +
-        '\\frac{' + (l - am) + '!}{' + (l + am) + '!}}\\approx ' + f4(Nang);
-    } else if (am === 0) {
-      coef = 'N';
-      coefRow = 'N &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}}\\approx ' + f4(Nang);
-    } else {
-      coef = '\\sqrt{2}\\,N';
-      // m=±1 时省略三角函数内的系数 1（写 cosφ 而非 cos(1φ)）
-      factors.push(am === 1
-        ? (m > 0 ? '\\cos\\phi' : '\\sin\\phi')
-        : (m > 0 ? '\\cos(' + am + '\\phi)' : '\\sin(' + am + '\\phi)'));
-      coefRow = 'N &= \\sqrt{\\frac{' + (2 * l + 1) + '}{4\\pi}\\cdot\\frac{' + (l - am) + '!}{' + (l + am) + '!}}' +
-        '\\approx ' + f4(Nang) + ',\\qquad \\sqrt{2}N\\approx ' + f4(Math.SQRT2 * Nang);
+      if (m !== 0) phiTrig = 'e^{' + mExponent(m) + '}';
+    } else if (am > 0) {
+      phiTrig = (am === 1)
+        ? (m > 0 ? '\\cos\\varphi' : '\\sin\\varphi')
+        : (m > 0 ? '\\cos(' + am + '\\varphi)' : '\\sin(' + am + '\\varphi)');
     }
-    // 负号已在上面提取（leadSign）；此处直接拼装，并把整行按需高亮
-    const yRhs = factors.length
-      ? (leadSign + coef + '\\,' + factors.join('\\,'))
+
+    // ② 方位角函数 Φ_m(φ)
+    rows.push('\\Phi_{' + m + '}(\\varphi) &= ' +
+      W('F', phiConst + (phiTrig ? '\\,' + phiTrig : '')) +
+      '\\approx ' + f4(NphiVal));
+
+    // ③ 极角函数 Θ_{l,m}(θ)
+    rows.push('\\Theta_{' + l + ',' + m + '}(\\theta) &= ' +
+      W('T', 'N_{\\Theta}\\,P_{' + l + '}^{' + am + '}(\\cos\\theta)') +
+      ',\\qquad ' + W('N', 'N_{\\Theta}') + '=\\sqrt{\\frac{' + (2 * l + 1) + '}{2}\\cdot' +
+      '\\frac{' + (l - am) + '!}{' + (l + am) + '!}}\\approx ' + f4(Ntheta));
+
+    // ④ 球谐函数 = 两个因子的乘积 —— 整张公式卡的论点就在这一行的等号右边
+    const yFactors = [];
+    if (pExpRaw !== '1') yFactors.push(pExp);                    // P₀⁰ ≡ 1，省略
+    if (phiTrig) yFactors.push(phiTrig);                         // e⁰ ≡ 1，省略
+    const coef = (mode === 'complex')
+      ? 'N_{' + l + ',' + m + '}'
+      : (am === 0 ? 'N' : '\\sqrt{2}\\,N');
+    const yRhs = yFactors.length
+      ? (leadSign + coef + '\\,' + yFactors.join('\\,'))
       : (leadSign + coef);
-    rows.push(yTag + '(\\theta,\\phi) &= ' + W('Y', yRhs));
-    rows.push(coefRow);
+    rows.push(yTag + '(\\theta,\\phi) &= \\Theta_{' + l + ',' + m + '}(\\theta)\\cdot\\Phi_{' + m + '}(\\varphi) = ' +
+      W('Y', yRhs));
+
+    // ⑤ 常数同样是相乘的 —— 这一行是"Y = Θ·Φ"在数值上的兑现，可逐位核对
+    const nAngVal = phiIsReal ? Math.SQRT2 * Nang : Nang;
+    rows.push(coef + ' &= N_{\\Theta}\\cdot ' + phiConst + '\\approx ' + f4(nAngVal));
+
+    // ---- ⑥ 完整波函数 ψ = R·Y ----
+    // 放在最后：前面的三块都组装好了才写它，读起来就是"一步步搭起来"的过程
+    rows.push(psiTag + '(r,\\theta,\\phi) &= R_{' + n + ',' + l + '}(r)\\,' + yTag + '(\\theta,\\phi)');
 
     const latex = '\\begin{aligned} ' + rows.join('\\\\[3pt] ') + '\\end{aligned}';
 

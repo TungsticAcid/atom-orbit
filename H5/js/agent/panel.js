@@ -340,8 +340,8 @@ window.Panel = (function () {
   /**
    * 抽屉开合会改变主布局宽度（padding-right 过渡 .24s）。
    *
-   * 主画布与角度分布画布都有 ResizeObserver，会自己跟上；但径向/截面是**手绘
-   * Canvas**——它们只在下次绘制时才按 clientWidth 重设位图尺寸。不触发重绘的话，
+   * 主画布（球谐曲面已并入其中）有 ResizeObserver，会自己跟上；但径向 / ΘΦ / 截面
+   * 都是**手绘 Canvas**——它们只在下次绘制时才按 clientWidth 重设位图尺寸。不触发重绘的话，
    * 位图还是旧宽度，被 CSS 缩放显示 → 看着发虚。这里复用主控制器已有的
    * window resize 通路（它会 resize 三维并重绘全部图表）。
    */
@@ -1101,7 +1101,8 @@ window.Panel = (function () {
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',
     showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值/零点',
     linkRadialTo3D: '画出参考球（把半径与三维对应）',
-    setAngularView: '切换角度分布', setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
+    setViewTarget: '切换球谐函数 / 波函数',
+    setAngularView: '切换 |Y| / |Y|² 判据', setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
     spotlightNodes: '高亮节面', setFormulaHighlight: '高亮公式项',
     setAutoRotate: '自动旋转', resetCamera: '复位视角', resetSectionView: '复位截面缩放',
     showReferenceTable: '打开教材对照表', focusChart: '放大图表讲解',

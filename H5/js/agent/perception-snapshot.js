@@ -26,6 +26,7 @@ window.Perception = (function () {
     levelFraction: 'setIsosurfaceLevel',
     plane: 'setSectionPlane',
     sectionMode: 'setSectionMode',
+    viewTarget: 'setViewTarget',
     angularWhich: 'setAngularView',
     radial: 'setRadial',
     autoRotate: 'setAutoRotate',
@@ -125,6 +126,8 @@ window.Perception = (function () {
           ? window.Formula.realOrbitalName(s.l, s.m) : '',
       },
       mode: {
+        // 三维里正在看哪一层：'spherical' 球谐曲面（角度部分）| 'wave' 完整波函数
+        target: s.viewTarget,
         wavefunction: s.wavefunction,
         render: s.render,
         color: s.color,
@@ -153,9 +156,10 @@ window.Perception = (function () {
       '【当前视图】' + s.orbital.name +
         (s.orbital.chemName ? '(' + s.orbital.chemName + ')' : '') +
         '  n=' + s.orbital.n + ' l=' + s.orbital.l + ' m=' + s.orbital.m,
-      '【模式】' + s.mode.wavefunction + ' / ' + s.mode.render + ' / 着色:' + s.mode.color,
+      '【模式】看' + (s.mode.target === 'spherical' ? '球谐函数 Y' : '完整波函数 ψ') +
+        ' / ' + s.mode.wavefunction + ' / ' + s.mode.render + ' / 着色:' + s.mode.color,
       '【等值面】判据 ' + s.isosurface.criterion + '，阈值 ' + (s.isosurface.levelFraction * 100).toFixed(1) + '%',
-      '【图表】径向 [' + (s.charts.radial || []).join(',') + ']；角度 ' + s.charts.angular +
+      '【图表】径向 [' + (s.charts.radial || []).join(',') + ']；球谐判据 ' + s.charts.angular +
         '；截面 ' + s.charts.section.plane + '/' + s.charts.section.mode,
       '【交互】空闲 ' + Math.round((it.idleMs || 0) / 1000) + 's' +
         '；切换次数 ' + JSON.stringify(it.toggleCounts || {}) +

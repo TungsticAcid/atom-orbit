@@ -60,16 +60,43 @@
           <input type="range" id="mSlider" min="-1" max="1" step="1" value="0" />
         </div>
 
+        <div class="divider"><span>视图对象</span></div>
+        <!-- ★ 球谐函数与完整波函数共用上面的量子数，但**是两套几何**：
+             球谐画的是极坐标曲面 r = |Y|（解析形状，直接三角化），
+             波函数画的是 ψ 的等值面 / 粒子云（标量场 + marching tetrahedra）。
+             所以切换档位不是"换个着色"，而是换一条完整的重建路径（见 main.js 的 updateViewer）。 -->
+        <div class="seg" id="targetSeg">
+          <button class="seg-btn" data-target="spherical">球谐函数</button>
+          <button class="seg-btn active" data-target="wave">波函数</button>
+        </div>
+        <!-- 球谐档专用的判据（|Y| / |Y|²）。波函数档用下面「等值面判据」那一组 ——
+             两者是同一个概念的两个化身（画幅 = 函数值还是它的平方），但**值域不同**
+             （Y 侧取值 'Y'/'Y2'，ψ 侧取值 'psi'/'psi2'），故各自保留一个控件、
+             各自由自己的 state 字段驱动，只显示当前档位需要的那一个。 -->
+        <div class="set" id="yCritSet" style="display:none">
+          <div class="row"><label>球谐判据</label>
+            <div class="seg small" id="yCritSeg">
+              <button class="seg-btn active" data-k="Y">|Y|</button>
+              <button class="seg-btn" data-k="Y2">|Y|²</button>
+            </div>
+          </div>
+          <div class="hint">|Y|² 的曲面比 |Y| 的"瘦"—— 教材里"电子云的角度分布图<br>近似两个相切的鸡蛋"说的就是它</div>
+        </div>
         <div class="divider"><span>波函数形式</span></div>
         <div class="seg" id="modeSeg">
           <button class="seg-btn active" data-mode="real">实函数</button>
           <button class="seg-btn" data-mode="complex">复函数</button>
         </div>
 
-        <div class="divider"><span>三维渲染</span></div>
-        <div class="seg" id="renderSeg">
-          <button class="seg-btn" data-mode="points">粒子云</button>
-          <button class="seg-btn active" data-mode="surface">等值面</button>
+        <!-- ★ 下面两组（三维渲染 / 三维着色）只对"波函数"档有意义：球谐曲面是解析
+             曲面，没有粒子云/等值面之分，它的配色也由实/复函数直接决定（符号或相位）。
+             所以整组包一层，切到球谐档时一并隐藏 —— 免得留下"改了没反应"的控件。 -->
+        <div id="renderGroup">
+          <div class="divider"><span>三维渲染</span></div>
+          <div class="seg" id="renderSeg">
+            <button class="seg-btn" data-mode="points">粒子云</button>
+            <button class="seg-btn active" data-mode="surface">等值面</button>
+          </div>
         </div>
 
         <div class="set" id="levelSet">
@@ -93,12 +120,14 @@
           <input type="range" id="pointCountSlider" min="8000" max="80000" step="1000" value="50000" />
         </div>
 
-        <div class="divider"><span>三维着色</span></div>
-        <div class="seg" id="colorSeg">
-          <button class="seg-btn" data-mode="orbital"
-                  title="按支壳层上色（s 蓝 / p 绿 / d 橙 / f 紫）；不显示 ψ 的正负">支壳层色</button>
-          <button class="seg-btn active" data-mode="phase"
-                  title="按 ψ 的正负上色：角度与径向节点的符号翻转都会显示出来">相位色</button>
+        <div id="colorGroup">
+          <div class="divider"><span>三维着色</span></div>
+          <div class="seg" id="colorSeg">
+            <button class="seg-btn" data-mode="orbital"
+                    title="按支壳层上色（s 蓝 / p 绿 / d 橙 / f 紫）；不显示 ψ 的正负">支壳层色</button>
+            <button class="seg-btn active" data-mode="phase"
+                    title="按 ψ 的正负上色：角度与径向节点的符号翻转都会显示出来">相位色</button>
+          </div>
         </div>
         </div><!-- /.panel-body -->
       </aside>
@@ -136,14 +165,11 @@
 
       <div class="card chart-card">
         <div class="card-head">
-          <span class="card-title">角度分布</span>
-          <div class="seg small" id="angSeg">
-            <button class="seg-btn active" data-k="Y">|Y|</button>
-            <button class="seg-btn" data-k="Y2">|Y|²</button>
-          </div>
+          <span class="card-title">角度部分的两个因子</span>
         </div>
-        <div class="hint" style="margin-top:2px">从原点沿 (θ,φ) 引射线，长度 = 角度函数值；拖拽旋转</div>
-        <div id="angularView" class="chart"></div>
+        <div class="hint" style="margin-top:2px">Y(θ,φ) = Θ(θ) · Φ(φ)　—　左图极角自 +z 起，右图自 +x 起</div>
+        <canvas id="thetaPhiChart" class="chart"></canvas>
+        <div class="hint">上面三维里看到的是两者相乘的结果；这里看两个因子各自长什么样</div>
       </div>
 
       <div class="card chart-card">

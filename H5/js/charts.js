@@ -2,8 +2,11 @@
  * charts.js — 2D 图表（纯 Canvas 手绘，无外部图表库）
  *
  * 包含三类图表：
- *   1. 径向曲线：R(r) / R(r)² / D(r) / D(r)²，可多选叠加，各自按峰值归一化。
- *   2. 角度分布：Y(θ,φ) 或 |Y|²，在选定方位角切面（φ 滑块）上的极坐标曲线。
+ *   1. 径向曲线：R(r) / R(r)² / D(r)，可多选叠加，各自按峰值归一化。
+ *      （D(r)² 已移除：它的零点与峰值和 D(r) 完全相同，却常被误当成独立的物理量。）
+ *   2. 角度部分的两个因子：Θ(θ) 与 Φ(φ) 各自的极坐标图 —— 用来把 Y = Θ·Φ 讲清楚。
+ *      ★ 球谐曲面 Y 本身**不在这里**：它已并入主三维视图（见 render3d.js 的
+ *        updateAngular），这样它就能和完整波函数共用同一套相机与操作。
  *   3. 截面热力图：|ψ|²（可切换相位着色）在 xy / xz / yz 平面上的彩色图。
  *
  * 统一使用设备像素比（devicePixelRatio）缩放，保证高分屏清晰。
@@ -250,86 +253,168 @@ window.Charts = (function () {
     });
   }
 
-  // --- 角度分布（极坐标） ------------------------------------------------------
-  function drawAngular(canvas, l, m, mode, which, phiDeg) {
+  // --- 角度部分的两个因子：Θ(θ) 与 Φ(φ) ---------------------------------------
+  /**
+   * 把分离变量再拆一层：Y(θ,φ) = Θ(θ)·Φ(φ)，左右各一幅极坐标图。
+   *
+   * ★ 为什么值得单独一张卡：教材讲到 ψ = R(r)·Y(θ,φ) 通常就停了，学生看不到
+   *   "角度部分自己还能分成两个**单变量**函数的乘积"。左右并排、中间一个「×」，
+   *   这件事才看得见；底部那行再把 max|Θ| × max|Φ| = max|Y| 的真实数字写出来，
+   *   让"相乘"从一句话变成可核对的事实。
+   *
+   * ★ 两幅图的极角基准**不同**，图上必须各自标清楚，否则学生会以为能叠在一起：
+   *     Θ 画在 xz 平面，极角 = θ，自 **+z（朝上）** 起算；
+   *     Φ 画在 xy 平面，极角 = φ，自 **+x（朝右）** 起算。
+   *
+   * ★ 曲线的视觉半径各按**自身峰值**归一化（与径向图的约定一致），那只影响形状
+   *   看起来多大；乘积关系由底部那行的**真实数值**保证，不依赖视觉半径。
+   *
+   * @param mode 'real' | 'complex' —— 只影响 Φ（Θ 恒为实数）；复解取模，画出来
+   *             就是教材说的"一个圆圈"，并按相位彩虹着色。
+   */
+  function drawThetaPhi(canvas, l, m, mode) {
     const { ctx, w, h } = setup(canvas);
-    const cx = w * 0.5, cy = h * 0.5;
-    const Rho = Math.min(w, h) * 0.42;
-    const phi = (phiDeg * Math.PI) / 180;
+    const padX = 6;
+    const colW = (w - padX * 2) / 2;
+    const Rho = Math.min(colW * 0.84, h * 0.34);
+    const cy = h * 0.55;
+    const cxT = padX + colW * 0.5;        // 左：Θ 的极点
+    const cxP = padX + colW * 1.5;        // 右：Φ 的极点
     const N = 360;
 
-    // 采样 f(θ)，θ 为与 +z 的夹角
-    const pts = [];
-    let mx = 0;
+    // ---- 采样两个因子 ----
+    const thArr = [], TH = [], phArr = [], PH = [];
+    let mxT = 0, mxP = 0;
     for (let i = 0; i <= N; i++) {
-      const th = (Math.PI * i) / N;
-      const g = (mode === 'real')
-        ? OM.angularReal(l, m, th, phi)
-        : OM.angularComplex(l, m, th, phi).abs();
-      const f = (which === 'Y2') ? g * g : g;
-      pts.push(f);
-      if (Math.abs(f) > mx) mx = Math.abs(f);
+      const t = (Math.PI * i) / N;
+      thArr.push(t);
+      const v = OM.thetaFunc(l, m, t);
+      TH.push(v);
+      if (Math.abs(v) > mxT) mxT = Math.abs(v);
     }
-    if (mx < 1e-9) mx = 1e-9;
+    for (let i = 0; i <= N; i++) {
+      const p = (2 * Math.PI * i) / N;
+      phArr.push(p);
+      const v = (mode === 'complex')
+        ? OM.phiFuncComplex(m, p).abs()
+        : OM.phiFuncReal(m, p);
+      PH.push(v);
+      if (Math.abs(v) > mxP) mxP = Math.abs(v);
+    }
+    if (mxT < 1e-12) mxT = 1e-12;
+    if (mxP < 1e-12) mxP = 1e-12;
 
-    // 极坐标网格：圆环 + 自 +z 起每 45° 的辐射线
+    // ---- 极坐标网格（两幅共用）----
+    // 8 条 45° 辐射线对"自 +z 起"与"自 +x 起"两种基准是**同一组**线，
+    // 所以不必分两套画法，只有角标文字不同。
     ctx.strokeStyle = 'rgba(120,135,170,0.2)';
     ctx.lineWidth = 1;
-    for (const fr of [0.5, 1.0]) {
-      ctx.beginPath(); ctx.arc(cx, cy, Rho * fr, 0, Math.PI * 2); ctx.stroke();
+    for (const cx of [cxT, cxP]) {
+      for (const fr of [0.5, 1.0]) {
+        ctx.beginPath(); ctx.arc(cx, cy, Rho * fr, 0, Math.PI * 2); ctx.stroke();
+      }
+      for (let deg = 0; deg < 360; deg += 45) {
+        const a = (deg * Math.PI) / 180;
+        ctx.beginPath(); ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Rho * Math.sin(a), cy - Rho * Math.cos(a));
+        ctx.stroke();
+      }
     }
-    for (let deg = 0; deg < 360; deg += 45) {
-      const a = (deg * Math.PI) / 180;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Rho * Math.sin(a), cy - Rho * Math.cos(a));   // θ=0 在上（+z）
-      ctx.stroke();
-    }
-    // +z / -z 标记
-    ctx.fillStyle = 'rgba(200,210,235,0.85)';
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText('+z', cx - 14, cy - Rho - 6);
-    ctx.fillText('−z', cx - 12, cy + Rho + 16);
 
-    // 等高线（圆环）数值标注：外圈 = 峰值，内圈 = 0.5×峰值
-    ctx.fillStyle = 'rgba(170,190,225,0.8)';
-    ctx.font = '10px system-ui, sans-serif';
-    for (const fr of [0.5, 1.0]) {
-      ctx.fillText((fr === 1 ? '1.0×' : '0.5×') + ' ≈ ' + (fr * mx).toFixed(3),
-        cx + 4, cy + Rho * fr + 14);
-    }
-    // 左上角峰值说明
-    ctx.fillStyle = 'rgba(200,210,235,0.9)';
-    ctx.font = '11px system-ui, sans-serif';
-    const peakLabel = (which === 'Y2') ? 'max |Y|²' : 'max |Y|';
-    ctx.fillText(peakLabel + ' ≈ ' + mx.toFixed(3), 8, 16);
-
-    // 曲线：半径 = |f|（绝对值），极角 = θ（自 +z 向下），符号用颜色区分。
-    // 注意：不能用"带符号半径"，否则 cosθ 在南北极与符号同步翻转会把正负瓣坍缩到一侧。
-    const scale = Rho / mx;
-    const toXY = (i) => {
-      const th = (Math.PI * i) / N;
-      const radius = Math.abs(pts[i]) * scale;
-      return [cx + radius * Math.sin(th), cy - radius * Math.cos(th)];
-    };
-    // 轻填充（中心闭合，自然形成瓣形）
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    for (let i = 0; i <= N; i++) { const [x, y] = toXY(i); ctx.lineTo(x, y); }
-    ctx.lineTo(cx, cy);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(120,200,255,0.14)';
-    ctx.fill();
-    // 描边：按符号着色（正 + 为青，负 − 为橙），显示正负瓣
+    // ---- 曲线：先填充（回路闭合自然成瓣）再逐段描边 ----
     const POS = 'rgba(150,215,255,0.95)';
     const NEG = 'rgba(255,170,90,0.95)';
-    ctx.lineWidth = 2.2;
-    for (let i = 0; i < N; i++) {
-      const [x0, y0] = toXY(i);
-      const [x1, y1] = toXY(i + 1);
-      ctx.strokeStyle = pts[i] >= 0 ? POS : NEG;
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    const FILL = 'rgba(120,200,255,0.14)';
+
+    /**
+     * @param cx    极点 x
+     * @param count 采样点数（分段数 = count）
+     * @param toXY  (i) → [x, y]
+     * @param sign  (i) → 该点的**带符号**值（决定正/负瓣配色）
+     * @param phase 非空时按相位逐段彩虹着色（复解用），此时忽略正负配色
+     */
+    function strokeCurve(cx, count, toXY, sign, phase) {
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      for (let i = 0; i <= count; i++) { const p = toXY(i); ctx.lineTo(p[0], p[1]); }
+      ctx.closePath();
+      ctx.fillStyle = FILL; ctx.fill();
+      ctx.lineWidth = 2.2;
+      for (let i = 0; i < count; i++) {
+        const p0 = toXY(i), p1 = toXY(i + 1);
+        if (phase) {
+          // ★ phaseColor 返回的是 **0..1 的 THREE 风格三元组**（见 math.js 的 lColor 注释），
+          //   而 CSS 的 rgba() 是 0..255 量纲 —— 直接拼会把 0.9 当 0.9/255 处理，
+          //   画出来是一条黑线（实测踩过）。必须 ×255。
+          const c = phase(i);
+          ctx.strokeStyle = 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) +
+            ',' + Math.round(c[2] * 255) + ',0.95)';
+        } else {
+          ctx.strokeStyle = sign(i) >= 0 ? POS : NEG;
+        }
+        ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+      }
     }
+
+    // ---- 左：Θ(θ) 的**完整剖面** ----
+    // ★ 为什么不能只沿 θ∈[0,π] 画一遍：θ 只扫过半个平面，而半径取 |Θ| 恒为非负，
+    //   于是曲线**全部落在 x ≥ 0 的半边**（x = |Θ|·sinθ，sinθ ≥ 0）。
+    //   角度分布的剖面是"绕 z 轴旋转体的截面"，左右两侧都要画 —— 教材上 p_z 的
+    //   角度分布图是**两个相切的整圆**，只画右半边会变成两段半圆弧，与上面那张
+    //   三维球谐曲面（用完整球面映射，两个整球）**对不上**。
+    //   故：先沿 θ: 0→π 走右侧，再沿 θ: π→0 折回走左侧（x 取负），拼成闭合回路。
+    const sT = Rho / mxT;
+    const kOf = function (i) { return i <= N ? i : (2 * N - i); };   // 折返
+    const rightOf = function (i) { return i <= N; };
+    strokeCurve(cxT, 2 * N, function (i) {
+      const k = kOf(i);
+      const r = Math.abs(TH[k]) * sT;
+      const x = r * Math.sin(thArr[k]);
+      return [cxT + (rightOf(i) ? x : -x), cy - r * Math.cos(thArr[k])];
+    }, function (i) { return TH[kOf(i)]; }, null);
+
+    // ---- 右：Φ(φ) ----
+    // 这里 φ 扫满 2π，本身就把左右两侧都走到了（r = |cos φ| 的两瓣正是两个整圆），
+    // 不需要像 Θ 那样折返。
+    const sP = Rho / mxP;
+    const phaseCols = (mode === 'complex')
+      ? function (i) { return OM.phaseColor(m * phArr[i], 0.6); }
+      : null;
+    strokeCurve(cxP, N, function (i) {
+      const r = Math.abs(PH[i]) * sP;
+      return [cxP + r * Math.cos(phArr[i]), cy - r * Math.sin(phArr[i])];
+    }, function (i) { return PH[i]; }, phaseCols);
+
+    // ---- 标注 ----
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(200,210,235,0.95)';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillText('Θ(θ)', cxT, 14);
+    ctx.fillText('Φ(φ)', cxP, 14);
+    // 中间的乘号 —— 整张卡的论点就是它
+    ctx.fillStyle = 'rgba(150,170,210,0.9)';
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.fillText('×', w * 0.5, cy + 5);
+
+    // 极角基准：两幅不同，各自标出
+    ctx.textAlign = 'left';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(170,190,225,0.85)';
+    ctx.fillText('+z', cxT + 3, cy - Rho + 11);
+    ctx.fillText('−z', cxT + 3, cy + Rho - 2);
+    ctx.fillText('+x', cxP + Rho - 15, cy - 3);
+    ctx.fillText('+y', cxP + 3, cy - Rho + 11);
+
+    // ---- 底部：把"相乘"落成可核对的数字 ----
+    // ★ max|Y| 取两因子峰值之积。Y = Θ·Φ 且两个自变量独立，所以 |Y| 的最大值
+    //   必在两个峰值处同时取到 —— 这是**恒等式而非近似**（验证脚本会与网格实测的
+    //   max|Y| 对照，见 README 的验证一节）。
+    ctx.textAlign = 'center';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(170,190,225,0.9)';
+    const f3 = function (x) { return x.toFixed(3); };
+    ctx.fillText('max:  Θ ' + f3(mxT) + '  ×  Φ ' + f3(mxP) + '  =  Y ' + f3(mxT * mxP),
+                 w * 0.5, h - 5);
   }
 
   // --- 截面图 -------------------------------------------------------------
@@ -667,7 +752,7 @@ window.Charts = (function () {
   }
 
   return {
-    drawRadial, drawAngular, drawSection, setRadialHighlight,
+    drawRadial, drawThetaPhi, drawSection, setRadialHighlight,
     /** 截面视图控制（缩放 / 平移 / 复位），由 main.js 的事件绑定驱动 */
     zoomSection, panSection, resetSectionView, sectionState, sectionHalfWidth,
     /** 调试/测试：给定曲线显隐时实际会画的标线（只读，不改变状态） */

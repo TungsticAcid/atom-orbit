@@ -11,6 +11,11 @@
   // ---- 状态 ----------------------------------------------------------------
   const state = {
     n: 3, l: 1, m: 0,
+    // ★ 三维里"看什么"：'wave' = 完整波函数 ψ（等值面 / 粒子云）；
+    //   'spherical' = 角度部分 Y 的球谐曲面。两者在 render3d.js 里是**两套几何**
+    //   （ψ 走标量场 + marching tetrahedra，Y 走极坐标曲面直接三角化），所以切档
+    //   不是换个着色，而是换一条重建路径，且各自有各自的取景尺度。
+    viewTarget: 'wave',
     mode: 'real',            // 'real' | 'complex'
     renderMode: 'surface',   // 'points' | 'surface'（默认等值面）
     colorMode: 'orbital',    // 三维着色：'orbital' 轨道色 | 'phase' 相位色
@@ -23,7 +28,7 @@
     pointCount: 50000,
     plane: 'xz',             // 截面平面
     sectionMode: 'intensity',// 'intensity' | 'phase' | 'contour'
-    angWhich: 'Y',           // 'Y' | 'Y2'
+    angWhich: 'Y',           // 球谐档判据：'Y' | 'Y2'（球谐曲面画 |Y| 还是 |Y|²）
     radial: ['R', 'R2', 'D'],   // D² 已移除（零点与峰值和 D 完全相同，见 charts.js 的说明）
     // ★ 叠加态（辅助功能）：terms 为空时退化为单一本征态 ψ_{n,l,m}
     terms: [],               // [{n,l,m,mode,c:{re,im}}]
@@ -40,7 +45,8 @@
     mSlider: $('#mSlider'), mInput: $('#mInput'),
     levelSlider: $('#levelSlider'), levelInput: $('#levelInput'), levelSet: $('#levelSet'), psiHint: $('#psiHint'),
     pointCountSlider: $('#pointCountSlider'), pointCountInput: $('#pointCountInput'), pointSet: $('#pointSet'),
-    angularView: $('#angularView'),
+    thetaPhiChart: $('#thetaPhiChart'),
+    targetSeg: $('#targetSeg'), yCritSet: $('#yCritSet'),
     orbitTitle: $('#orbitTitle'), modeBadge: $('#modeBadge'),
     formulaTitle: $('#formulaTitle'), formulaBox: $('#formulaBox'), formulaNote: $('#formulaNote'),
     radialChart: $('#radialChart'), sectionChart: $('#sectionChart'),
@@ -116,6 +122,7 @@
     state.l = +els.lSlider.value;
     state.m = +els.mSlider.value;
 
+    state.viewTarget = activeValue('#targetSeg', 'data-target') || 'wave';
     state.mode = activeValue('#modeSeg', 'data-mode') || 'real';
     state.renderMode = activeValue('#renderSeg', 'data-mode') || 'surface';
     state.colorMode = activeValue('#colorSeg', 'data-mode') || 'orbital';
@@ -124,7 +131,7 @@
     state.pointCount = +els.pointCountSlider.value;
     state.plane = activeValue('#planeSeg', 'data-p') || 'xz';
     state.sectionMode = activeValue('#phaseSeg', 'data-mode') || 'intensity';
-    state.angWhich = activeValue('#angSeg', 'data-k') || 'Y';
+    state.angWhich = activeValue('#yCritSeg', 'data-k') || 'Y';
     state.radial = Array.from(document.querySelectorAll('#radialSeg .seg-btn.active')).map((b) => b.getAttribute('data-k'));
   }
 
@@ -311,7 +318,14 @@
   }
 
   function updateViewer() {
-    if (state.renderMode === 'surface') {
+    // ★ 两个档位是两条独立的重建路径，不是一个开关的两个分支：
+    //   'spherical' 画极坐标曲面 r = |Y|（解析形状，直接三角化）；
+    //   'wave'      画 ψ 的等值面（标量场 + marching tetrahedra）或粒子云。
+    //   所以这里用 if/else 而不是在渲染模式里再加一个维度。
+    const sph = (state.viewTarget === 'spherical');
+    if (sph) {
+      Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich);
+    } else if (state.renderMode === 'surface') {
       const key = currentFieldKey();
       if (key !== lastFieldKey) {
         // 拖动相位滑块时用较低分辨率预览（每帧重建等值面，高分辨率会卡）；
@@ -332,16 +346,23 @@
         : OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, state.colorMode);
       Orbit3D.updateCloud(cloud);
     }
-    Orbit3D.setVisibility(state.renderMode);
+    Orbit3D.setVisibility(sph ? 'spherical' : state.renderMode);
     Orbit3D.setAutoRotate($('#autoRotate').checked);
-    // 依据渲染模式切换对应的参数组（等值面阈值 / 粒子数）
-    els.levelSet.style.display = (state.renderMode === 'surface') ? '' : 'none';
-    els.pointSet.style.display = (state.renderMode === 'points') ? '' : 'none';
+    // 右栏参数组：按「档位 + 渲染模式」显示当下真正起作用的那一组，其余收起来。
+    // ★ 球谐档要收起「三维渲染」与「三维着色」两整组 —— 球谐是解析曲面，没有
+    //   粒子云/等值面之分，配色也由实/复函数决定。留着它们就会出现"点了没反应"。
+    els.yCritSet.style.display       = sph ? '' : 'none';
+    document.getElementById('renderGroup').style.display = sph ? 'none' : '';
+    document.getElementById('colorGroup').style.display  = sph ? 'none' : '';
+    els.levelSet.style.display = (!sph && state.renderMode === 'surface') ? '' : 'none';
+    els.pointSet.style.display = (!sph && state.renderMode === 'points') ? '' : 'none';
   }
 
   function updateCharts() {
     Charts.drawRadial(els.radialChart, state.n, state.l, state.radial);
-    Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich);
+    // Θ/Φ 卡片画的是 Y 的**两个因子**（不随 |Y|/|Y|² 判据变 —— 判据改的是三维里
+    // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）
+    Charts.drawThetaPhi(els.thetaPhiChart, state.l, state.m, state.mode);
     Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
   }
 
@@ -544,7 +565,8 @@
     bindSeg('#psiSeg', 'data-mode');
     bindSeg('#phaseSeg', 'data-mode');
     bindSeg('#planeSeg', 'data-p');
-    bindSeg('#angSeg', 'data-k');
+    bindSeg('#yCritSeg', 'data-k');
+    bindSeg('#targetSeg', 'data-target');
     // 径向多选（保证至少一个激活）
     $('#radialSeg').addEventListener('click', (e) => {
       const btn = e.target.closest('.seg-btn');
@@ -562,15 +584,16 @@
     // 窗口缩放
     window.addEventListener('resize', () => {
       Orbit3D.resize(els.viewer.clientWidth, els.viewer.clientHeight);
-      if (els.angularView) Orbit3D.resizeAngular(els.angularView.clientWidth, els.angularView.clientHeight);
       updateCharts();
     });
   }
 
   // ---- 动画循环 -----------------------------------------------------------
+  // ★ 只有一个渲染器：球谐曲面合并进主场景后，不再有第二套 render。
+  //   （漏删这里的 renderAngular() 会让 rAF 链在第一帧就抛错断掉 —— 画面定格、
+  //   自动旋转失效，而首帧看起来完全正常，是个很难发现的形态。）
   function animate() {
     Orbit3D.render();
-    Orbit3D.renderAngular();
     requestAnimationFrame(animate);
   }
 
@@ -638,7 +661,8 @@
       silentSeg('#psiSeg', 'data-mode', s.psiCriterion);
       silentSeg('#planeSeg', 'data-p', s.plane);
       silentSeg('#phaseSeg', 'data-mode', s.sectionMode);
-      silentSeg('#angSeg', 'data-k', s.angularWhich);
+      silentSeg('#yCritSeg', 'data-k', s.angularWhich);
+      silentSeg('#targetSeg', 'data-target', s.viewTarget);
       // 径向曲线组是多选
       const want = s.radial || [];
       document.querySelectorAll('#radialSeg .seg-btn').forEach((b) => {
@@ -696,7 +720,8 @@
       return setSlider(els.levelSlider, levelToSlider(f));
     },
     setParticleCount(p) { return setSlider(els.pointCountSlider, p.count); },
-    setAngularView(p) { return setSeg('#angSeg', 'data-k', p.which); },
+    setAngularView(p) { return setSeg('#yCritSeg', 'data-k', p.which); },
+    setViewTarget(p) { return setSeg('#targetSeg', 'data-target', p.target); },
     setSectionPlane(p) { return setSeg('#planeSeg', 'data-p', p.plane); },
     setSectionMode(p) { return setSeg('#phaseSeg', 'data-mode', p.mode); },
     showRadial(p) {
@@ -776,6 +801,7 @@
       };
       return {
         n: state.n, l: state.l, m: state.m,
+        viewTarget: state.viewTarget,
         wavefunction: state.mode,
         render: state.renderMode,
         color: state.colorMode,
@@ -836,7 +862,9 @@
         Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode);
         return true;
       }
-      return false;      // 角度分布是 three.js 单例，不支持（见 ChartOverlay 里的说明）
+      // 球谐曲面不是图表（它是主三维视图本身）；下面那张 Θ/Φ 卡片倒是普通 2D canvas，
+      // 技术上可以支持浮窗，本轮先不开放，留作后续。
+      return false;
     },
 
     /**
@@ -863,13 +891,11 @@
   // ---- 启动 ---------------------------------------------------------------
   function start() {
     Orbit3D.init(els.viewer);
-    if (els.angularView) Orbit3D.initAngular(els.angularView);
     bindEvent();
     // 初始尺寸需要等布局稳定（slider 在 style 之后写回，重新布局）
     requestAnimationFrame(() => {
       recompute();
       Orbit3D.resize(els.viewer.clientWidth, els.viewer.clientHeight);
-      if (els.angularView) Orbit3D.resizeAngular(els.angularView.clientWidth, els.angularView.clientHeight);
       animate();
     });
   }

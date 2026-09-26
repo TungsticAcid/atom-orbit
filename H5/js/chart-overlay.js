@@ -21,9 +21,11 @@
 window.ChartOverlay = (function () {
   'use strict';
 
-  // 浮窗支持的目标。★ 角度分布不在此列：它是 three.js **单例**（render3d.js 的
-  // initAngular 只建一套 renderer 与 canvas），没法"再画一份"。要支持得把它的 DOM
-  // 临时搬进来 —— angResizeObs 观察的是容器元素本身、搬迁后仍会生效，留给后续。
+  // 浮窗支持的目标。
+  // ★ 球谐函数不在其中，而且**理由已经变了**：它原先是一个独立的 three.js 小场景
+  //   （单例，没法"再画一份"），现已并入主三维视图 —— 也就是说它本身就占着主舞台，
+  //   不需要再被"搬到三维旁边"（那正是浮窗存在的意义，见本文件开头）。
+  //   下面那张 Θ/Φ 卡片倒是普通 2D canvas，技术上能支持，留给后续。
   const TARGETS = {
     radial: { title: '径向分布' },
     section: { title: '截面密度' },
