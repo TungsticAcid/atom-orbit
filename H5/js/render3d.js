@@ -1194,6 +1194,9 @@ window.Orbit3D = (function () {
     //     一起显示会缩成一小撮；球谐档有自己的参考轴，故此时整体隐藏。
     if (fineObj) fineObj.visible = (mode === 'surface');
     if (decorGroup) decorGroup.visible = !sph;
+    // ★ 辅助几何也要跟着档位走（第 18 条补漏）：径向节面球只对 ψ 有意义，
+    //   切到球谐档必须收起，否则 ψ 档画下的"套娃"会一直留在画面上。
+    syncAuxVisibility(mode);
     // ★ 档位切换时**必须重新取景**，而且只有在这里补才补得全：
     //   两个档的尺度差十几倍（球谐恒为 ANGULAR_FRAME_EXTENT，ψ 随轨道在 1.5～16.7），
     //   而各自的"重建分支"并不对称 —— 进球谐档要走 updateAngular（有 memo），
@@ -1412,6 +1415,14 @@ window.Orbit3D = (function () {
   // ---------------------------------------------------------------------------
   let auxGroup = null;
 
+  /**
+   * 辅助几何（参考球 / 节面高亮）变化时的回调 —— 界面上有一枚「节面」按钮要跟着亮灭，
+   * 而清除它的入口不止一个（按钮、画布左上角的标签、智能体的 spotlightNodes），
+   * 让每条路各自去同步按钮亮态必然会漏；由这里统一广播一次最省事。
+   */
+  let auxChangeCb = null;
+  function notifyAuxChange() { if (auxChangeCb) { try { auxChangeCb(); } catch (e) { /* 忽略 */ } } }
+
   function ensureAuxGroup() {
     if (!auxGroup) { auxGroup = new THREE.Group(); scene.add(auxGroup); }
     return auxGroup;
@@ -1500,8 +1511,12 @@ window.Orbit3D = (function () {
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.userData.kind = 'ring';
+    // 参考球的半径是**ψ 的尺度**（径向图上的横坐标）；球谐档归一到半径 1，
+    // 一起显示会变成一颗包住整个画面的巨球，故按"只在 ψ 档可见"处理。
+    mesh.userData.rOnly = true;
     g.add(mesh);
     setChip('ring', '参考球 r = ' + radius.toFixed(2) + ' a₀  ✕', function () { ringHighlight(0); });
+    notifyAuxChange();
   }
 
   /**
@@ -1509,47 +1524,67 @@ window.Orbit3D = (function () {
    *   type='radial'  → 在每个径向零点半径处画线框球（"套娃"结构）
    *   type='angular' → 在每个角度节面的 θ 处画圆锥、φ 处画过 z 轴的平面
    * 节面几何由 math.js 确定性给出，不依赖视觉推断。
+   *
+   * ★ type 也接受**数组**（如 ['radial','angular']）—— 界面上的「节面」按钮一次点亮两类。
+   *   这时只清除本次要重建的那一类，另一类原样保留（原先一律全清，点第二次会把第一次的抹掉）。
    */
   function spotlightNodes(type, on) {
     const g = ensureAuxGroup();
-    // 清除旧的节面对象
+    const types = Array.isArray(type) ? type.slice() : [type];
+    // 清除旧的节面对象 —— **只清本次涉及的类型**
     for (let i = g.children.length - 1; i >= 0; i--) {
-      if (g.children[i].userData.kind === 'node') {
-        const c = g.children[i];
+      const c = g.children[i];
+      if (c.userData.kind === 'node' && types.indexOf(c.userData.spot) >= 0) {
         g.remove(c); if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose();
       }
     }
     if (!on) {
-      curSpotlight = null;
-      setChip('nodes', null);
+      // 只把被点掉的那几类从记录里去掉；都去掉了才整个清空
+      if (curSpotlight) {
+        curSpotlight.types = curSpotlight.types.filter((t) => types.indexOf(t) < 0);
+        if (!curSpotlight.types.length) curSpotlight = null;
+      }
+      setChip('nodes', curSpotlight
+        ? (curSpotlight.types.map((t) => (t === 'radial' ? '径向节面' : '角度节面')).join(' + ') + '高亮  ✕')
+        : null,
+        curSpotlight ? function () { spotlightNodes(curSpotlight.types, false); } : null);
+      notifyAuxChange();
       return;
     }
-    curSpotlight = { type: type, on: true };
-    // 同一个标签兼管两种节面（radial/angular），点击即全部清除
-    setChip('nodes', (type === 'radial' ? '径向节面' : '角度节面') + '高亮  ✕',
-      function () { spotlightNodes(type, false); });
+    curSpotlight = { types: (curSpotlight ? curSpotlight.types.concat(types) : types)
+      .filter((t, i, a) => a.indexOf(t) === i) };
+    // 同一个标签兼管两类节面，点击即全部清除
+    setChip('nodes', curSpotlight.types.map((t) => (t === 'radial' ? '径向节面' : '角度节面')).join(' + ') + '高亮  ✕',
+      function () { spotlightNodes(curSpotlight.types.slice(), false); });
 
     const S = (window.OrbitApp && window.OrbitApp.getState()) || {};
     const n = S.n, l = S.l, m = S.m, mode = S.wavefunction || 'real';
     const Zn = S.nuclearCharge || 1;            // 径向节面半径随 1/Z 缩，不带 Z 会画错位置
     if (n == null || l == null) return;
-    const R = gridExtent || 10;
+    // ★ 尺度必须**按档取**（第 18 条）：球谐曲面归一到半径 1（取景 ANGULAR_FRAME_EXTENT = 1.8），
+    //   而 gridExtent 是 ψ 的网格尺度（随轨道在 1.5～16.7 之间）。原先一律用 gridExtent，
+    //   于是球谐档下节面锥面/平面被放大十几倍，整片糊在画面上、根本读不出是锥还是面。
+    const sph = (S.viewTarget === 'spherical');
+    const R = sph ? ANGULAR_FRAME_EXTENT : (gridExtent || 10);
 
-    const matR = new THREE.MeshBasicMaterial({ color: 0x7ad4ff, wireframe: true, transparent: true, opacity: 0.30, depthWrite: false });
-    const matA = new THREE.MeshBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false });
-
-    if (type === 'radial') {
+    if (types.indexOf('radial') >= 0) {
       // 径向节面：以核为中心的球壳
       const zeros = OM.radialZeros(n, l, Zn);
       const seg = 48;
       for (const r of zeros) {
         const geo = new THREE.SphereGeometry(r, seg, 24);
-        const mesh = new THREE.Mesh(geo, matR.clone());
+        const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: 0x7ad4ff, wireframe: true, transparent: true, opacity: 0.30, depthWrite: false,
+        }));
         mesh.userData.kind = 'node';
+        mesh.userData.spot = 'radial';
+        // 径向节面只对 ψ 档有意义（球谐档画的是半径 1 的角度曲面，套娃球不在其中）
+        mesh.userData.rOnly = true;
         g.add(mesh);
       }
-      if (!zeros.length) matR.dispose();
-    } else {
+    }
+    if (types.indexOf('angular') >= 0) {
+      const matA = new THREE.MeshBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false });
       const nodes = OM.angularNodes(l, Math.abs(m), mode);
       // 锥面：用"圆环 + 母线"示意，读作以 z 轴为轴、半顶角 θ 的锥
       for (const th of nodes.cones) {
@@ -1558,7 +1593,7 @@ window.Orbit3D = (function () {
         const pts = circle.getPoints(64).map((p) => new THREE.Vector3(p.x, p.y, z));
         const cg = new THREE.BufferGeometry().setFromPoints(pts);
         const line = new THREE.Line(cg, new THREE.LineBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.55 }));
-        line.userData.kind = 'node';
+        line.userData.kind = 'node'; line.userData.spot = 'angular';
         g.add(line);
         // 4 条母线，帮助读出锥面
         for (let k = 0; k < 4; k++) {
@@ -1568,7 +1603,7 @@ window.Orbit3D = (function () {
             new THREE.Vector3(rho * Math.cos(a), rho * Math.sin(a), z),
           ]);
           const ll = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.35 }));
-          ll.userData.kind = 'node';
+          ll.userData.kind = 'node'; ll.userData.spot = 'angular';
           g.add(ll);
         }
       }
@@ -1576,12 +1611,30 @@ window.Orbit3D = (function () {
       for (const ph of nodes.planes) {
         const geo = new THREE.PlaneGeometry(R * 2, R * 2);
         const mesh = new THREE.Mesh(geo, matA.clone());
-        mesh.userData.kind = 'node';
+        mesh.userData.kind = 'node'; mesh.userData.spot = 'angular';
         // 平面法线方向为 φ+90°，绕 z 转 ph 使其落在方位角 ph 处
         mesh.rotation.set(Math.PI / 2, 0, ph);
         g.add(mesh);
       }
-      matR.dispose();
+      matA.dispose();
+    }
+    syncAuxVisibility(sph ? 'spherical' : 'wave');
+    notifyAuxChange();
+  }
+
+  /**
+   * 辅助几何（参考球 / 节面高亮）与当前档位的相容性。
+   *
+   * ★ 原先 setVisibility 完全不管 auxGroup，于是切到球谐档后，ψ 档画下的径向节面球
+   *   会一直留在画面上 —— 而球谐档画的是半径 1 的角度曲面，那些"套娃"球既不在其中、
+   *   也说不通。角度节面（锥面 / 平面）反过来对两档都有意义，故保留。
+   */
+  function syncAuxVisibility(kind) {
+    if (!auxGroup) return;
+    const sph = (kind === 'spherical');
+    for (let i = 0; i < auxGroup.children.length; i++) {
+      const c = auxGroup.children[i];
+      c.visible = c.userData.rOnly ? !sph : true;
     }
   }
 
@@ -1591,14 +1644,35 @@ window.Orbit3D = (function () {
     disposeGrid, setNucleusVisible,
     updateAngular, angularFrameExtent,
     ringHighlight, spotlightNodes,
+    /** 注册「辅助几何变化」回调（界面按钮据此同步亮灭） */
+    setAuxChangeHandler: (fn) => { auxChangeCb = fn; },
     /** 取当前"画上去的辅助几何"状态（参考球 / 节面高亮） */
-    getAnnotations: () => ({ ring: curRingRadius, spotlight: curSpotlight }),
+    getAnnotations: () => ({
+      ring: curRingRadius, spotlight: curSpotlight,
+      /** 各类辅助对象的**可见**数量 —— 供测试与调试确认"切档后径向球确实收起来了" */
+      auxVisible: (function () {
+        const out = { ring: 0, radial: 0, angular: 0 };
+        if (!auxGroup) return out;
+        for (let i = 0; i < auxGroup.children.length; i++) {
+          const c = auxGroup.children[i];
+          if (!c.visible) continue;
+          if (c.userData.kind === 'ring') out.ring++;
+          else if (c.userData.spot === 'radial') out.radial++;
+          else if (c.userData.spot === 'angular') out.angular++;
+        }
+        return out;
+      })(),
+    }),
     /** 还原辅助几何状态；供演示「上一步」回退使用 */
     setAnnotations: (a) => {
       a = a || {};
       ringHighlight(a.ring > 0 ? a.ring : 0);
-      if (a.spotlight && a.spotlight.on) spotlightNodes(a.spotlight.type, true);
-      else spotlightNodes('radial', false);
+      // ★ 先全部清掉再按记录重建 —— curSpotlight 现在记的是**类型数组**（第 18 条），
+      //   回退时若只加不退会出现"上一步之后节面还留着"。
+      spotlightNodes(['radial', 'angular'], false);
+      if (a.spotlight && a.spotlight.types && a.spotlight.types.length) {
+        spotlightNodes(a.spotlight.types, true);
+      }
     },
     /** 相机状态查询（供测试与"预设视角"复用） */
     getCameraState: () => (camera ? {

@@ -315,6 +315,12 @@ input[type="range"]::-moz-range-thumb {
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn-ghost { background: transparent; }
+/* 点亮态（「节面」按钮）：与分段控件的 active 同色系，看得出"这个标注正开着" */
+.btn-ghost.active {
+  background: rgba(255, 138, 212, 0.18);
+  border-color: rgba(255, 138, 212, 0.55);
+  color: #ffc7ec;
+}
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); cursor: pointer; }
 .chk input { accent-color: var(--accent); }
 

@@ -471,6 +471,17 @@ window.Charts = (function () {
   const SECTION_SCALE_MIN = 0.25, SECTION_SCALE_MAX = 8;
   const sectionView = { scale: 1, cu: 0, cv: 0, userAdjusted: false };
 
+  /**
+   * 当前截面是不是"整面为节面"（该平面上 |ψ|² ≈ 0）。
+   *
+   * ★ 第 11 条：提成模块级，是为了把守卫加在**数据入口**（zoomSection / panSection 的
+   *   开头）而不是逐个事件上。卡片图与浮窗图共用同一组控制函数，加在这里两处一起生效，
+   *   main.js 的 wheel / pointerdown / pointermove 三个处理不必各写一遍（写了也容易漏）。
+   *   原先是 drawSection 里的局部量，外面拿不到 —— 于是节面上缩放手势照旧生效，
+   *   "整片空白还能放大"看着像卡住了。
+   */
+  let sectionIsNodal = false;
+
   /** 截面视窗的半宽（世界单位）：缺省时跟随全范围 E = rExtent × 1.05 */
   function sectionHalfWidth(n, l, Z) {
     return (OM.rExtent(n, l, Z) * 1.05) / sectionView.scale;
@@ -487,6 +498,7 @@ window.Charts = (function () {
    * 视图状态留在这里而不是 main.js：它直接决定采样窗口，属于绘制的一部分。
    */
   function zoomSection(factor, anchorU, anchorV) {
+    if (sectionIsNodal) return false;          // 整面为节面：没有可缩放的内容（第 11 条）
     const s0 = sectionView.scale;
     const s1 = Math.max(SECTION_SCALE_MIN, Math.min(SECTION_SCALE_MAX, s0 * factor));
     if (s1 === s0) return false;
@@ -504,9 +516,11 @@ window.Charts = (function () {
 
   /** 平移视窗（世界单位；正值 = 视窗中心向右 / 向下移动） */
   function panSection(du, dv) {
+    if (sectionIsNodal) return false;          // 同上（第 11 条）
     sectionView.cu += du;
     sectionView.cv += dv;
     sectionView.userAdjusted = true;
+    return true;
   }
 
   function resetSectionView() {
@@ -514,11 +528,12 @@ window.Charts = (function () {
     sectionView.userAdjusted = false;
   }
 
-  /** 视窗状态只读副本（供 main.js 换算像素↔世界坐标、以及决定是否显示复位按钮） */
+  /** 视窗状态只读副本（供 main.js 换算像素↔世界坐标、以及决定是否显示复位按钮与光标） */
   function sectionState() {
     return {
       scale: sectionView.scale, cu: sectionView.cu, cv: sectionView.cv,
       userAdjusted: sectionView.userAdjusted,
+      nodal: sectionIsNodal,
     };
   }
 
@@ -707,6 +722,7 @@ window.Charts = (function () {
       }
     }
     const nodalPlane = maxV < 1e-10;      // 该平面密度近似为 0 → 节面
+    sectionIsNodal = nodalPlane;          // 同步给模块级，供 zoom/pan 的守卫与光标判断（第 11 条）
     if (maxV < 1e-12) maxV = 1e-12;
 
     if (sectionMode === 'contour') {

@@ -31,6 +31,11 @@
         <div class="card-head">
           <span class="card-title">三维视图</span>
           <div class="card-head-right">
+            <!-- ★ 第 18 条：把节面**显式画出来**。原先只有智能体能点亮它（spotlightNodes），
+                 学生自己没有任何入口 —— 一个只能靠对话才能看到的几何，等于不存在。
+                 一次点亮两类：径向节面（球壳"套娃"）+ 角度节面（锥面 / 过 z 轴的平面）。
+                 球谐档下径向球会自动收起（那里画的是半径 1 的角度曲面，套娃球不在其中）。 -->
+            <button id="nodeBtn" class="btn btn-ghost" title="把节面画出来：径向节面（球壳）+ 角度节面（锥面 / 平面）">◇ 节面</button>
             <button id="resetView" class="btn btn-ghost" title="重置视角">⟳ 复位</button>
             <label class="chk"><input type="checkbox" id="autoRotate" checked /> 自动旋转</label>
           </div>

@@ -485,6 +485,8 @@
     // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）
     Charts.drawThetaPhi(els.thetaPhiChart, state.l, state.m, state.mode);
     Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
+    // 换轨道 / 换平面都会改变"这一面是不是节面"，光标与触摸策略要跟着变（第 11 条）
+    syncSectionUI();
   }
 
   /**
@@ -493,8 +495,10 @@
    */
   function redrawSection() {
     Charts.drawSection(els.sectionChart, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
+    // ★ 节面上不显示「复位缩放」小控件 —— 那上面本来就没有可缩放的内容（第 11 条）
     const chip = $('#sectionResetChip');
-    if (chip) chip.style.display = Charts.sectionState().userAdjusted ? '' : 'none';
+    const st = Charts.sectionState();
+    if (chip) chip.style.display = (!st.nodal && st.userAdjusted) ? '' : 'none';
   }
 
   /**
@@ -506,6 +510,28 @@
    * @param {Function} onChange 视图变化后调用（重画该 canvas）
    * @returns {boolean} 是否绑定成功
    */
+  /**
+   * 截面图"节面"状态下的界面收尾（第 11 条）。
+   * ★ 主守卫在 charts.js 的数据入口（zoomSection / panSection 一进门就 return false），
+   *   这里只做两件数据层看不到的事：把光标还原、放开触摸滚动 —— 否则节面上拖动会被
+   *   "抓住"却毫无响应，看着像卡死。
+   * ★ 必须**集中一处**同步，因为"节面与否"会在三条路变化：换截面平面（updateCharts）、
+   *   缩放平移（attachSectionView 的 onChange）、换轨道。原先只在 attachSectionView 里
+   *   同步，换平面时就漏了 —— 实测换到 2p_z 的 xy 截面后光标仍是 grab。
+   */
+  const sectionCanvases = [];                 // 卡片图 + 浮窗图（同一份视图状态）
+  function registerSectionCanvas(cv) {
+    if (cv && sectionCanvases.indexOf(cv) < 0) sectionCanvases.push(cv);
+    syncSectionUI();
+  }
+  function syncSectionUI() {
+    const nodal = !!Charts.sectionState().nodal;
+    sectionCanvases.forEach((cv) => {
+      cv.style.cursor = nodal ? 'default' : 'grab';
+      cv.style.touchAction = nodal ? 'auto' : 'none';
+    });
+  }
+
   function attachSectionView(cv, onChange) {
     if (!cv) return false;
     const halfE = () => OM.rExtent(state.n, state.l, state.Z) * 1.05;
@@ -515,8 +541,9 @@
     //   而"放大看暗部"恰恰是这张图的主要用法。故补上捏合。
     const pointers = new Map();
     let lastPinch = 0, lastMid = null;
-    cv.style.cursor = 'grab';
-    cv.style.touchAction = 'none';        // 触屏上自己处理拖动，别让浏览器把页面滚走
+
+    const changed = () => { onChange(); syncSectionUI(); };
+    registerSectionCanvas(cv);
 
     /** 屏幕坐标 → 截面平面坐标（用作缩放锚点："放大指针底下这一块"） */
     function toPlane(clientX, clientY) {
@@ -531,11 +558,13 @@
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       const a = toPlane(e.clientX, e.clientY);
-      if (Charts.zoomSection(Math.exp(-e.deltaY * 0.0015), a.u, a.v)) onChange();
+      if (Charts.zoomSection(Math.exp(-e.deltaY * 0.0015), a.u, a.v)) changed();
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      // 节面：整片空白没什么可拖动/缩放的，不进入手势（否则光标会变 grabbing 却毫无响应）
+      if (Charts.sectionState().nodal) return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
       if (pointers.size === 2) {
@@ -561,7 +590,7 @@
           if (Charts.zoomSection(pinch / lastPinch, a.u, a.v)) dirty = true;
         }
         lastPinch = pinch; lastMid = mid;
-        if (dirty) onChange();
+        if (dirty) changed();
         return;
       }
       if (!drag) return;
@@ -571,7 +600,7 @@
       // 指针右移 → 内容跟着右移 → 视窗中心左移，故取负号
       Charts.panSection(-(e.clientX - drag.x) * k, -(e.clientY - drag.y) * k);
       drag = { x: e.clientX, y: e.clientY };
-      onChange();
+      changed();
     });
     const endDrag = (e) => {
       pointers.delete(e.pointerId);
@@ -583,7 +612,7 @@
     };
     cv.addEventListener('pointerup', endDrag);
     cv.addEventListener('pointercancel', endDrag);
-    cv.addEventListener('dblclick', () => { Charts.resetSectionView(); onChange(); });
+    cv.addEventListener("dblclick", () => { Charts.resetSectionView(); changed(); });
     return true;
   }
 
@@ -747,6 +776,23 @@
       recompute();
     });
     // 通用
+    // 节面显示（第 18 条）：一枚按钮一次点亮两类节面（径向球壳 + 角度锥/平面），再点清除。
+    // ★ 节面属于"画上去的辅助几何"，不在 OrbitApp 的 state 里（见 render3d 的
+    //   getAnnotations/setAnnotations），所以这里与智能体走的是**同一个** render3d 函数；
+    //   按钮亮态由 setAuxChangeHandler 广播同步 —— 清除它的入口不止一个（按钮、画布
+    //   左上角的标签、智能体的 spotlightNodes），各处自己同步必然会漏。
+    const nodeBtn = $('#nodeBtn');
+    if (nodeBtn) {
+      Orbit3D.setAuxChangeHandler(function () {
+        const cur = Orbit3D.getAnnotations().spotlight;
+        nodeBtn.classList.toggle('active', !!(cur && cur.types && cur.types.length));
+      });
+      nodeBtn.addEventListener('click', function () {
+        const cur = Orbit3D.getAnnotations().spotlight;
+        const on = !(cur && cur.types && cur.types.length);
+        Orbit3D.spotlightNodes(['radial', 'angular'], on);
+      });
+    }
     $('#autoRotate').addEventListener('change', () => Orbit3D.setAutoRotate($('#autoRotate').checked));
     $('#resetView').addEventListener('click', () => Orbit3D.resetView());
     // 窗口缩放
