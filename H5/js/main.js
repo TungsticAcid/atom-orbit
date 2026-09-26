@@ -196,13 +196,12 @@
     const l = state.l;
     const degenerate = (l === 0);
     els.yCritSeg.querySelectorAll('.seg-btn').forEach((b) => { b.disabled = degenerate; });
-    if (degenerate) {
-      els.yCritHint.textContent = 'l = 0 时 Y 是常数，|Y| 与 |Y|² 只差一个比例因子 —— 曲面都退化成同一个球面，两个判据没有区别。';
-    } else if (l === 1) {
-      els.yCritHint.textContent = 'p 轨道：|Y|² 的曲面比 |Y| 的"瘦" —— 两个相切的球面变成两个相切的椭球。';
-    } else {
-      els.yCritHint.textContent = '判据换成平方后，瓣与节面的**位置**不变，只是径向轮廓整体收缩。';
-    }
+    // ★ 只留**必要且两档都成立**的一句：原先 l≥1 时写的是"两个相切的球面变成两个相切的椭球"，
+    //   而那是**实数解**才有的形状（复数解画出来是绕 z 轴的旋转体，不是相切的蛋）。
+    //   具体形状留给智能体按学生提问去讲，面板上不铺陈。
+    els.yCritHint.textContent = degenerate
+      ? 'l = 0 时 Y 是常数，两个判据画出来是同一个球面。'
+      : '判据换成平方后，节面位置不变，只是曲面整体收缩。';
   }
 
   /**
@@ -214,7 +213,7 @@
     const v = Number(raw);
     if (raw === '' || !Number.isFinite(v) || !Number.isInteger(v)) { el.classList.add('invalid'); return; }
     let lo, hi, slider;
-    if (which === 'z') { lo = 1; hi = 3; slider = els.zSlider; }
+    if (which === 'z') { lo = +els.zSlider.min; hi = +els.zSlider.max; slider = els.zSlider; }   // 同样从控件读，避免两处各写一份
     else if (which === 'n') { lo = 1; hi = 6; slider = els.nSlider; }
     else if (which === 'l') { lo = 0; hi = Math.min(+els.nSlider.value - 1, 5); slider = els.lSlider; }
     else { lo = -(+els.lSlider.value); hi = +els.lSlider.value; slider = els.mSlider; }
@@ -437,8 +436,10 @@
     //   所以这里用 if/else 而不是在渲染模式里再加一个维度。
     const sph = (state.viewTarget === 'spherical');
     if (sph) {
-      // 球谐曲面是**纯角度函数**，与 Z 无关 —— 所以这一档不传 Z，也不需要传
-      Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich);
+      // 球谐曲面是**纯角度函数**，与 Z 无关 —— 所以这一档不传 Z，也不需要传。
+      // ★ 但着色要传（第 6 条）：这一档原先把配色写死（实数解必然双色、复数解必然彩虹），
+      //   于是"复数解默认纯色"在球谐档无从实现，学生也找不到切换入口。
+      Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich, state.colorMode);
     } else if (state.renderMode === 'surface') {
       const key = currentFieldKey();
       if (key !== lastFieldKey) {
@@ -467,9 +468,11 @@
     //   粒子云/等值面之分，配色也由实/复函数决定。留着它们就会出现"点了没反应"。
     els.yCritSet.style.display       = sph ? '' : 'none';
     document.getElementById('renderGroup').style.display = sph ? 'none' : '';
-    document.getElementById('colorGroup').style.display  = sph ? 'none' : '';
+    // ★ 「三维着色」**不再**在球谐档隐藏（第 6 条）：球谐曲面同样要选配色
+    //   （支壳层单色 / 实数解的正负双色 / 复数解的相位彩虹），复数解的默认也在这里生效。
+    //   原先整组收起，等于"复数解默认纯色"这条要求在这一档根本没有实现的地方。
     // ★ 第 8 条：球谐档原先把「三维着色」整组**静默隐藏**，用户会以为漏做了。
-    //   改为一并显示一行说明，讲清"为什么这一档没有着色选项"。
+    //   改为一并显示一行说明，讲清"为什么这一档没有支壳层色的意义"。
     if (els.sphColorHint) els.sphColorHint.style.display = sph ? '' : 'none';
     if (sph) syncYCritHint();
     els.levelSet.style.display = (!sph && state.renderMode === 'surface') ? '' : 'none';
@@ -700,7 +703,7 @@
     const sup = (state.terms && state.terms.length)
       ? Formula.buildSuperposition(state.terms) : null;
     const f = sup || Formula.buildPsi(state.n, state.l, state.m, state.mode, { highlight: formulaHighlight });
-    els.formulaTitle.textContent = f.title;
+    els.formulaTitle.innerHTML = f.titleHtml || f.title;   // 用 HTML 版：实轨道名要真下标（第 2 条）
     els.formulaNote.textContent = f.note;
     // trust:true 是 \htmlClass 生效的前提（用于按项高亮）
     katex.render(f.latex, els.formulaBox, { throwOnError: false, displayMode: true, trust: true });
@@ -1011,8 +1014,11 @@
      *   缩放即可（psiSuperposition 已接受 Z），不需要退回纯态。
      */
     setNuclearCharge(p) {
+      // ★ 范围从**控件本身**读，不另写一份 —— 两处各写一份就会像刚才那样：控件放开了、
+      //   动作层还卡在 1–3，于是"界面上明明能拖到 5，动作却把 Z=5 拒了"。
+      const lo = +els.zSlider.min, hi = +els.zSlider.max;
       const v = Math.round(+p.Z);
-      if (!(v >= 1 && v <= 3)) return false;
+      if (!(v >= lo && v <= hi)) return false;
       setSlider(els.zSlider, v);
       return true;
     },

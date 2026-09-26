@@ -557,18 +557,26 @@ body.agent-open .layout {
 .se-term { display: flex; align-items: center; gap: 4px; }
 /* 组分表表头：让"纵向这几个数字框各是什么"一目了然（.se-num 46px / .se-amp 56px 对齐） */
 .se-term.se-head { margin-bottom: 1px; }
+/* 组分表表头：让"纵向这几个数字框各是什么"一目了然。
+   ★ 各列宽度只在下面「叠加态分量的解型与轨道列」一处定义 —— 原先这里还写了一份 46/56px，
+     两份都生效、按书写顺序覆盖，改宽度时要改两处才不会失配。 */
 .se-term.se-head .se-hcol {
-  width: 46px; text-align: center; font-size: 11px; line-height: 1.2;
+  text-align: center; font-size: 11px; line-height: 1.2;
   color: var(--text-dim, #9aa7c6); cursor: help;
 }
-.se-term.se-head .se-hcol-c { width: 56px; }
 /* 叠加态分量的「解型」与「轨道 / m」两列（第 4 条：逐项可选实/复）。
    ★ 面板只有约 290px，而这一行现在有 7 个元素（# n l 解型 轨道 c ✕）—— 各列必须收紧，
      轨道列还要能自己伸缩，否则整行溢出容器（实测内容宽 400px > 容器 286px）。 */
 .se-list .se-num { width: 36px; }
-.se-list .se-amp { width: 48px; }
+/* ★ 系数要显示 "0.50" 这样的四位，而 number 输入框的上下步进箭头会占掉约 14px ——
+   48px 减去内边距与箭头，文字区只剩一半，"百分位"那个数字被裁掉（第 4 条）。
+   去掉箭头（系数的微调用不上它），并把省下的宽度还给数字。 */
+.se-list .se-amp { width: 54px; }
+.se-amp::-webkit-outer-spin-button,
+.se-amp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.se-amp { -moz-appearance: textfield; appearance: textfield; }
 .se-term.se-head .se-hcol { width: 36px; }
-.se-term.se-head .se-hcol-c { width: 48px; }
+.se-term.se-head .se-hcol-c { width: 54px; }
 .se-term.se-head .se-hcol-mode { width: 26px; }
 .se-term.se-head .se-hcol-pick { flex: 1 1 60px; min-width: 0; width: auto; }
 .se-mode {

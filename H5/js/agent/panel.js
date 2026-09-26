@@ -1325,18 +1325,27 @@ window.Panel = (function () {
       : '下一步：') + (nx.speech || nx.label || '');
   }
 
-  /** 退回上一步之后：显示"这一步还没执行"，预告即将重播的那一步 */
+  /**
+   * 退回上一步之后。
+   *
+   * ★ 第 14 条：原先正文直接写成 `st.speech`，而 st 是"刚退回到的那一步"——它与退回前
+   *   显示的那一句**恰好是同一句**，于是学生看到的是"点了上一步，文字纹丝不动"，
+   *   只有下面那行提示换了字。现在正文带上"已退回 / 第 N 步待重播"的前缀，
+   *   变化一眼可见；提示行只说操作，不再重复旁白。
+   */
   function renderBack(evt) {
     if (!demoBar) return;
     demoBar.classList.remove('hidden', 'done', 'bad');
-    demoIdx.textContent = '已退回 · 已完成 ' + evt.index + '/' + evt.total + ' 步';
+    const st = evt.step || {};
+    const n = (evt.index || 0) + 1;
+    demoIdx.textContent = '已退回 · 第 ' + n + ' 步待重播（共 ' + evt.total + ' 步）';
     setBarMode('manual');
     demoPrev.disabled = !(evt.index > 0);
-    const st = evt.step || {};
-    demoText.textContent = st.speech || st.label || '（已回到上一步之前）';
+    demoText.textContent = '↩ 已回到这一步之前 —— 第 ' + n + ' 步：' +
+      (st.speech || st.label || '（无旁白）');
     demoText.classList.toggle('muted', false);
     demoNextHint.classList.remove('hidden');
-    demoNextHint.textContent = '下一步（重播）：' + (st.label || '');
+    demoNextHint.textContent = '点「下一步」重播第 ' + n + ' 步';
   }
 
   function renderAuto(evt) {
@@ -1382,17 +1391,31 @@ window.Panel = (function () {
     }
   }
 
-  /** 播完：**不自动收起**，把「上一步 / 重新演示」留在手边 */
+  /**
+
+   * 播完：**不自动收起**，把「上一步 / 重新演示」留在手边。
+   *
+   * ★ 第 15 条：原先这里把正文覆盖成"共 N 步 · 可重新演示…"，**最后一步的旁白就此丢失** ——
+   *   而它是学生判断"这一步发生了什么"的唯一依据，播完就抹掉等于最后一步白讲。
+   *   现在正文保留最后一步的旁白，完成信息放到步号行与提示行上。
+   */
   function renderDone(evt) {
     if (!demoBar) return;
     clearTimeout(demoHideTimer);
-    demoNextHint.classList.add('hidden');
     demoBar.classList.remove('hidden');
     setBarMode('done');
-    demoPrev.disabled = !(evt.canPrev !== false && evt.total > 0);
-    demoIdx.textContent = '演示完成';
-    demoText.textContent = '共 ' + ((evt && evt.total) || 0) + ' 步 · 可重新演示，或退回去重看某一步';
-    demoText.classList.add('muted');
+    const total = (evt && evt.total) || 0;
+    demoPrev.disabled = !(evt.canPrev !== false && total > 0);
+    demoIdx.textContent = '演示完成 · 共 ' + total + ' 步';
+    // 正文保留最后一步的旁白（若确实没有旁白，才退化成完成说明）
+    if (!demoText.textContent || !demoText.textContent.trim()) {
+      demoText.textContent = '共 ' + total + ' 步 · 可重新演示，或退回去重看某一步';
+      demoText.classList.add('muted');
+    } else {
+      demoText.classList.remove('muted');
+    }
+    demoNextHint.classList.remove('hidden');
+    demoNextHint.textContent = '可点「重新演示」从头看，或「上一步」退回去重看某一步';
   }
 
   function hideBar() {

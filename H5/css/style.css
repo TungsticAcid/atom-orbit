@@ -59,12 +59,16 @@ html, body {
   font-size: 22px; font-weight: 700; color: var(--accent);
   min-width: 78px; text-align: right;
 }
-/* m 下标（如前缀里的 m=+1）与实轨道化学惯用名（d_xz） */
-.orbit-title sub { font-size: 0.55em; font-weight: 400; }
+/* m 下标（仅复解档的 m=+1）与实轨道名（p_x、d_xy…）
+   ★ 实轨道名原先写成 0.5em + text-dim（≈11px 的暗灰），而前缀那个 n 是 22px 的强调色 ——
+     一个"3"摆在前面、后面的"p_x"小得几乎看不见，而这恰恰是**实数解档唯一的名字**。
+     现在放大到 0.72em 并用正文色，与 n 组成一个完整的轨道名。 */
+.orbit-title sub { font-size: 0.6em; font-weight: 400; }
 .orbit-title .orbit-real {
-  font-size: 0.5em; font-weight: 400; color: var(--text-dim);
-  margin-left: 8px; white-space: nowrap;
+  font-size: 0.72em; font-weight: 400; color: var(--text);
+  margin-left: 6px; white-space: nowrap;
 }
+.orbit-title .orbit-real sub { font-size: 0.72em; }
 .badge {
   background: linear-gradient(135deg, #2b3d6b, #3b2f6b);
   border: 1px solid #4a5a96;
@@ -368,6 +372,17 @@ input[type="range"]::-moz-range-thumb {
   padding: 14px 20px;
 }
 .chart-overlay.show { display: flex; }
+/* ★ 第 12 条：智能体抽屉**也在右侧**，浮窗靠右停靠时两者必然重叠 ——
+   学生一边听讲解一边看图，结果文字被图盖住。三件事一起做：
+     ① 抽屉打开时（panel.js 会给 body 加 .agent-open）浮窗默认**让到左侧**，
+        讲解与图各占一边；
+     ② 浮窗可**拖到任意位置**（拖标题栏；一旦拖动就转为 fixed 定位，不再受停靠影响）；
+     ③ 可**最小化**成一条标题栏（按钮在右上角）。 */
+body.agent-open .chart-overlay { justify-content: flex-start; }
+.chart-overlay-box.mini { height: auto; }
+.chart-overlay-box.mini .chart-overlay-canvas { display: none; }
+.chart-overlay-head { cursor: grab; touch-action: none; user-select: none; }
+.chart-overlay-head.dragging { cursor: grabbing; }
 .chart-overlay-box {
   pointer-events: auto;                     /* 盒子本体把点击收回来 */
   width: min(820px, 50vw); height: min(660px, 80vh);
@@ -381,6 +396,7 @@ input[type="range"]::-moz-range-thumb {
   margin-bottom: 8px;
 }
 .chart-overlay-title { font-size: 14px; font-weight: 700; color: var(--text, #e6ecff); }
+.chart-overlay-btns { display: flex; align-items: center; gap: 2px; }
 .chart-overlay-x {
   border: none; background: none; color: var(--text-dim, #9aa7c6);
   font-size: 15px; cursor: pointer; padding: 2px 6px; border-radius: 6px;

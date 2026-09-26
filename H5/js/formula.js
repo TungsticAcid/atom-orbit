@@ -592,6 +592,10 @@ window.Formula = (function () {
       // 直接塞 LaTeX 名会原样显示成 "d_{z^2}"。
       title: (useName ? (n + plainName(realName)) : (n + sub)) + ' 轨道' +
         (mLabel ? '（' + mLabel + '）' : '') + ' · ' + modeName,
+      // ★ 卡片标题要用真下标：纯文本版把下划线原样印出来（"3p_x"），
+      //   看着像代码而不像化学式。调用方用 innerHTML 塞这一个字段即可。
+      titleHtml: (useName ? (n + realOrbitalLabelHtml(l, m)) : (n + sub)) + ' 轨道' +
+        (mLabel ? '（' + mLabel + '）' : '') + ' · ' + modeName,
       mLabel: mLabel,
       modeName: modeName,
       note: note,
@@ -602,11 +606,27 @@ window.Formula = (function () {
    * 实轨道名的**纯文本**版：`d_{z^2}` → `d_z²`。
    * ★ 标题与徽标走 textContent，不能含 LaTeX 花括号；直接塞会原样显示成 "d_{z^2}"。
    */
+  /**
+   * 把 `^n` 转成 Unicode 上标（`z^3` → `z³`）。
+   *
+   * ★ 为什么不用 `<sup>`：轨道名整体已经套在 `<sub>` 里（f_z³ 的 z 是下标），
+   *   下标里再嵌上标会把行高撑开、字号也缩到读不出来。Unicode 上标只有一个码位。
+   * ★ 原先只替换了 `^2`，于是 f 轨道那七个名字里凡带三次方的（f_z³、f_y(3x²−y²)…）
+   *   都会原样印成 "z^3" —— 面板上的第一颗实轨道按钮就是。
+   */
+  const SUP_DIGITS = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+                       '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+  function supUnicode(s) {
+    return String(s).replace(/\^(-?\d)/g, function (mm, d) {
+      return (d === '-') ? '⁻' : (SUP_DIGITS[d] || d);
+    });
+  }
+
   function plainName(name) {
     if (!name) return '';
-    return name
-      .replace(/_\{([^}]*)\}/g, function (mm, inner) { return '_' + inner.replace(/\^2/g, '²'); })
-      .replace(/\^2/g, '²');
+    return supUnicode(name
+      .replace(/_\{([^}]*)\}/g, function (mm, inner) { return '_' + inner; })
+      .replace(/\\/g, ''));
   }
 
   /**
@@ -757,16 +777,25 @@ window.Formula = (function () {
     const fm = mono(fac);
     if (!fm) return inner;
     if (inner === '1') return fm;                          // 提出公因式后括号里只剩 1
+    // ★ 这里的字符串判据是安全的，前提是 renderInner 产出的 **扁平** 多项式（只有单项式
+    //   用 " + "/" - " 连接、不含嵌套括号）。若将来它也能吐带括号的因子，就得改用
+    //   topLevelSum（按括号深度扫），否则会把 `x(x² - 3y²)` 误判成多项式之和、套出双括号。
     return / [+\-] /.test(inner) ? (fm + '\\left(' + inner + '\\right)') : (fm + inner);
   }
 
   /**
-   * 实轨道的**显示名**：有惯用名就用惯用名（p_x / d_{xy} / f_{z^3}），
+   * 实轨道的**显示名**：有惯用名就用惯用名（p_x / d_xz / f_z³），
    * 没有（l≥4）就退到直角坐标多项式。两条路都**不含 m** —— 这是"实解不该用 m 标记"
    * 的兜底：宁可用一个长一点的多项式，也不把复解的本征值指标贴到实解上。
+   *
+   * ★ 必须委托 realOrbitalLabelPlain（而不是自己拼 realOrbitalName / realOrbitalCartesian）：
+   *   本函数是**纯文本**入口 —— 唯一的消费者是感知快照（把当前视图注入 LLM 上下文）。
+   *   原先它返回名字的原始记号（`d_{xz}`，带花括号）与多项式的原始 LaTeX
+   *   （`z\left(63z^{4} - …\right)`），于是 l≥4 时快照里会原样混进 LaTeX 源码。
+   *   给 HTML 用的那条路是 realOrbitalLabelHtml，两者不可混。
    */
   function realOrbitalLabel(l, m) {
-    return realOrbitalName(l, m) || realOrbitalCartesian(l, m);
+    return realOrbitalLabelPlain(l, m);
   }
 
   /**
@@ -793,9 +822,7 @@ window.Formula = (function () {
     const name = realOrbitalName(l, m);
     if (!name) return '';
     return name
-      .replace(/_\{([^}]*)\}/g, function (mm, inner) {
-        return '<sub>' + inner.replace(/\^2/g, '²') + '</sub>';
-      })
+      .replace(/_\{([^}]*)\}/g, function (mm, inner) { return '<sub>' + supUnicode(inner) + '</sub>'; })
       .replace(/_([a-z])/g, function (mm, c) { return '<sub>' + c + '</sub>'; });
   }
 
@@ -806,18 +833,42 @@ window.Formula = (function () {
    */
   function realOrbitalLabelHtml(l, m) {
     if (realOrbitalName(l, m)) return realOrbitalNameHtml(l, m);
-    return realOrbitalCartesian(l, m)
-      .replace(/\\left\(/g, '(').replace(/\\right\)/g, ')')
-      .replace(/\^\{(\d+)\}/g, '<sup>$1</sup>');
+    return cartesianBare(l, m).replace(/\^\{(\d+)\}/g, '<sup>$1</sup>');
   }
 
   /**
-   * 实轨道显示名的**纯文本**版（不给 HTML 用的场合，如 console 与标题字符串）。
+   * 直角坐标多项式去掉 LaTeX 的尺寸自适应括号（`\left(`/`\right)` → `(`/`)`）。
+   * HTML 版与纯文本版共用这一步 —— 括号清洗只写一处。
+   */
+  function cartesianBare(l, m) {
+    return realOrbitalCartesian(l, m)
+      .replace(/\\left\(/g, '(').replace(/\\right\)/g, ')');
+  }
+
+  /**
+   * 直角坐标多项式的**纯文本**版：在 cartesianBare 基础上把 `^{4}` 这类上标源码
+   * 转成 Unicode 上标（`z⁴`）。
+   *
+   * ★ 为什么必须单独有这个函数：`realOrbitalCartesian` 返回的是 **LaTeX**（给 KaTeX 用），
+   *   而它同时被**纯文本**场合消费 —— 公式下方的说明（#formulaNote 走 textContent）、
+   *   实轨道按钮的 title、日志。那些地方不解析 LaTeX，于是 l≥4 的说明里会原样印出
+   *   `z\left(63z^{4} - 70z^{2}r^{2} + 15r^{4}\right)` —— `\left(`、`^{4}` 全暴露给学生。
+   *   清洗只写一遍（原先 realOrbitalLabelPlain 里有一套、buildNote 里没有），
+   *   否则就是"修了一处、另一处照旧"。
+   */
+  function cartesianPlain(l, m) {
+    return supUnicode(cartesianBare(l, m).replace(/\^\{(\d+)\}/g, '^$1'));
+  }
+
+  /**
+   * 实轨道显示名的**纯文本**版（不给 HTML 用的场合：日志、LLM 上下文、题目）。
+   * ★ 直接从名字构造、而不是把 HTML 版的标签剥掉 —— 剥掉 `<sub>` 会连"下标"这件事
+   *   一起丢掉，`d_z²` 变成 `dz²`（读起来像 d 乘 z²）。这里保留下划线，与 plainName 一致。
    */
   function realOrbitalLabelPlain(l, m) {
-    return realOrbitalLabelHtml(l, m)
-      .replace(/<sup>([^<]*)<\/sup>/g, '$1')
-      .replace(/<sub>([^<]*)<\/sub>/g, '$1');
+    const nm = realOrbitalName(l, m);
+    if (nm) return plainName(nm);
+    return cartesianPlain(l, m);
   }
 
   /** 针对常见情况给出教育性解说 */
@@ -832,6 +883,26 @@ window.Formula = (function () {
    *     cos(mφ) 的瓣在 φ = kπ/|m|，sin(mφ) 的在 φ = (π/2+kπ)/|m|，两者相差 π/(2|m|)，
    *     换成角度就是 90°/|m| —— |m|=1 得 90°（x 型转成 y 型）、|m|=2 得 45°（十字转成对角）。
    */
+  /**
+   * 判断一个表达式在**顶层**是否有加减号（即它整体是一个多项式之和，而不是一个乘积）。
+   *
+   * ★ 不能用 `/ [+-] /` 这种"字符串里有没有加减号"的判据：`x(x⁴ - 10x²y² + 5y⁴)`
+   *   里的减号在**括号内**，它是乘积、不是和 —— 判成"和"会套出 `(x(x⁴-…))` 这种双层括号。
+   *   真正的判据是"括号深度为 0 时遇到的加减号"：只有那时它才是整个表达式的顶层运算符。
+   */
+  function topLevelSum(s) {
+    let depth = 0;
+    for (let i = 1; i < s.length - 1; i++) {
+      const ch = s[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (depth === 0 && (ch === '+' || ch === '-') && s[i - 1] === ' ' && s[i + 1] === ' ') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function buildNote(n, l, m, mode) {
     const sub = SUBSHELL[Math.min(l, SUBSHELL.length - 1)];
     if (n === 1 && l === 0) return '1s：球对称，概率密度随半径单调衰减；没有径向节点。';
@@ -851,9 +922,19 @@ window.Formula = (function () {
     if (mode === 'real') {
       if (l === 3) naming = '（f 这七个名是惯例用法，各书用字略有出入。）';
       else if (l >= 4) {
+        // ★ 两件事一起改（用户第 7、10 条）：
+        //   ① 多项式必须走 cartesianPlain：这里走的是 textContent（KaTeX 不解析），
+        //      直接拼 realOrbitalCartesian 会把 `\left(`、`^{4}` 原样印给学生；
+        //   ② 不再提"按教材 Y_{lf(r)} 的写法"——那是把某本书的记号当标准。
+        //      中性说法是"用角向部分的直角坐标多项式标记"，书上怎么写由参考书目去交代。
+        //   ★ 多项式含加减项时**必须加括号**：`35z⁴ - 30z²r² + 3r⁴ / r⁴` 会被读成
+        //     最后一项才除以 r⁴ —— 而 Y 是整个多项式除以 rˡ。单一项（z(x⁴-…)、xyz(…)）
+        //     本身就是乘积，不能再套括号。
+        const poly = cartesianPlain(l, m);
         naming = '（' + sub + ' 支壳层没有公认的通名 —— 高角动量轨道在文献里只按对称性分类。'
-          + '故这里按教材 Y_{lf(r)} 的写法，把角向部分记作 f(r) = '
-          + realOrbitalCartesian(l, m) + '，Y = f(r)/r^' + l + '。）';
+          + '这里用角向部分的直角坐标多项式标记：Y = '
+          + (topLevelSum(poly) ? '(' + poly + ')' : poly)
+          + ' / r' + supUnicode('^' + l) + '。）';
       }
     }
     return '径向节点 ' + radialNodes + ' 个、角度节面 ' + l + ' 个；' + orient + naming;

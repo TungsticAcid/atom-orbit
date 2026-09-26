@@ -1197,6 +1197,8 @@ window.Orbit3D = (function () {
     // ★ 辅助几何也要跟着档位走（第 18 条补漏）：径向节面球只对 ψ 有意义，
     //   切到球谐档必须收起，否则 ψ 档画下的"套娃"会一直留在画面上。
     syncAuxVisibility(mode);
+    // ★ 节面高亮还要跟着**轨道**走（第 11 条）：换 n/l/m/Z/实复之后重建
+    refreshSpotlight();
     // ★ 档位切换时**必须重新取景**，而且只有在这里补才补得全：
     //   两个档的尺度差十几倍（球谐恒为 ANGULAR_FRAME_EXTENT，ψ 随轨道在 1.5～16.7），
     //   而各自的"重建分支"并不对称 —— 进球谐档要走 updateAngular（有 memo），
@@ -1332,9 +1334,10 @@ window.Orbit3D = (function () {
   // 按 (l,m,mode,which) 重建球谐曲面。
   // memo 守卫：同参数直接返回 —— 这个函数在每次 recompute 时都会被调用，
   // 而建一遍网格要遍历 31×61 个点，不缓存的话拖滑块会明显卡。
-  function updateAngular(l, m, mode, which) {
+  function updateAngular(l, m, mode, which, colorMode) {
     if (!scene) return;
-    const key = l + '-' + m + '-' + mode + '-' + which;
+    const cm = colorMode || 'phase';
+    const key = l + '-' + m + '-' + mode + '-' + which + '-' + cm;
     if (key === angLastKey && angMesh) return;
     angLastKey = key;
     ensureAngGroup();
@@ -1374,7 +1377,16 @@ window.Orbit3D = (function () {
         //   是相位（实函数 → 符号），而相位不因把半径画成 |Y| 还是 |Y|² 而改变 ——
         //   判据只改轮廓。（原先 |Y|² 另走一套强度色标，是全项目唯一一处"颜色随判据变"。）
         const idx = (i * (NP + 1) + j) * 3;
-        const col = OM.phaseColor(OM.angularPhase(mode, l, m, th, ph), 0.62);
+        // ★ 着色现在**跟随「三维着色」控件**（第 6 条），不再写死：
+        //   · 'orbital' → 整个曲面刷成该支壳层的单色（与波函数档的支壳层色同一套）。
+        //     ★ 这是复数解档的**默认** —— 复解的相位绕 z 轴一圈就把颜色走遍，
+        //       默认给彩虹的话学生第一眼看到的是"花"而不是"这个角向部分的形状"。
+        //   · 'phase'   → 实数解按 sign(Y) 分正负双色、复数解按相位彩虹（原先的行为）。
+        //   注意判据用 OM.angularPhase（**不含 R(r)**）：这张图画的是 r = |Y|，
+        //   没有径向信息，硬乘一个 R 会把"径向节点"错误地混进来。
+        const col = (cm === 'orbital')
+          ? OM.lColor(l)
+          : OM.phaseColor(OM.angularPhase(mode, l, m, th, ph), 0.62);
         clr[idx] = col[0]; clr[idx + 1] = col[1]; clr[idx + 2] = col[2];
       }
     }
@@ -1459,10 +1471,13 @@ window.Orbit3D = (function () {
       el = document.createElement('button');
       el.type = 'button';
       el.className = 'viewer-chip hidden';
-      el.addEventListener('click', onClear);
       chipBar().appendChild(el);
       chipEls[key] = el;
     }
+    // ★ 每次调用都**重绑** onclick，而不是只在创建时绑一次：回调常常闭包着"当时的状态"
+    //   （如节面高亮记的 types），只绑一次的话，第一次那个闭包会一直生效、后面换了语义
+    //   也换不掉。这正是"参考球/节面有时候点不掉"最可能的来源（第 16 条）。
+    if (typeof onClear === 'function') el.onclick = onClear;
     if (text) {
       el.textContent = text;
       el.title = title || '点击移除该标注';
@@ -1619,23 +1634,71 @@ window.Orbit3D = (function () {
       matA.dispose();
     }
     syncAuxVisibility(sph ? 'spherical' : 'wave');
+    auxSpotKey = spotKeyOf();
     notifyAuxChange();
   }
 
+  /** 节面几何依赖的轨道参数指纹 —— 变了就得重建 */
+  function spotKeyOf() {
+    const S = (window.OrbitApp && window.OrbitApp.getState()) || {};
+    return [S.n, S.l, S.m, S.wavefunction, S.nuclearCharge, S.viewTarget, S.terms ? S.terms.length : 0].join('/');
+  }
+
   /**
-   * 辅助几何（参考球 / 节面高亮）与当前档位的相容性。
+   * 节面高亮**跟着轨道走**（第 11 条）。
+   *
+   * ★ 原先 spotlightNodes 只在被显式调用时建一次，之后换轨道（n/l/m、实/复、Z、甚至
+   *   切球谐档）都不会重建 —— 于是"从 3s 切到 3d"之后，画面上仍然是 3s 的那两层球壳，
+   *   学生数出来的节点数是**上一个轨道**的。这类"看着还在、其实已经错了"的残留最难发现。
+   * ★ 放在 setVisibility 里（每次 recompute 都经过），并用参数指纹去重 —— 拖滑块时
+   *   每帧重建一张球壳网格没有必要。
+   */
+  let auxSpotKey = null;
+  function refreshSpotlight() {
+    if (!curSpotlight || !curSpotlight.types.length) return;
+    if (spotKeyOf() === auxSpotKey) return;
+    spotlightNodes(curSpotlight.types.slice(), true);
+  }
+
+  /**
+   * 辅助几何与当前档位的相容性。
    *
    * ★ 原先 setVisibility 完全不管 auxGroup，于是切到球谐档后，ψ 档画下的径向节面球
    *   会一直留在画面上 —— 而球谐档画的是半径 1 的角度曲面，那些"套娃"球既不在其中、
-   *   也说不通。角度节面（锥面 / 平面）反过来对两档都有意义，故保留。
+   *   也说不通。
+   * ★ 第 16 条：径向类（参考球 / 径向节面球）在球谐档要**移除**而不是"隐藏" ——
+   *   隐藏会留下"看不见、却还挂在那里、画布上的 chip 也还在"的中间态；学生要么点不到
+   *   那个 chip，要么点了没反应（它本来就在球谐档里不显示），感受就是"关不掉"。
+   *   直接移除并把 chip 一并收掉，语义就只有一种：这一档没有它。
+   *   角度节面（锥面 / 平面）反过来对两档都有意义，保留。
    */
   function syncAuxVisibility(kind) {
     if (!auxGroup) return;
     const sph = (kind === 'spherical');
-    for (let i = 0; i < auxGroup.children.length; i++) {
-      const c = auxGroup.children[i];
-      c.visible = c.userData.rOnly ? !sph : true;
+    if (!sph) {
+      for (let i = 0; i < auxGroup.children.length; i++) auxGroup.children[i].visible = true;
+      return;
     }
+    let changed = false;
+    for (let i = auxGroup.children.length - 1; i >= 0; i--) {
+      const c = auxGroup.children[i];
+      if (!c.userData.rOnly) { c.visible = true; continue; }
+      auxGroup.remove(c);
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) c.material.dispose();
+      changed = true;
+    }
+    if (curRingRadius) { curRingRadius = 0; setChip('ring', null); changed = true; }
+    if (curSpotlight && curSpotlight.types.indexOf('radial') >= 0) {
+      curSpotlight.types = curSpotlight.types.filter((t) => t !== 'radial');
+      setChip('nodes', curSpotlight.types.length
+        ? (curSpotlight.types.map((t) => (t === 'radial' ? '径向节面' : '角度节面')).join(' + ') + '高亮  ✕')
+        : null,
+        curSpotlight.types.length ? function () { spotlightNodes(curSpotlight.types.slice(), false); } : null);
+      if (!curSpotlight.types.length) curSpotlight = null;
+      changed = true;
+    }
+    if (changed) notifyAuxChange();
   }
 
   const api = {
@@ -1644,11 +1707,56 @@ window.Orbit3D = (function () {
     disposeGrid, setNucleusVisible,
     updateAngular, angularFrameExtent,
     ringHighlight, spotlightNodes,
+    /**
+     * 把世界点投到屏幕像素。
+     * ★ 判「画面里这个东西是不是太大了」时，靠看截图和靠心算是两回事 —— 相机的视锥是
+     *   透视的，物体占多大取决于它到**视轴**的横向距离，不只是相机距离，很容易算错
+     *   （本轮就把 40% 误算成 4%，白查了一轮）。投一下最直接。
+     */
+    _proj: (x, y, z) => {
+      if (!camera) return null;
+      const v = new THREE.Vector3(x, y, z).project(camera);
+      const r = renderer.getSize(new THREE.Vector2());
+      return { sx: +(((v.x + 1) / 2) * r.x).toFixed(1), sy: +(((1 - v.y) / 2) * r.y).toFixed(1),
+        w: r.x, h: r.y, ndc: [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)] };
+    },
     /** 注册「辅助几何变化」回调（界面按钮据此同步亮灭） */
     setAuxChangeHandler: (fn) => { auxChangeCb = fn; },
+    /**
+     * 场景里各对象的可见性与世界尺度 —— 排查"画面里那个大绿块到底是什么"这类问题用。
+     * 只报概览（名字 / visible / 尺度 / 顶点数），不泄露任何内部结构。
+     */
+    _dumpScene: () => {
+      if (!scene) return null;
+      const out = [];
+      scene.traverse((o) => {
+        if (!o.isMesh && !o.isPoints && !o.isLine && !o.isLineSegments && !o.isGroup) return;
+        if (o.isGroup) return;
+        const s = new THREE.Vector3();
+        o.getWorldScale(s);
+        out.push({
+          type: o.type, vis: o.visible, scale: +s.x.toFixed(3),
+          verts: o.geometry && o.geometry.getAttribute('position') ? o.geometry.getAttribute('position').count : 0,
+        });
+      });
+      return out;
+    },
     /** 取当前"画上去的辅助几何"状态（参考球 / 节面高亮） */
     getAnnotations: () => ({
       ring: curRingRadius, spotlight: curSpotlight,
+      // 球谐曲面的**实际顶点最大半径**：它按设计恒为 1（归一化到单位球），
+      // 报出来是为了让"画面里它有多大"可核对，而不是靠看截图猜。
+      angRadius: (function () {
+        if (!angMesh || !angMesh.geometry) return null;
+        const p = angMesh.geometry.getAttribute('position');
+        if (!p) return null;
+        let mx = 0;
+        for (let i = 0; i < p.count; i++) {
+          const r = Math.hypot(p.getX(i), p.getY(i), p.getZ(i));
+          if (r > mx) mx = r;
+        }
+        return +mx.toFixed(4);
+      })(),
       /** 各类辅助对象的**可见**数量 —— 供测试与调试确认"切档后径向球确实收起来了" */
       auxVisible: (function () {
         const out = { ring: 0, radial: 0, angular: 0 };
@@ -1681,6 +1789,11 @@ window.Orbit3D = (function () {
       dist: viewCtl ? +viewCtl.getDistance().toFixed(3) : null,
       gridExtent: +gridExtent.toFixed(3),
       autoRotate: viewCtl ? viewCtl.isAutoRotate() : null,
+      // ★ fov / aspect / 帧尺度也报出来：判断"物体在画面里该多大"离不开它们。
+      //   少了这三个数，截图看起来"太大/太小"时只能猜（本轮就因为缺它多绕了一圈）。
+      fov: +camera.fov.toFixed(2),
+      aspect: +camera.aspect.toFixed(3),
+      frameExtent: +(typeof currentFrameExtent === 'function' ? currentFrameExtent() : 0).toFixed(3),
     } : null),
   };
   return api;

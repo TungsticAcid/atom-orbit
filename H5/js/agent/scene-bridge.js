@@ -37,11 +37,13 @@ window.SceneBridge = (function () {
   const VOCAB = {
     setNuclearCharge: {
       group: '原子', concept: 'K1',
-      desc: '设置核电荷数 Z（类氢原子）：1 氢、2 氦离子 He⁺、3 锂离子 Li²⁺。'
+      desc: '设置核电荷数 Z（类氢原子）：1 氢、2 氦离子 He⁺、3 锂离子 Li²⁺、'
+          + '4 铍离子 Be³⁺、5 硼离子 B⁴⁺、6 碳离子 C⁵⁺（第一周期的全部类氢离子）。'
+          + '类氢＝只含一个电子，故任意 Z 都适用。'
           + '类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），**角向部分与 Z 无关** —— '
           + '所以换 Z 会改变三维尺度、径向分布图横轴、截面视窗与能级，但球谐曲面纹丝不动。'
           + '★ 与量子数不同，换 Z **不会**退出叠加态（Z 是原子的属性，叠加态整体跟着缩放）。',
-      params: { Z: 'int 1–3' },
+      params: { Z: 'int 1–6' },
     },
     setQuantumNumbers: {
       group: '量子数', concept: 'K1',
@@ -807,12 +809,13 @@ window.SceneBridge = (function () {
     const S = () => (window.OrbitApp ? window.OrbitApp.getState() : {});
     switch (name) {
       case 'setNuclearCharge': {
-        // ★ Z 是**枚举**（1 氢 / 2 氦离子 / 3 锂离子），不是连续量 —— 这里必须拒绝而不是钳制：
-        //   钳制会变成"静默改请求"（模型说 Z=9、画面给 Li²⁺），而它很可能照旧按 9 去讲。
+        // ★ Z 是**枚举**（第一周期六个类氢离子），不是连续量 —— 这里必须拒绝而不是钳制：
+        //   钳制会变成"静默改请求"（模型说 Z=9、画面给 C⁵⁺），而它很可能照旧按 9 去讲。
         //   半径、阈值这类连续量才适合钳制（模型说 99% → 给到上限 80% 是它想要的意思）。
         const z = Number(p.Z);
-        if (!Number.isInteger(z) || z < 1 || z > 3) {
-          return { err: 'Z 应为 1–3 的整数（1 氢 / 2 氦离子 He⁺ / 3 锂离子 Li²⁺）' };
+        if (!Number.isInteger(z) || z < 1 || z > 6) {
+          return { err: 'Z 应为 1–6 的整数（1 氢 H / 2 氦离子 He⁺ / 3 锂离子 Li²⁺ / '
+            + '4 铍离子 Be³⁺ / 5 硼离子 B⁴⁺ / 6 碳离子 C⁵⁺）' };
         }
         return { params: { Z: z } };
       }

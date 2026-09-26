@@ -46,19 +46,34 @@ window.ChartOverlay = (function () {
     box = el('div', 'chart-overlay-box');
     const head = el('div', 'chart-overlay-head');
     titleEl = el('span', 'chart-overlay-title');
+    // ★ 第 12 条：浮窗原先只能关、不能挪 —— 而它靠右停靠，智能体抽屉也在右侧，
+    //   于是"边听边看"直接变成"图盖住讲解文字"。补两个能力：最小化、拖动。
+    const miniBtn = el('button', 'chart-overlay-x');
+    miniBtn.type = 'button';
+    miniBtn.textContent = '—';
+    miniBtn.title = '最小化 / 展开（只留标题栏）';
+    miniBtn.addEventListener('click', () => {
+      box.classList.toggle('mini');
+      miniBtn.textContent = box.classList.contains('mini') ? '▢' : '—';
+      scheduleRedraw();
+    });
     const closeBtn = el('button', 'chart-overlay-x');
     closeBtn.type = 'button';
     closeBtn.textContent = '✕';
     closeBtn.title = '关闭（Esc）';
     closeBtn.addEventListener('click', close);
+    const btns = el('span', 'chart-overlay-btns');
+    btns.appendChild(miniBtn);
+    btns.appendChild(closeBtn);
     head.appendChild(titleEl);
-    head.appendChild(closeBtn);
+    head.appendChild(btns);
     canvas = el('canvas', 'chart-overlay-canvas');
     box.appendChild(head);
     box.appendChild(canvas);
     overlay = el('div', 'chart-overlay');
     overlay.appendChild(box);
     document.body.appendChild(overlay);
+    bindDrag(head, miniBtn);
 
     // 只观察浮窗内容盒 —— **不要**观察 body（layout.js 里有自激循环的注释警告）
     if (window.ResizeObserver) {
@@ -67,6 +82,50 @@ window.ChartOverlay = (function () {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && isOpen()) close();
     });
+  }
+
+  /**
+   * 拖标题栏移动浮窗（第 12 条）。
+   *
+   * ★ 一旦开始拖就把它转成 `position: fixed` 并写死 left/top：浮窗平时靠 flex 停靠
+   *   （抽屉打开时停左、否则停右），如果继续用 flex 定位、只改 transform，那么每次
+   *   `body.agent-open` 一变，停靠点就会跳，用户拖好的位置也跟着漂。
+   *   转成 fixed 之后，位置只由 left/top 决定，与停靠规则彻底解耦。
+   * ★ 落到视口外要夹回来：拖到屏幕边缘之外就再也抓不到了（没有"重置位置"的入口）。
+   */
+  function bindDrag(head, miniBtn) {
+    let drag = null;
+    head.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target === miniBtn || (e.target.closest && e.target.closest('button'))) return;
+      const r = box.getBoundingClientRect();
+      box.style.position = 'fixed';
+      box.style.left = r.left + 'px';
+      box.style.top = r.top + 'px';
+      box.style.margin = '0';
+      drag = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, w: r.width, h: r.height };
+      head.classList.add('dragging');
+      try { head.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+      e.preventDefault();
+    });
+    head.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const nx = drag.l + (e.clientX - drag.x);
+      const ny = drag.t + (e.clientY - drag.y);
+      // 至少留 60px 在视口内，别拖出去就找不回来
+      const maxX = window.innerWidth - 60, maxY = window.innerHeight - 40;
+      box.style.left = Math.max(-(drag.w - 60), Math.min(maxX, nx)) + 'px';
+      box.style.top = Math.max(0, Math.min(maxY, ny)) + 'px';
+    });
+    const end = (e) => {
+      if (!drag) return;
+      drag = null;
+      head.classList.remove('dragging');
+      try { head.releasePointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+      scheduleRedraw();
+    };
+    head.addEventListener('pointerup', end);
+    head.addEventListener('pointercancel', end);
   }
 
   /** rAF 合并重画：放大后 drawSection 会做 G² 次 psiDensity（G 随缩放升到 512），
@@ -91,6 +150,11 @@ window.ChartOverlay = (function () {
     if (!TARGETS[target] || !window.OrbitApp) return false;
     build();
     if (cur !== target) { cur = target; titleEl.textContent = TARGETS[target].title; }
+    // 打开即展开：这是"要看这张图"的显式请求，不该只给学生一条标题栏。
+    // （用户自己手动最小化的状态仍然保留 —— 那是他关掉再自己打开时的偏好。）
+    box.classList.remove('mini');
+    const mb = box.querySelector('.chart-overlay-btns .chart-overlay-x');
+    if (mb) mb.textContent = '—';
     overlay.classList.add('show');
     // 截面图在浮窗里同样可缩放/平移（sectionView 是 charts.js 的模块状态，与卡片共用）。
     // 只绑一次 —— 重复绑定会让一次拖拽走两遍。
