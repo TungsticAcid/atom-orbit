@@ -303,16 +303,22 @@ window.StateEditor = (function () {
     const list = el('div', { class: 'se-list' });
     const head = el('div', { class: 'se-term se-head' });
     head.appendChild(el('span', { class: 'se-idx', text: '#' }));
-    [['n', '主量子数 n'], ['l', '角量子数 l'], ['m', '磁量子数 m']].forEach(function (kv) {
+    [['n', '主量子数 n'], ['l', '角量子数 l']].forEach(function (kv) {
       head.appendChild(el('span', { class: 'se-hcol', text: kv[0], title: kv[1] }));
     });
+    head.appendChild(el('span', { class: 'se-hcol se-hcol-mode', text: '解型',
+      title: '该分量取波函数的实数解还是复数解。**逐项可选** —— 所以"全实""全复""实复混合"三种都表达得出来。' }));
+    head.appendChild(el('span', { class: 'se-hcol se-hcol-pick', text: '轨道 / m',
+      title: '复数解用磁量子数 m 标记（m 是 L̂z 的本征值指标，对它才有意义）；'
+        + '实数解用实轨道名标记（实解不是 L̂z 的本征函数，m 对它没有意义）。' }));
     head.appendChild(el('span', { class: 'se-hcol se-hcol-c', text: 'c',
-      title: '该分量的系数（本模块只做实系数组合，虚部恒为 0）' }));
+      title: '该分量的系数（本模块只填正实数；虚部与项间相位用下面的「相对相位」表达）' }));
     list.appendChild(head);
     state.terms.forEach(function (t, i) {
+      const md = t.mode || 'real';
       const r = el('div', { class: 'se-term' });
       r.appendChild(el('span', { class: 'se-idx', text: String(i + 1) }));
-      ['n', 'l', 'm'].forEach(function (key) {
+      ['n', 'l'].forEach(function (key) {
         const inp = el('input', { class: 'se-num', type: 'number', value: String(t[key]), title: key });
         inp.onchange = function () {
           const v = parseInt(inp.value, 10);
@@ -325,6 +331,30 @@ window.StateEditor = (function () {
         };
         r.appendChild(inp);
       });
+      // ★ 第 4 条：**逐项**可选实/复。
+      //   实解不是 L̂z 的本征函数，所以对实项来说 m 只是个内部索引 —— 界面上就不给它看，
+      //   换成实轨道名（p_x、d_xy…；l≥4 没有通名，用直角坐标多项式，见 formula.js）。
+      const mb = el('button', { class: 'se-mode' + (md === 'complex' ? ' cx' : ''), text: md === 'complex' ? '复' : '实' });
+      mb.title = (md === 'complex')
+        ? '该分量为**复数解**（L̂z 的本征函数，用 m 标记）—— 点击改为实数解'
+        : '该分量为**实数解**（不是 L̂z 的本征函数，用实轨道名标记）—— 点击改为复数解';
+      mb.onclick = function () { t.mode = (md === 'complex') ? 'real' : 'complex'; push(false); };
+      r.appendChild(mb);
+      // 标记：复解给 m 下拉；实解给实轨道下拉（两者都直接写回同一个 t.m）
+      const sel = el('select', { class: 'se-pick' });
+      const order = [0];
+      for (let mm = 1; mm <= t.l; mm++) order.push(mm, -mm);
+      order.forEach(function (mm) {
+        const label = (md === 'complex')
+          ? ('m = ' + (mm > 0 ? '+' + mm : mm))
+          : ((window.Formula && window.Formula.realOrbitalLabelPlain)
+              ? window.Formula.realOrbitalLabelPlain(t.l, mm) : String(mm));
+        sel.appendChild(el('option', { value: String(mm), text: label }));
+      });
+      sel.value = String(t.m);
+      sel.title = (md === 'complex') ? '磁量子数 m' : '实轨道（该支壳层的 ' + order.length + ' 个实轨道之一）';
+      sel.onchange = function () { t.m = parseInt(sel.value, 10); push(false); };
+      r.appendChild(sel);
       const amp = el('input', { class: 'se-amp', type: 'number', step: '0.1', value: t.c.re.toFixed(2), title: '系数' });
       amp.onchange = function () {
         const v = Number(amp.value);
@@ -351,8 +381,9 @@ window.StateEditor = (function () {
     const addRow = el('div', { class: 'se-addrow' });
     const add = el('button', { class: 'se-btn', text: '+ 添加态' });
     add.onclick = function () {
-      const last = state.terms[state.terms.length - 1] || { n: 3, l: 2, m: 0 };
-      state.terms.push({ n: last.n, l: last.l, m: last.m, mode: 'real', c: { re: 0.5, im: 0 } });
+      const last = state.terms[state.terms.length - 1] || { n: 3, l: 2, m: 0, mode: 'real' };
+      // ★ 沿用上一项的**解型**：混着编的时候（一个实项一个复项）不该每次都被拽回实解
+      state.terms.push({ n: last.n, l: last.l, m: last.m, mode: last.mode || 'real', c: { re: 0.5, im: 0 } });
       push(false);
     };
     addRow.appendChild(add);
@@ -420,7 +451,10 @@ window.StateEditor = (function () {
       ['⟨E⟩', r.energy.mean + ' eV', r.energy.definite ? '有确定值' : '无确定值'],
       ['⟨L²⟩', r.L2.mean + ' ħ²', r.L2.definite ? '有确定值' : '无确定值'],
       ['⟨L<sub>z</sub>⟩', r.Lz.mean + ' ħ', r.Lz.definite ? '有确定值' : '无确定值'],
-      ['L<sub>z</sub> 谱', r.Lz.spectrum.map(function (s) { return 'm=' + s.m + ':' + (s.prob * 100).toFixed(1) + '%'; }).join('　'), ''],
+      ['L<sub>z</sub> 谱', r.Lz.spectrum.map(function (s) { return 'm=' + s.m + ':' + (s.prob * 100).toFixed(1) + '%'; }).join('　'),
+        // ★ 含实解分量时，谱里会看到 ±|m| 各一半 —— 那不是画错了，而是"实解不是 L̂z 的
+        //   本征函数"的直接体现（复解才是）。这一行就是为了让这件事在界面上一眼可见。
+        r.Lz.hasRealNonZero ? '含实解 → ±|m| 各半' : ''],
       ['是否定态', r.isStationary ? '是（各分量能量简并）' : '否（能量不同 → 密度随时间变）', ''],
     ].forEach(function (row) {
       const d = el('div', { class: 'se-obs-row' });
@@ -542,6 +576,23 @@ window.StateEditor = (function () {
     if (d) d.open = true;
   }
 
+  /**
+   * 整区可用/不可用（第 9 条）：切到**球谐档**时整块收起并隐藏。
+   *
+   * ★ 依据不是"球谐档用不上"，而是**叠加态在这里根本不成立**：
+   *   叠加态描述的是**完整波函数** ψ = Σcᵢψᵢ（render3d 只拿 l/m/mode 去画球谐曲面，
+   *   各分量的 n 被整块丢弃）；而球谐曲面画的是**角度部分** Y。二者只有在各分量 n
+   *   相同时才能对上，而内置预设 ψ_1s+ψ_2s 恰恰是 n 不同的那一类 —— 所以球谐档里
+   *   保留叠加态会出现"三维画着某个单一 l 的曲面、公式却写着多分量叠加"的当场矛盾。
+   *   与其显示一个对不上的东西，不如收起入口并把话说清楚（见 sphereHint）。
+   */
+  function setAvailable(on) {
+    const d = document.getElementById('advZone');
+    if (!d) return;
+    d.style.display = on ? '' : 'none';
+    if (!on) d.open = false;                 // 收起，免得切回来时突然弹开
+  }
+
   function build() {
     if (!document.getElementById('advZone')) {
       const panel = document.querySelector('.panel');
@@ -605,6 +656,6 @@ window.StateEditor = (function () {
     });
   }
 
-  return { init, applyPreset, clear, expand, PRESETS, PHASE_PRESETS,
+  return { init, applyPreset, clear, expand, setAvailable, PRESETS, PHASE_PRESETS,
     addPreset, removePreset, isCustom, _state: state };
 })();

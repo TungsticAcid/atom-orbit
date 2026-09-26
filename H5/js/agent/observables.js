@@ -95,16 +95,29 @@ window.Observables = (function () {
     const ls = terms.map((t) => t.l);
     const lSame = ls.every((v) => v === ls[0]);
 
-    // L_z（只依赖 m）与谱分布
-    const Lz = terms.reduce((a, t, i) => a + w[i] * HBAR * t.m, 0);
+    // ---- L_z：**必须按实/复分档**，这是原先算错的地方 ----
+    // ★ m 是**复**解 ψ_{n,l,m} 的 L̂z 本征值；而**实数解**由 ±m 两个复解等权组合而来，
+    //   **不是 L̂z 的本征函数** —— 对实解测 L_z，会以各 1/2 的概率得到 ±|m|ħ。
+    //   所以实分量在"L_z 谱"上贡献的是 ±|m| 各一半，而不是 m 这一处。
+    //   这恰好解释了 p_x 的 ⟨L_z⟩ = 0（它确实为 0）。
+    //   连带后果：单个实分量 m≠0 的态，L_z **没有**确定值 —— 修前会被报成"有确定值"。
     const spectrum = {};
-    terms.forEach((t, i) => { spectrum[t.m] = (spectrum[t.m] || 0) + w[i]; });
-    const ms = terms.map((t) => t.m);
-    const mSame = ms.every((v) => v === ms[0]);
-
-    // L_z²  → ΔL_z
-    const Lz2 = terms.reduce((a, t, i) => a + w[i] * HBAR * HBAR * t.m * t.m, 0);
+    const addSp = (mm, p) => { spectrum[mm] = (spectrum[mm] || 0) + p; };
+    terms.forEach((t, i) => {
+      const md = t.mode || 'real';
+      if (md === 'complex' || t.m === 0) addSp(t.m, w[i]);        // m=0 时实解与复解同形
+      else { addSp(Math.abs(t.m), w[i] / 2); addSp(-Math.abs(t.m), w[i] / 2); }
+    });
+    let Lz = 0, Lz2 = 0;
+    Object.keys(spectrum).forEach((k) => {
+      const mm = Number(k), p = spectrum[k];
+      Lz += p * HBAR * mm;
+      Lz2 += p * HBAR * HBAR * mm * mm;
+    });
     const dLz = Math.sqrt(Math.max(0, Lz2 - Lz * Lz));
+    const specKeys = Object.keys(spectrum).filter((k) => spectrum[k] > 1e-9);
+    const mSame = (specKeys.length <= 1);                          // 谱落在单一 m 上才有确定值
+    const hasRealNonZero = terms.some((t) => (t.mode || 'real') !== 'complex' && t.m !== 0);
 
     const stationary = eSame;   // 各分量能量简并 → 仍是定态
 
@@ -126,11 +139,16 @@ window.Observables = (function () {
         mean: +Lz.toFixed(4),
         definite: mSame,
         spectrum: Object.keys(spectrum).sort((a, b) => a - b).map((k) => ({ m: +k, prob: +spectrum[k].toFixed(6) })),
-        note: mSame ? '各分量 m 相同 → L_z 有确定值' : '各分量 m 不同 → L_z 无确定值，只能给谱分布与平均值',
+        hasRealNonZero: hasRealNonZero,
+        note: hasRealNonZero
+          ? '含**实数解**分量（m≠0）：实解不是 L̂z 的本征函数，它在 L_z 谱上贡献 ±|m| 各 1/2，'
+            + '所以这类态的 ⟨L_z⟩ 恒为 0、L_z 也没有确定值。'
+          : (mSame ? '各分量 m 相同 → L_z 有确定值' : '各分量 m 不同 → L_z 无确定值，只能给谱分布与平均值'),
       },
       deltaLz: +dLz.toFixed(4),
       isStationary: stationary,
-      note: '测量假设：测得本征值 a 的概率 = 对应系数模方之和；仅当所有分量本征值相同时该量才有确定值。',
+      note: '测量假设：测得本征值 a 的概率 = 对应系数模方之和；仅当所有分量本征值相同时该量才有确定值。'
+        + '★ L_z 的本征函数是**复数解** —— 实数解（m≠0）由 ±m 两个复解组合而来，不是它的本征函数。',
     };
   }
 

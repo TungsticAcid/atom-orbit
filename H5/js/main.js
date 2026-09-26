@@ -145,6 +145,23 @@
   }
 
   /**
+   * 切换「视图对象」的连带规则（第 9 条）：**球谐档没有叠加态可言**。
+   *
+   * ★ 理由：叠加态描述的是**完整波函数** ψ = Σcᵢψᵢ，而球谐曲面画的是**角度部分** Y。
+   *   render3d 在球谐档只拿 l/m/mode 去画（见 updateViewer 的 sph 分支），各分量的 n
+   *   被整块丢弃 —— 二者只有在各分量 n 相同时才能对上，而内置预设 ψ_1s+ψ_2s 恰恰是
+   *   n 不同的那一类。保留叠加态就会出现"三维画着某个单一 l 的曲面、公式却写着多分量
+   *   叠加"的当场矛盾。故切到球谐档即清掉叠加态（与"拖 n/l/m 自动退出"同一层保护），
+   *   并把量子态入口收起来。
+   * ★ 切回波函数档**不自动恢复** —— 那是有意的（叠加态已被清空），界面上写明了。
+   */
+  function applyViewTargetRules() {
+    const sph = (activeValue('#targetSeg', 'data-target') || 'wave') === 'spherical';
+    if (sph) exitSuperposition();
+    if (window.StateEditor && window.StateEditor.setAvailable) window.StateEditor.setAvailable(!sph);
+  }
+
+  /**
    * 两档各自的**默认着色**（第 19 条）。切换档位时重置为该档默认；同一档内用户手动
    * 改过之后保持不变 —— 只在他再次切换档位时才覆盖，不偷偷改他的显式选择。
    *   实数解 → 相位色（正负双色）：符号翻转是实解最核心、最该第一眼看见的物理；
@@ -708,8 +725,16 @@
     bindSeg('#psiSeg', 'data-mode');
     bindSeg('#phaseSeg', 'data-mode');
     bindSeg('#planeSeg', 'data-p');
+    // 视图对象：切到球谐档要连带退出叠加态并收起量子态入口（第 9 条，理由见 applyViewTargetRules）
+    $('#targetSeg').addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      setActive(btn);
+      applyViewTargetRules();
+      readFromControls();
+      recompute();
+    });
     bindSeg('#yCritSeg', 'data-k');
-    bindSeg('#targetSeg', 'data-target');
     // 径向多选（保证至少一个激活）
     $('#radialSeg').addEventListener('click', (e) => {
       const btn = e.target.closest('.seg-btn');
@@ -826,6 +851,10 @@
       silentSeg('#phaseSeg', 'data-mode', s.sectionMode);
       silentSeg('#yCritSeg', 'data-k', s.angularWhich);
       silentSeg('#targetSeg', 'data-target', s.viewTarget);
+      // 球谐档要收起量子态入口（第 9 条）；这里只改控件不重算 —— 重算由 applyAction 统一做
+      if (window.StateEditor && window.StateEditor.setAvailable) {
+        window.StateEditor.setAvailable(s.viewTarget !== 'spherical');
+      }
       // 径向曲线组是多选
       const want = s.radial || [];
       document.querySelectorAll('#radialSeg .seg-btn').forEach((b) => {
@@ -897,7 +926,12 @@
     },
     setParticleCount(p) { return setSlider(els.pointCountSlider, p.count); },
     setAngularView(p) { return setSeg('#yCritSeg', 'data-k', p.which); },
-    setViewTarget(p) { return setSeg('#targetSeg', 'data-target', p.target); },
+    setViewTarget(p) {
+      const ok = setSeg('#targetSeg', 'data-target', p.target);
+      // 与界面点按钮同一条语义：切球谐档要退出叠加态并收起量子态入口（第 9 条）
+      if (ok) applyViewTargetRules();
+      return ok;
+    },
     setSectionPlane(p) { return setSeg('#planeSeg', 'data-p', p.plane); },
     setSectionMode(p) { return setSeg('#phaseSeg', 'data-mode', p.mode); },
     showRadial(p) {

@@ -554,7 +554,7 @@ body.agent-open .layout {
 .se-empty { font-size: 11.5px; color: var(--text-dim, #9aa7c6); line-height: 1.6; }
 
 .se-list { display: flex; flex-direction: column; gap: 5px; }
-.se-term { display: flex; align-items: center; gap: 5px; }
+.se-term { display: flex; align-items: center; gap: 4px; }
 /* 组分表表头：让"纵向这几个数字框各是什么"一目了然（.se-num 46px / .se-amp 56px 对齐） */
 .se-term.se-head { margin-bottom: 1px; }
 .se-term.se-head .se-hcol {
@@ -562,6 +562,28 @@ body.agent-open .layout {
   color: var(--text-dim, #9aa7c6); cursor: help;
 }
 .se-term.se-head .se-hcol-c { width: 56px; }
+/* 叠加态分量的「解型」与「轨道 / m」两列（第 4 条：逐项可选实/复）。
+   ★ 面板只有约 290px，而这一行现在有 7 个元素（# n l 解型 轨道 c ✕）—— 各列必须收紧，
+     轨道列还要能自己伸缩，否则整行溢出容器（实测内容宽 400px > 容器 286px）。 */
+.se-list .se-num { width: 36px; }
+.se-list .se-amp { width: 48px; }
+.se-term.se-head .se-hcol { width: 36px; }
+.se-term.se-head .se-hcol-c { width: 48px; }
+.se-term.se-head .se-hcol-mode { width: 26px; }
+.se-term.se-head .se-hcol-pick { flex: 1 1 60px; min-width: 0; width: auto; }
+.se-mode {
+  flex: 0 0 auto;
+  width: 26px; padding: 3px 0; border-radius: 6px; cursor: pointer;
+  background: rgba(120,200,255,.12); border: 1px solid rgba(120,200,255,.4);
+  color: #bcd4f5; font-family: inherit; font-size: 11px; line-height: 1.2;
+}
+.se-mode.cx { background: rgba(255,190,90,.14); border-color: rgba(255,190,90,.45); color: #ffd9a0; }
+.se-pick {
+  flex: 1 1 60px; min-width: 0;
+  background: var(--card, #151c33); border: 1px solid var(--line, #2a3558);
+  border-radius: 6px; color: var(--text, #e8ecf7); font-family: inherit; font-size: 11px;
+  padding: 3px 4px; outline: none;
+}
 .se-idx { font-size: 11px; color: var(--text-dim, #9aa7c6); width: 14px; }
 .se-num, .se-amp {
   width: 46px; background: var(--card, #151c33); border: 1px solid var(--line, #2a3558);

@@ -153,6 +153,25 @@ window.Perception = (function () {
       camera: { autoRotate: s.autoRotate },
       interaction: getTrace(),
     };
+    // ★ 叠加态：模型**必须**知道"现在是不是叠加态、有哪几个分量、各自是实解还是复解"，
+    //   否则它会以为画面是某个单一本征态，然后讲错一整段。原先快照里没有这一层。
+    //   标记按分量自己的解型给：实解用实轨道名、复解用 m（与公式区、编辑器一致）。
+    if (s.terms && s.terms.length) {
+      snap.superposition = {
+        count: s.terms.length,
+        relPhasePi: +((s.relPhase || 0) / Math.PI).toFixed(3),
+        terms: s.terms.map(function (t) {
+          const md = t.mode || 'real';
+          const nm = (md === 'real' && window.Formula && window.Formula.realOrbitalLabelPlain)
+            ? window.Formula.realOrbitalLabelPlain(t.l, t.m) : '';
+          return {
+            n: t.n, l: t.l, m: t.m, mode: md,
+            label: (md === 'real' && nm) ? nm : ('m=' + t.m),
+            c: { re: +t.c.re.toFixed(4), im: +(t.c.im || 0).toFixed(4) },
+          };
+        }),
+      };
+    }
     if (extra) Object.assign(snap, extra);
     return snap;
   }
@@ -161,6 +180,7 @@ window.Perception = (function () {
   function toCompactText(snap) {
     const s = snap || snapshot();
     const it = s.interaction || {};
+    const SUBSHELL = ['s', 'p', 'd', 'f', 'g', 'h'];
     const lines = [
       '【当前视图】' + s.orbital.name +
         (s.orbital.chemName ? '(' + s.orbital.chemName + ')' : '') +
@@ -177,6 +197,18 @@ window.Perception = (function () {
         '；切换次数 ' + JSON.stringify(it.toggleCounts || {}) +
         '；最近动作 ' + (it.recentActions || []).join('→'),
     ];
+    // ★ 叠加态必须进快照（原先完全没有）—— 不写这一行，模型会把"叠加态"当成单一本征态。
+    if (s.superposition) {
+      lines.push('【叠加态】' + s.superposition.count + ' 个分量，相对相位 '
+        + s.superposition.relPhasePi + 'π：'
+        + s.superposition.terms.map(function (t) {
+            // 实项写实轨道名（2p_x），复项写 n+支壳层+m（2p(m=+1)）—— 与界面、公式一致
+            const lb = (t.mode === 'complex')
+              ? ('' + t.n + SUBSHELL[Math.min(t.l, SUBSHELL.length - 1)] + '(m=' + (t.m > 0 ? '+' + t.m : t.m) + ')')
+              : ('' + t.n + t.label);
+            return lb + ' c=' + t.c.re + (t.c.im ? ((t.c.im > 0 ? '+' : '') + t.c.im + 'i') : '');
+          }).join(' + '));
+    }
     // ★ 演示状态原先**不在**每轮注入的快照里（只有模型主动调 getSnapshot 才看得到），
     //   于是它常常不带"演示走到哪一步"就开始说话。补上这一行。
     const dl = demoLine();
