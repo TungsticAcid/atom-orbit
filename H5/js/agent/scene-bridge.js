@@ -57,7 +57,7 @@ window.SceneBridge = (function () {
     },
     setWavefunctionMode: {
       group: '模式', concept: 'K6',
-      desc: '切换实函数/复函数（实球谐 ↔ 复球谐）',
+      desc: '切换波函数的**实数解 / 复数解**（实球谐 ↔ 复球谐）。实数解由 ±m 两个复解组合而来、不再是 L̂z 的本征函数，用实轨道名标记；复数解是 L̂z&L̂² 的共同本征函数，用 m 标记。',
       params: { mode: "'real'|'complex'" },
     },
     setRenderMode: {
@@ -92,8 +92,11 @@ window.SceneBridge = (function () {
     },
     highlightRadialFeature: {
       group: '径向', concept: 'K3',
-      desc: '在径向图上标出峰值或零点（辨析 R 与 D 的核心手段）',
-      params: { target: "'R'|'D'", feature: "'peak'|'zeros'" },
+      desc: '在径向图上标出峰值和/或节点（辨析 R 与 D 的核心手段）。'
+        + '★ feature 可传数组以**同时**标出两类（如 ["peak","zeros"]）—— 同屏时峰值画实线、'
+        + '节点画虚线。D 的峰落在 R 的节点之间，这一屏最能说明"R 与 D 不是同一条曲线"。'
+        + '传空数组或 null 表示清除。',
+      params: { target: "'R'|'D'", feature: "'peak'|'zeros' 或它们的数组" },
     },
     linkRadialTo3D: {
       group: '径向', concept: 'K3/K8',
@@ -842,10 +845,14 @@ window.SceneBridge = (function () {
         const which = (p.which || []).filter((k) => ok.indexOf(k) >= 0);
         return which.length ? { params: { which } } : { err: 'which 非法（应为 R/R2/D 的非空子集）' };
       }
-      case 'highlightRadialFeature':
+      case 'highlightRadialFeature': {
         if (['R', 'D'].indexOf(p.target) < 0) return { err: 'target 应为 R 或 D' };
-        if (['peak', 'zeros'].indexOf(p.feature) < 0) return { err: 'feature 应为 peak 或 zeros' };
-        return { params: { target: p.target, feature: p.feature } };
+        // feature 支持数组（峰值与节点同屏）；空数组表示清除标注
+        const fs = (p.feature == null) ? [] : (Array.isArray(p.feature) ? p.feature : [p.feature]);
+        const bad = fs.filter((f) => ['peak', 'zeros'].indexOf(f) < 0);
+        if (bad.length) return { err: 'feature 应为 peak 或 zeros（可传数组），收到: ' + bad.join('/') };
+        return { params: { target: p.target, feature: fs } };
+      }
       case 'linkRadialTo3D': {
         const v = clampNum(p.radius, 0, 200);
         return v == null ? { err: 'radius 非法' } : { params: { radius: v } };
@@ -1436,10 +1443,10 @@ window.SceneBridge = (function () {
   /** 给播放进度用的中文动作名（与 panel 的气泡文案保持一致的语感） */
   const LABEL = {
     setNuclearCharge: '设置核电荷数 Z', setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
-    setWavefunctionMode: '切换实/复函数', setRenderMode: '切换渲染方式',
+    setWavefunctionMode: '切换波函数实数解 / 复数解', setRenderMode: '切换渲染方式',
     setColorMode: '切换着色', setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',
-    showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值/零点',
+    showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值 / 节点（可同时）',
     linkRadialTo3D: '画出参考球', setViewTarget: '切换球谐/波函数', setAngularView: '切换角度判据',
     setSectionPlane: '切换截面', setSectionMode: '切换截面模式',
     spotlightNodes: '高亮节面', setAutoRotate: '自动旋转', resetCamera: '复位视角',

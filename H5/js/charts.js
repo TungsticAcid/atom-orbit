@@ -120,31 +120,47 @@ window.Charts = (function () {
    * ★ 标线跟着**曲线显隐**走：只标当前可见曲线对应的半径。原先这两件事是割裂的——
    *   曲线能开关，标线却只由外部的 highlightRadialFeature 动作驱动、界面上没有入口，
    *   于是"关了 R 却还留着 R 的峰值线"，很难控制。
-   * @returns {Array<{r:number, col:number[]}>}
+   *
+   * ★ 峰值与节点**可同时展示**（features 是集合，不是单选）。原先只能二选一，而
+   *   "峰值与节点同屏"正是辨析 R 与 D 最直观的一屏：D 的峰在 R 的节点之间。
+   *   绘制上再区分线型——峰值实线、节点虚线——两类标线同屏时不会混淆。
+   * @returns {Array<{r:number, col:number[], f:string}>}
    */
   function computeMarks(n, l, whichList, Z) {
-    if (!radialHighlight) return [];
-    const t = radialHighlight.target, f = radialHighlight.feature;
+    const hl = radialHighlight;
+    if (!hl || !hl.features.length) return [];
+    const t = hl.target;
     const showR = whichList.indexOf('R') >= 0 || whichList.indexOf('R2') >= 0;
     const showD = whichList.indexOf('D') >= 0;
     const marks = [];
-    if ((t === 'R' || t === 'ALL') && showR) {
-      computeFeature('R', f, n, l, Z).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.R }));
-    }
-    if ((t === 'D' || t === 'ALL') && showD) {
-      computeFeature('D', f, n, l, Z).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.D }));
-    }
-    // 去重：R 与 D 的零点完全相同（D = r²R²），重复画只会叠成一条
+    hl.features.forEach(function (f) {
+      if ((t === 'R' || t === 'ALL') && showR) {
+        computeFeature('R', f, n, l, Z).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.R, f: f }));
+      }
+      if ((t === 'D' || t === 'ALL') && showD) {
+        computeFeature('D', f, n, l, Z).forEach((r) => marks.push({ r: r, col: RADIAL_PALETTE.D, f: f }));
+      }
+    });
+    // 去重：同一类特征下 R 与 D 的零点完全相同（D = r²R²），重复画只会叠成一条。
+    // ★ 按 (特征, 半径) 去重，不按半径单独去重 —— 否则"D 的峰值"与"R 的节点"碰巧同
+    //   半径时会被误并成一条，剩谁的颜色看遍历顺序，那是随机的。
     const uniq = [];
     marks.forEach((m) => {
-      if (!uniq.some((u) => Math.abs(u.r - m.r) < 1e-6)) uniq.push(m);
+      if (!uniq.some((u) => u.f === m.f && Math.abs(u.r - m.r) < 1e-6)) uniq.push(m);
     });
     return uniq;
   }
 
-  /** 设置/清除径向图的特征标注（target=null 表示清除） */
-  function setRadialHighlight(target, feature) {
-    radialHighlight = target ? { target: target, feature: feature } : null;
+  /**
+   * 设置/清除径向图的特征标注。
+   * @param {string|null} target 'R' | 'D' | 'ALL'；null 表示清除
+   * @param {string|string[]} features 'peak' | 'zeros'，或它们的数组（可同时标注）
+   */
+  function setRadialHighlight(target, features) {
+    let list = [];
+    if (target && features) list = Array.isArray(features) ? features.slice() : [features];
+    list = list.filter((f) => f === 'peak' || f === 'zeros');
+    radialHighlight = (target && list.length) ? { target: target, features: list } : null;
     if (lastRadialArgs) {
       const a = lastRadialArgs;
       drawRadial(a.canvas, a.n, a.l, a.whichList, a.Z);
@@ -220,17 +236,18 @@ window.Charts = (function () {
       ctx.stroke();
     });
 
-    // 特征标注（峰值 / 零点）—— 辨析 R 与 D 的核心手段（口径见 computeMarks）
+    // 特征标注（峰值 / 节点）—— 辨析 R 与 D 的核心手段（口径见 computeMarks）
     const marks = computeMarks(n, l, whichList, Z);
     if (marks.length) {
       ctx.save();
-      ctx.setLineDash([4, 4]);
       ctx.lineWidth = 1.6;
       ctx.font = '10px system-ui, sans-serif';
       let row = 0;
       marks.forEach((m) => {
         if (!(m.r >= 0) || m.r > rEnd) return;
         const gx = pad.l + (iw * m.r) / rEnd;
+        // ★ 峰值画实线、节点画虚线：两类标线同屏时（第 17 条）不靠颜色也能分清
+        ctx.setLineDash(m.f === 'zeros' ? [3, 3] : []);
         ctx.strokeStyle = 'rgba(' + m.col.join(',') + ',0.95)';
         ctx.beginPath(); ctx.moveTo(gx, pad.t); ctx.lineTo(gx, pad.t + ih); ctx.stroke();
         ctx.fillStyle = 'rgb(' + m.col.join(',') + ')';
@@ -367,8 +384,8 @@ window.Charts = (function () {
     // ---- 左：Θ(θ) 的**完整剖面** ----
     // ★ 为什么不能只沿 θ∈[0,π] 画一遍：θ 只扫过半个平面，而半径取 |Θ| 恒为非负，
     //   于是曲线**全部落在 x ≥ 0 的半边**（x = |Θ|·sinθ，sinθ ≥ 0）。
-    //   角度分布的剖面是"绕 z 轴旋转体的截面"，左右两侧都要画 —— 教材上 p_z 的
-    //   角度分布图是**两个相切的整圆**，只画右半边会变成两段半圆弧，与上面那张
+    //   角度分布的剖面是"绕 z 轴旋转体的截面"，左右两侧都要画 —— 常见的 p_z 角度分布图
+    //   是**两个相切的整圆**，只画右半边会变成两段半圆弧，与上面那张
     //   三维球谐曲面（用完整球面映射，两个整球）**对不上**。
     //   故：先沿 θ: 0→π 走右侧，再沿 θ: π→0 折回走左侧（x 取负），拼成闭合回路。
     const sT = Rho / mxT;
@@ -566,11 +583,11 @@ window.Charts = (function () {
   function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z) {
     ctx.fillStyle = '#0a0f1f';                 // 暗底，突出线条
     ctx.fillRect(0, 0, w, h);
-    if (nodalPlane) {                          // 整面为节点面
+    if (nodalPlane) {                          // 整面为节面
       ctx.fillStyle = 'rgba(255,170,90,0.95)';
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('本平面为节点面 · |ψ|² ≈ 0', w / 2, h / 2 - 6);
+      ctx.fillText('本平面为节面 · |ψ|² ≈ 0', w / 2, h / 2 - 6);
       ctx.textAlign = 'left';
       return;
     }
@@ -689,7 +706,7 @@ window.Charts = (function () {
         }
       }
     }
-    const nodalPlane = maxV < 1e-10;      // 该平面密度近似为 0 → 节点面
+    const nodalPlane = maxV < 1e-10;      // 该平面密度近似为 0 → 节面
     if (maxV < 1e-12) maxV = 1e-12;
 
     if (sectionMode === 'contour') {
@@ -721,12 +738,12 @@ window.Charts = (function () {
     ctx.drawImage(tmp, 0, 0, w, h);
 
     drawSectionFrame(ctx, w, h, plane, win);
-    // 节点面提示（填色模式下，把"空白"变成教学点）
+    // 节面提示（填色模式下，把"空白"变成教学点）
     if (nodalPlane) {
       ctx.fillStyle = 'rgba(255,170,90,0.95)';
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('本平面为节点面 · |ψ|² ≈ 0', w / 2, h / 2 - 6);
+      ctx.fillText('本平面为节面 · |ψ|² ≈ 0', w / 2, h / 2 - 6);
       ctx.textAlign = 'left';
     }
     // 颜色图例

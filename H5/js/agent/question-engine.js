@@ -81,19 +81,19 @@ window.QuestionEngine = (function () {
       return assemble(stem, nd.radial,
         [nd.angular, nd.total, nd.radial + 1, Math.max(0, nd.radial - 1)],
         `径向节点数 = n − l − 1 = ${n} − ${l} − 1 = **${nd.radial}**。\n` +
-        `（同一 ${n} 层的角节点数是 ${nd.angular}，总节点数是 ${nd.total}——三者容易混。）`,
+        `（同一 ${n} 层的角度节面数是 ${nd.angular}，总节点数是 ${nd.total}——三者容易混。）`,
         { kp: 'K5', difficulty: 'core', diagnosticHint: 'radial-nodes',
           presetView: { n: n, l: l, m: 0, radial: ['D'], render: 'surface', level: 0.08 } });
     },
 
-    /** 角节点数 */
+    /** 角度节面数 */
     angularNodes(pick) {
       const { n, l } = pick;
       const nd = OM().nodes(n, l);
-      const stem = `对 **${subOf(n, l)}** 轨道，它有几个**角节点**？`;
+      const stem = `对 **${subOf(n, l)}** 轨道，它有几个**角度节面**？`;
       return assemble(stem, nd.angular,
         [nd.radial, nd.total, nd.angular + 1, Math.max(0, nd.angular - 1)],
-        `角节点数 = l = **${nd.angular}**。`,
+        `角度节面数 = l = **${nd.angular}**。`,
         { kp: 'K5', difficulty: 'basic',
           presetView: { n: n, l: l, m: 0, sectionMode: 'contour' } });
     },
@@ -106,7 +106,7 @@ window.QuestionEngine = (function () {
       return assemble(stem, nd.total,
         [nd.radial, nd.angular, nd.total + 1, n],
         `总节点数 = n − 1 = **${nd.total}**，**与 l 无关**。\n` +
-        `这正是"同一层内 l 增大时，径向节点减少、角节点增多，总数不变"的来源。`,
+        `这正是"同一层内 l 增大时，径向节点减少、角度节面增多，总数不变"的来源。`,
         { kp: 'K5', difficulty: 'core' });
     },
 
@@ -216,7 +216,7 @@ window.QuestionEngine = (function () {
         { kp: 'K8', difficulty: 'core' });
     },
 
-    /** 平均距离 ⟨r⟩（教材经典题型，解析式 + 已数值积分验证） */
+    /** 平均距离 ⟨r⟩（常见题型，解析式 + 已数值积分验证） */
     meanRadius(pick) {
       const { n, l } = pick;
       const OB = window.Observables;
@@ -232,7 +232,7 @@ window.QuestionEngine = (function () {
           presetView: { n: n, l: l, m: 0, radial: ['D'] } });
     },
 
-    /** 角动量与 z 轴的夹角（教材经典题型） */
+    /** 角动量与 z 轴的夹角（常见题型） */
     angleToZ(pick) {
       const { n, l, m } = pick;
       if (l === 0) return null;                    // l=0 角动量为零，夹角无定义
@@ -252,10 +252,10 @@ window.QuestionEngine = (function () {
         { kp: 'K9', difficulty: 'challenge' });
     },
 
-    /** 由节面数反推量子数（教材经典反推题） */
+    /** 由节面数反推量子数（常见反推题） */
     nodesReverse() {
-      const wantR = 1, wantA = 2;          // 题面给定：径向节面 1 个、角节面 2 个
-      const stem = '某氢原子波函数有 **一个径向节面**、**两个角节面**。' +
+      const wantR = 1, wantA = 2;          // 题面给定：径向节面 1 个、角度节面 2 个
+      const stem = '某氢原子波函数有 **一个径向节面**、**两个角度节面**。' +
         '不查表，它的主量子数 n 与角量子数 l 分别是？';
       const correct = `n = ${wantR + wantA + 1}，l = ${wantA}`;
       return assemble(stem, correct,
@@ -263,8 +263,8 @@ window.QuestionEngine = (function () {
          `n = ${wantA + 1}，l = ${wantR}`,
          `n = ${wantR + 1}，l = ${wantA}`,
          `n = ${wantR + wantA + 1}，l = ${wantA + 1}`],
-        `径向节面数 = n − l − 1，角节面数 = l。\n` +
-        `由角节面 2 个 ⇒ **l = 2**；代回 n − 2 − 1 = 1 ⇒ **n = 4**。\n` +
+        `径向节面数 = n − l − 1，角度节面数 = l。\n` +
+        `由角度节面 2 个 ⇒ **l = 2**；代回 n − 2 − 1 = 1 ⇒ **n = 4**。\n` +
         `★ 所以该态是 **4d**。检验：总节点数 = n − 1 = 3，与 1 + 2 = 3 一致。`,
         { kp: 'K5', difficulty: 'challenge',
           presetView: { n: 4, l: 2, m: 0, sectionMode: 'contour', spotlight: 'radial' } });
@@ -289,7 +289,7 @@ window.QuestionEngine = (function () {
     complexSymmetry(pick) {
       const modes = [
         { q: '**复函数**下轨道的密度为什么绕 z 轴对称？', a: '因为 |e^{imφ}| = 1，相位因子取模后消失',
-          w: ['因为电子在绕 z 轴旋转', '因为复函数的 l 更小', '因为复函数没有角节点'] },
+          w: ['因为电子在绕 z 轴旋转', '因为复函数的 l 更小', '因为复函数没有角度节面'] },
       ];
       const t = modes[0];
       return assemble(t.q, t.a, t.w,
@@ -315,7 +315,7 @@ window.QuestionEngine = (function () {
         stem: '为什么**复函数**的密度绕 z 轴对称，而实函数呈定向的瓣？',
         correct: '复函数含 e^{imφ}，取模后 |e^{imφ}| = 1，φ 消失了',
         wrong: ['复函数的电子在绕 z 轴旋转（经典图像）',
-                '复函数的 l 更小', '复函数没有角节点'],
+                '复函数的 l 更小', '复函数没有角度节面'],
         exp: '|Y_l^m|² = N²P²·|e^{imφ}|² = N²P²，与 φ 无关 → 绕 z 轴旋转对称。\n' +
              '实函数含 cos(mφ)/sin(mφ)，取模后仍依赖 φ → 呈定向的瓣。',
       },
@@ -414,7 +414,7 @@ window.QuestionEngine = (function () {
         {
           const r = Math.random();
           if (r < 0.35) return BUILDERS.radialPeak(pick);
-          if (r < 0.55) return BUILDERS.meanRadius(pick);      // ⟨r⟩：教材经典题型
+          if (r < 0.55) return BUILDERS.meanRadius(pick);      // ⟨r⟩：常见题型
           return BUILDERS.rVsD(pick);
         }
       case 'K5': {

@@ -92,7 +92,9 @@ window.AgentCore = (function () {
       '原子    setNuclearCharge{Z:1|2|3}（类氢：1 氢 / 2 氦离子 He⁺ / 3 锂离子 Li²⁺。'
         + '角向部分与 Z 无关，换 Z 只把径向与能级按 r→r/Z、E∝Z² 缩放；**不退出叠加态**）',
       '量子数  setQuantumNumbers{n,l,m}（会**自动退出叠加态**，回到纯态） ｜ sweepQuantumNumber{axis,from,to}',
-      '模式    setWavefunctionMode{mode:real|complex} ｜ setRenderMode{mode:points|surface} ｜ setColorMode{mode:orbital|phase}',
+      '模式    setWavefunctionMode{mode:real|complex}（real=波函数**实数解**，用实轨道名标记如 p_x；'
+        + 'complex=**复数解**，用 m 标记。切换时会顺带把三维着色重置为该档默认）'
+        + ' ｜ setRenderMode{mode:points|surface}（points 即"电子云"） ｜ setColorMode{mode:orbital|phase}',
       '等值面  setPsiCriterion{criterion:psi|psi2} ｜ setIsosurfaceLevel{fraction} ｜ animateIsosurfaceLevel{from,to}',
       '图表    showRadial{which:[R,R2,D]} ｜ highlightRadialFeature{target:R|D,feature:peak|zeros}',
       '        setViewTarget{target:spherical|wave}（三维里看球谐曲面 Y，还是完整波函数 ψ）',

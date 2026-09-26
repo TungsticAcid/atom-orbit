@@ -42,18 +42,18 @@ window.ErrorDiagnosis = (function () {
       speech: '我把等值面阈值降下来，你看这个"套娃"结构——每两层壳之间就是一层径向节点。' +
         '数一数有几层？对照公式 n−l−1 看看。',
       avoid: '不要只说"公式是 n−l−1"，要让学生**数出来**。',
-      followUp: '那角节点呢？换个平面看看。',
+      followUp: '那角度节面呢？换个平面看看。',
     },
 
     'node-shape': {
       cause: 'E3 空间想象错误',
-      label: '把角节面一律当成平面（忽略了锥面）',
+      label: '把角度节面一律当成平面（忽略了锥面）',
       actions: [
         { action: 'setSectionMode', params: { mode: 'contour' } },
         { action: 'spotlightNodes', params: { type: 'angular', on: true } },
         { action: 'setAutoRotate', params: { on: true } },
       ],
-      speech: '我打开等高线和角节面高亮。注意看节面的形状——它是平的一个面，' +
+      speech: '我打开等高线和角度节面高亮。注意看节面的形状——它是平的一个面，' +
         '还是绕着 z 轴转出来的一圈？',
       avoid: '不要用"锥面"这个词直接提示，先让学生描述看到的形状。',
       followUp: '想想 P_l^{|m|}(cosθ)=0 解出来的 θ 是常数还是 φ 是常数？',
@@ -111,7 +111,7 @@ window.ErrorDiagnosis = (function () {
     if (!key && q) {
       const s = (q.stem || '') + (q.explanation || '');
       if (/D\(r\)|概率最大|径向分布函数/.test(s)) key = 'R-vs-D';
-      else if (/径向节点|角节点|总节点/.test(s)) key = 'radial-nodes';
+      else if (/径向节点|角度节面|总节点/.test(s)) key = 'radial-nodes';
       else if (/节面|锥面|平面/.test(s)) key = 'node-shape';
       else if (/\|ψ\|²|判据/.test(s)) key = 'psi-vs-psi2';
       else if (/复轨道|实轨道|组合/.test(s)) key = 'complex-real';

@@ -53,6 +53,8 @@
     pointCountSlider: $('#pointCountSlider'), pointCountInput: $('#pointCountInput'), pointSet: $('#pointSet'),
     thetaPhiChart: $('#thetaPhiChart'),
     targetSeg: $('#targetSeg'), yCritSet: $('#yCritSet'),
+    yCritSeg: $('#yCritSeg'), yCritHint: $('#yCritHint'),
+    sphColorHint: $('#sphColorHint'),
     orbitTitle: $('#orbitTitle'), modeBadge: $('#modeBadge'),
     formulaTitle: $('#formulaTitle'), formulaBox: $('#formulaBox'), formulaNote: $('#formulaNote'),
     radialChart: $('#radialChart'), sectionChart: $('#sectionChart'),
@@ -108,7 +110,7 @@
    * 实轨道选择器：按当前 l 列出该支壳层的全部实轨道。
    *
    * ★ 为什么实档不用 m 滑块：m 是**复**球谐 Y_l^m 的本征值指标，而实数解由 ±m 两个
-   *   复解线性组合而来，**不再是 L̂z 的本征函数**（教材原话）。用它给实轨道当名字，
+   *   复解线性组合而来，**不再是 L̂z 的本征函数**（这是量子力学的基本事实）。用它给实轨道当名字，
    *   等于把一个它不再拥有的量子数贴上去。所以实档直接选"哪个实轨道"，按钮上的字
    *   就是它的名字（p_x、d_{xy}、f_{z³}…）；g、h 没有公认名，改用直角坐标多项式。
    *
@@ -139,6 +141,46 @@
     const btns = els.realOrbSeg.querySelectorAll('.seg-btn');
     for (let i = 0; i < btns.length; i++) {
       btns[i].classList.toggle('active', +btns[i].dataset.m === state.m);
+    }
+  }
+
+  /**
+   * 两档各自的**默认着色**（第 19 条）。切换档位时重置为该档默认；同一档内用户手动
+   * 改过之后保持不变 —— 只在他再次切换档位时才覆盖，不偷偷改他的显式选择。
+   *   实数解 → 相位色（正负双色）：符号翻转是实解最核心、最该第一眼看见的物理；
+   *   复数解 → 支壳层色（纯色）：复解的相位绕 z 轴一圈就把颜色走遍，默认给彩虹的话
+   *            学生第一眼看到的是"花"，而不是"这个轨道长什么样"。
+   * 想要复解那一圈彩虹的，去「进阶 → 三维着色」里打开（界面上写明了位置 ——
+   * 收起来不等于删掉，不写清楚就会被当成"这功能没了"）。
+   */
+  let lastModeForColor = null;
+  function applyModeDefaultColor() {
+    const m = activeValue('#modeSeg', 'data-mode') || 'real';
+    if (m === lastModeForColor) return;
+    lastModeForColor = m;
+    setSeg('#colorSeg', 'data-mode', (m === 'real') ? 'phase' : 'orbital');
+  }
+
+  /**
+   * 球谐判据（|Y| / |Y|²）的提示与可用性 —— **按 l 变**。
+   *
+   * ★ 第 6 条：这段提示原先写死成"|Y|² 的曲面比 |Y| 的瘦（教材所谓"相切的鸡蛋"）"，
+   *   而"两个相切的球面/鸡蛋"是 **p 轨道（l=1）** 才有的形状。l=0 的学生看到的是一个
+   *   球，却被告诉"这是相切的鸡蛋"—— 说明文字与眼前的图形当场矛盾。
+   *   l=0 时 Y 是常数，|Y| 与 |Y|² 只差一个正的比例因子，两个判据画出来一模一样，
+   *   所以按钮一并禁用（留着能点却毫无变化，比没有更糟）。
+   */
+  function syncYCritHint() {
+    if (!els.yCritHint || !els.yCritSeg) return;
+    const l = state.l;
+    const degenerate = (l === 0);
+    els.yCritSeg.querySelectorAll('.seg-btn').forEach((b) => { b.disabled = degenerate; });
+    if (degenerate) {
+      els.yCritHint.textContent = 'l = 0 时 Y 是常数，|Y| 与 |Y|² 只差一个比例因子 —— 曲面都退化成同一个球面，两个判据没有区别。';
+    } else if (l === 1) {
+      els.yCritHint.textContent = 'p 轨道：|Y|² 的曲面比 |Y| 的"瘦" —— 两个相切的球面变成两个相切的椭球。';
+    } else {
+      els.yCritHint.textContent = '判据换成平方后，瓣与节面的**位置**不变，只是径向轮廓整体收缩。';
     }
   }
 
@@ -405,6 +447,10 @@
     els.yCritSet.style.display       = sph ? '' : 'none';
     document.getElementById('renderGroup').style.display = sph ? 'none' : '';
     document.getElementById('colorGroup').style.display  = sph ? 'none' : '';
+    // ★ 第 8 条：球谐档原先把「三维着色」整组**静默隐藏**，用户会以为漏做了。
+    //   改为一并显示一行说明，讲清"为什么这一档没有着色选项"。
+    if (els.sphColorHint) els.sphColorHint.style.display = sph ? '' : 'none';
+    if (sph) syncYCritHint();
     els.levelSet.style.display = (!sph && state.renderMode === 'surface') ? '' : 'none';
     els.pointSet.style.display = (!sph && state.renderMode === 'points') ? '' : 'none';
     // ★ 「磁量子数 m」与「实轨道」**互斥显示**：m 是复解的本征值指标，实解不用它
@@ -631,20 +677,32 @@
       });
     }
     bindSectionView();          // 截面图：滚轮缩放 / 拖拽平移 / 双击复位
-    // 径向图的特征标注：单选，再点一次取消（与曲线开关并列在卡片头，不再是"看不见的"状态）
+    // 径向图的特征标注：**峰值与节点可同时标注**（第 17 条），点一下切换该按钮。
+    // 仍走动作通路 —— 图表状态与按钮亮灭只由 setRadialMarks 一处回写，避免两处各改一半。
     const markSeg = $('#radialMarkSeg');
     if (markSeg) {
       markSeg.addEventListener('click', (e) => {
         const btn = e.target.closest('.seg-btn');
         if (!btn) return;
-        const wasOn = btn.classList.contains('active');
-        const f = wasOn ? null : btn.getAttribute('data-m');
-        // 走动作通路，图表与界面状态只在一处维护
-        window.OrbitApp.applyAction({ action: 'setRadialMarks', params: { target: 'ALL', feature: f } });
+        const next = [];
+        markSeg.querySelectorAll('.seg-btn').forEach((b) => {
+          const on = (b === btn) ? !b.classList.contains('active') : b.classList.contains('active');
+          if (on) next.push(b.getAttribute('data-m'));
+        });
+        window.OrbitApp.applyAction({ action: 'setRadialMarks', params: { target: 'ALL', feature: next } });
       });
     }
     // 单选分段
-    bindSeg('#modeSeg', 'data-mode');
+    // 波函数形式：切换时要**顺带重置着色**为该档的默认（第 19 条），
+    // 所以不能走通用 bindSeg —— 那会在 readFromControls 之后才改控件，读到旧值。
+    $('#modeSeg').addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      setActive(btn);
+      applyModeDefaultColor();          // 必须在 readFromControls 之前
+      readFromControls();
+      recompute();
+    });
     bindSeg('#renderSeg', 'data-mode');
     bindSeg('#colorSeg', 'data-mode');
     bindSeg('#psiSeg', 'data-mode');
@@ -814,7 +872,13 @@
       setSlider(els.zSlider, v);
       return true;
     },
-    setWavefunctionMode(p) { return setSeg('#modeSeg', 'data-mode', p.mode); },
+    setWavefunctionMode(p) {
+      const ok = setSeg('#modeSeg', 'data-mode', p.mode);
+      // ★ 与界面点按钮同一条语义：换档就把着色重置为该档默认（第 19 条）。
+      //   若智能体随后还要指定着色，再调 setColorMode 即可 —— 它排在后、以后者为准。
+      if (ok) applyModeDefaultColor();
+      return ok;
+    },
     setRenderMode(p) { return setSeg('#renderSeg', 'data-mode', p.mode); },
     setColorMode(p) {
       // ★ l = 0（s 轨道）时角度函数是常数、ψ 的符号在整块空间恒定，相位色退化成
@@ -861,16 +925,19 @@
      * feature 为空表示清除标注。target='ALL' 时 R 与 D 各自用自己的颜色标。
      */
     setRadialMarks(p) {
-      const f = p && p.feature;
-      const target = p && p.target ? p.target : 'ALL';
+      // ★ feature 支持**数组**（峰值与节点同屏，第 17 条）；传字符串时按"只标这一类"处理，
+      //   保持向后兼容 —— 智能体沿用旧的单值写法依然有效。
+      const raw = p && p.feature;
+      const list = (raw == null) ? [] : (Array.isArray(raw) ? raw.slice() : [raw]);
+      const target = (p && p.target) ? p.target : 'ALL';
       const seg = document.querySelector('#radialMarkSeg');
       if (seg) {
         seg.querySelectorAll('.seg-btn').forEach((b) => {
-          b.classList.toggle('active', !!f && b.getAttribute('data-m') === f);
+          b.classList.toggle('active', list.indexOf(b.getAttribute('data-m')) >= 0);
         });
       }
       if (window.Charts && window.Charts.setRadialHighlight) {
-        window.Charts.setRadialHighlight(f ? target : null, f);
+        window.Charts.setRadialHighlight(list.length ? target : null, list);
       }
       return true;
     },
@@ -1005,6 +1072,9 @@
   function start() {
     Orbit3D.init(els.viewer);
     bindEvent();
+    // 记下初始档位 —— 这样 applyModeDefaultColor 只在**真的换档**时才重置着色，
+    // 不会在启动时把 HTML 里写好的初始选中项又改一遍。
+    lastModeForColor = activeValue('#modeSeg', 'data-mode') || 'real';
     // 初始尺寸需要等布局稳定（slider 在 style 之后写回，重新布局）
     requestAnimationFrame(() => {
       recompute();

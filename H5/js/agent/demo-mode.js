@@ -15,11 +15,11 @@ window.DemoMode = (function () {
   const SCRIPTS = {
     /* --------------------------------------------------------------- */
     nodeDistribution: {
-      title: '同一层里，径向节点与角节点如何此消彼长',
+      title: '同一层里，径向节点与角度节面如何此消彼长',
       points: ['K5', 'K2'],
       steps: [
         {
-          speech: '先看 3s。它是个球，没有方向性——说明角节点是 0 个。',
+          speech: '先看 3s。它是个球，没有方向性——说明角度节面是 0 个。',
           actions: [
             { action: 'setQuantumNumbers', params: { n: 3, l: 0, m: 0 } },
             { action: 'setWavefunctionMode', params: { mode: 'real' } },
@@ -35,7 +35,7 @@ window.DemoMode = (function () {
           ],
         },
         {
-          speech: '换到 3p。它变成哑铃形了——有方向性，说明出现了角节点。同时看看内层壳：只剩一层了。',
+          speech: '换到 3p。它变成哑铃形了——有方向性，说明出现了角度节面。同时看看内层壳：只剩一层了。',
           actions: [
             { action: 'spotlightNodes', params: { type: 'radial', on: false } },
             { action: 'setQuantumNumbers', params: { n: 3, l: 1, m: 0 } },
@@ -43,21 +43,21 @@ window.DemoMode = (function () {
           ],
         },
         {
-          speech: '再到 3d。形状更复杂（四叶草/双瓣加环），角节点更多了；但内层壳——没有了。',
+          speech: '再到 3d。形状更复杂（四叶草/双瓣加环），角度节面更多了；但内层壳——没有了。',
           actions: [
             { action: 'setQuantumNumbers', params: { n: 3, l: 2, m: 0 } },
             { action: 'setIsosurfaceLevel', params: { fraction: 0.10 } },
           ],
         },
         {
-          speech: '把径向分布函数画出来，让"D(r) 的零点"直接可见——那就是径向节点。',
+          speech: '把径向分布函数画出来，让"D(r) 的节点"直接可见 —— 那就是径向节点。',
           actions: [
             { action: 'showRadial', params: { which: ['D'] } },
             { action: 'highlightRadialFeature', params: { target: 'D', feature: 'zeros' } },
           ],
         },
         {
-          speech: '小结：3s（径向 2 + 角 0）、3p（径向 1 + 角 1）、3d（径向 0 + 角 2）——**总数恒为 n−1 = 2**。这就是"同一层里 l 越大，径向节点越少、角节点越多"的来源。',
+          speech: '小结：3s（径向 2 + 角 0）、3p（径向 1 + 角 1）、3d（径向 0 + 角 2）——**总数恒为 n−1 = 2**。这就是"同一层里 l 越大，径向节点越少、角度节面越多"的来源。',
           actions: [
             { action: 'setAutoRotate', params: { on: false } },
           ],

@@ -30,7 +30,7 @@ window.ToolRegistry = (function () {
       type: 'function',
       function: {
         name: 'queryOrbital',
-        description: '查询轨道的确定性事实（数值一律由程序计算，不得自行口算）。kind 取值：nodes=节点数；radialZeros=径向节点半径；radialPeaks=径向分布峰值半径；angularNodes=角节面几何；energy=能级(eV)；degeneracy=简并度；normalization=归一化系数；shape=形状描述；compare=两个轨道对比。',
+        description: '查询轨道的确定性事实（数值一律由程序计算，不得自行口算）。kind 取值：nodes=节点数；radialZeros=径向节点半径；radialPeaks=径向分布峰值半径；angularNodes=角度节面几何；energy=能级(eV)；degeneracy=简并度；normalization=归一化系数；shape=形状描述；compare=两个轨道对比。',
         parameters: {
           type: 'object',
           properties: {
@@ -296,7 +296,7 @@ window.ToolRegistry = (function () {
         case 'nodes':
           if (chk()) return { error: '需要 n 与 l' };
           return Object.assign(OM.nodes(n, l), {
-            note: '径向节点 = n-l-1，角节点 = l，总数 = n-1（全部由程序计算）',
+            note: '径向节点 = n-l-1，角度节面 = l，总数 = n-1（全部由程序计算）',
           });
         case 'radialZeros':
           if (chk()) return { error: '需要 n 与 l' };

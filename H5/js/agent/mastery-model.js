@@ -19,7 +19,7 @@ window.MasteryModel = (function () {
     K3: { name: '径向函数辨析 R/R²/D', orbital: [{ n: 1, l: 0, m: 0 }, { n: 3, l: 0, m: 0 }] },
     K4: { name: '角度分布与轨道形状', orbital: [{ n: 2, l: 1, m: 0 }, { n: 3, l: 2, m: 1 }] },
     K5: { name: '节面与节点计数', orbital: [{ n: 3, l: 0, m: 0 }, { n: 3, l: 1, m: 0 }, { n: 3, l: 2, m: 0 }] },
-    K6: { name: '实函数与复函数', orbital: [{ n: 2, l: 1, m: 1 }] },
+    K6: { name: '波函数的实数解与复数解', orbital: [{ n: 2, l: 1, m: 1 }] },
     K7: { name: '相位与符号', orbital: [{ n: 3, l: 2, m: 2 }] },
     K8: { name: '概率诠释与 |ψ|²', orbital: [{ n: 1, l: 0, m: 0 }] },
     K9: { name: '叠加态 / 杂化 / 力学量', orbital: [{ n: 3, l: 2, m: 0 }] },

@@ -858,7 +858,7 @@ window.Orbit3D = (function () {
    * 判断是否需要局部精细化，并给出细网格的半径与分辨率；不需要则返回 null。
    * 三个条件同时满足才启用，避免给普通情况白付开销：
    *   ① 单一本征态（叠加态的外延估计是另一套，暂不处理）
-   *   ② l ≥ 1 且有径向节点——细颈由**角节面**造成，径向节点提供无接缝的分界面
+   *   ② l ≥ 1 且有径向节点——细颈由**角度节面**造成，径向节点提供无接缝的分界面
    *   ③ 细颈比粗网格单元格还窄——粗网格已经分得开就不必精细化
    */
   function planFinePatch(iso) {
@@ -1507,7 +1507,7 @@ window.Orbit3D = (function () {
   /**
    * 高亮节面（把节点公式变成可点亮、可数的几何对象）。
    *   type='radial'  → 在每个径向零点半径处画线框球（"套娃"结构）
-   *   type='angular' → 在每个角节点的 θ 处画圆锥、φ 处画过 z 轴的平面
+   *   type='angular' → 在每个角度节面的 θ 处画圆锥、φ 处画过 z 轴的平面
    * 节面几何由 math.js 确定性给出，不依赖视觉推断。
    */
   function spotlightNodes(type, on) {
@@ -1526,7 +1526,7 @@ window.Orbit3D = (function () {
     }
     curSpotlight = { type: type, on: true };
     // 同一个标签兼管两种节面（radial/angular），点击即全部清除
-    setChip('nodes', (type === 'radial' ? '径向节面' : '角节面') + '高亮  ✕',
+    setChip('nodes', (type === 'radial' ? '径向节面' : '角度节面') + '高亮  ✕',
       function () { spotlightNodes(type, false); });
 
     const S = (window.OrbitApp && window.OrbitApp.getState()) || {};

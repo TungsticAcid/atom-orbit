@@ -100,12 +100,18 @@
               <button class="seg-btn" data-k="Y2">|Y|²</button>
             </div>
           </div>
-          <div class="hint">|Y|² 的曲面比 |Y| 的"瘦"（教材所谓"相切的鸡蛋"）</div>
+          <!-- ★ 这句提示**按 l 变**（由 main.js 的 syncYCritHint 填）：l=0 时 Y 是常数，
+               |Y| 与 |Y|² 只差一个比例因子，画出来完全一样，两个按钮会一起禁用。
+               原先这里写死了"相切的鸡蛋"，而那是 p 轨道（l=1）才有的形状 ——
+               l=0 的学生看到的是个球，却被告诉"这是相切的鸡蛋"。 -->
+          <div class="hint" id="yCritHint">|Y|² 的曲面比 |Y| 的"瘦"</div>
         </div>
         <div class="divider"><span>波函数形式</span></div>
         <div class="seg" id="modeSeg">
-          <button class="seg-btn active" data-mode="real">实函数</button>
-          <button class="seg-btn" data-mode="complex">复函数</button>
+          <button class="seg-btn active" data-mode="real"
+                  title="波函数的实数解：由 ±m 两个复数解组合而来，不再是 L̂z 的本征函数；用实轨道名标记（p_x、d_xy…）">实数解</button>
+          <button class="seg-btn" data-mode="complex"
+                  title="波函数的复数解 ψ_{n,l,m}：L̂z 与 L̂² 的共同本征函数，用磁量子数 m 标记">复数解</button>
         </div>
 
         <!-- ★ 下面两组（三维渲染 / 三维着色）只对"波函数"档有意义：球谐曲面是解析
@@ -114,7 +120,7 @@
         <div id="renderGroup">
           <div class="divider"><span>三维渲染</span></div>
           <div class="seg" id="renderSeg">
-            <button class="seg-btn" data-mode="points">粒子云</button>
+            <button class="seg-btn" data-mode="points">电子云</button>
             <button class="seg-btn active" data-mode="surface">等值面</button>
           </div>
         </div>
@@ -140,14 +146,32 @@
           <input type="range" id="pointCountSlider" min="8000" max="80000" step="1000" value="50000" />
         </div>
 
-        <div id="colorGroup">
-          <div class="divider"><span>三维着色</span></div>
-          <div class="seg" id="colorSeg">
-            <button class="seg-btn" data-mode="orbital"
-                    title="按支壳层上色（s 蓝 / p 绿 / d 橙 / f 紫）；不显示 ψ 的正负">支壳层色</button>
-            <button class="seg-btn active" data-mode="phase"
-                    title="按 ψ 的正负上色：角度与径向节点的符号翻转都会显示出来">相位色</button>
+        <!-- ★ 第 19 条：默认之外的选择收进「进阶」。
+             默认值应当让**最该看见的东西**第一眼就在 —— 实数解的正负双色是物理，
+             而复解的相位彩虹绕 z 轴一圈就把所有颜色走一遍，第一眼看到的是"花"
+             而不是"这个轨道长什么样"。但相位缠绕本身是复解的真实特点（也是本作品
+             的一个演示点），所以是**收起来**、不是删掉。 -->
+        <details class="adv-zone">
+          <summary class="adv-summary">进阶</summary>
+          <div id="colorGroup">
+            <div class="divider"><span>三维着色</span></div>
+            <div class="seg" id="colorSeg">
+              <button class="seg-btn" data-mode="orbital"
+                      title="按支壳层上色（s 蓝 / p 绿 / d 橙 / f 紫）；不显示 ψ 的正负">支壳层色</button>
+              <button class="seg-btn active" data-mode="phase"
+                      title="按 ψ 的正负上色：角度与径向节点的符号翻转都会显示出来">相位色</button>
+            </div>
           </div>
+          <div class="hint">复解选「相位色」会得到一圈彩虹 —— 那是 ψ 的辐角沿方位角缠绕
+            （|e^{imφ}| = 1 的缘故），是复解的特点；但它对初学是额外负担，故不作默认。</div>
+        </details>
+        <!-- ★ 第 8 条：球谐档原先把「三维着色」整组**静默隐藏**，用户会以为漏做了。
+             改为保留一行说明，把"为什么这一档没有着色选项"讲清楚。 -->
+        <div class="hint" id="sphColorHint" style="display:none">
+          球谐曲面是解析形状，整个曲面同属一个 l，刷成单色不携带任何信息，所以这一档没有
+          「支壳层色」。它的配色由**实数解 / 复数解**直接决定：实数解按 sign(Y) 分正负双色，
+          复数解按相位着色（想要那一圈彩虹，去下面的「进阶 → 三维着色 → 相位色」）。
+          也正因为曲面本身就是解析形状，这一档没有「电子云 / 等值面」之分。
         </div>
         </div><!-- /.panel-body -->
       </aside>
@@ -156,7 +180,7 @@
     <!-- 公式 -->
     <section class="card formula-card">
       <div class="formula-head">
-        <span class="card-title" id="formulaTitle">3p 轨道 · 实函数波函数</span>
+        <span class="card-title" id="formulaTitle">3p 轨道 · 波函数实数解</span>
       </div>
       <div id="formulaBox" class="formula-box"></div>
       <div id="formulaNote" class="formula-note"></div>
@@ -173,14 +197,14 @@
               <button class="seg-btn active" data-k="R2">R²</button>
               <button class="seg-btn active" data-k="D">D</button>
             </div>
-            <div class="seg small" id="radialMarkSeg" title="在选中曲线上标出峰值 / 零点半径">
+            <div class="seg small" id="radialMarkSeg" title="在选中曲线上标出峰值 / 节点半径（两类可同时开）">
               <button class="seg-btn" data-m="peak">峰值</button>
-              <button class="seg-btn" data-m="zeros">零点</button>
+              <button class="seg-btn" data-m="zeros">节点</button>
             </div>
           </div>
         </div>
         <canvas id="radialChart" class="chart"></canvas>
-        <div class="hint">各曲线分别按自身峰值归一化，故看形状与峰值位置、不比绝对高度；竖线标的是选中曲线的峰值/零点半径</div>
+        <div class="hint">各曲线分别按自身峰值归一化，故看形状与峰值位置、不比绝对高度；竖线标的是选中曲线的峰值 / 节点半径（峰值实线、节点虚线）</div>
       </div>
 
       <div class="card chart-card">
@@ -213,7 +237,7 @@
     </section>
   </main>
 
-  <footer class="foot">按 |ψ|²·r²·|Y|² 重要性采样 · 粒子云与等值面可切换 · 手机 / 平板 / 桌面自适配</footer>
+  <footer class="foot">按 |ψ|²·r²·|Y|² 重要性采样 · 电子云与等值面可切换 · 手机 / 平板 / 桌面自适配</footer>
 
   <!-- 依赖（全局构建，file:// 可离线运行） -->
   <script src="libs/three.min.js"></script>

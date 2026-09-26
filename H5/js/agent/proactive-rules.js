@@ -57,7 +57,7 @@ window.ProactiveRules = (function () {
       build: function (st) {
         return {
           text: '看起来你在比较不同 n 的 s 轨道。要我把它们的 **D(r) = r²R²** 画出来吗？' +
-                's 轨道没有角节点，全部节面都是**球壳**——在 D(r) 上就表现为零点，数零点就是数径向节点。',
+                's 轨道没有角度节面，全部节面都是**球壳**——在 D(r) 上就表现为节点，数节点就是数径向节点。',
           suggest: [
             { action: 'showRadial', params: { which: ['D'] } },
             { action: 'highlightRadialFeature', params: { target: 'D', feature: 'zeros' } },
