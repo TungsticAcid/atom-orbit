@@ -378,7 +378,9 @@ window.Charts = (function () {
     // 不需要像 Θ 那样折返。
     const sP = Rho / mxP;
     const phaseCols = (mode === 'complex')
-      ? function (i) { return OM.phaseColor(m * phArr[i], 0.6); }
+      // 走共享判据 OM.angularPhase（= arg Y_complex = m·φ），强度取 0.62 与三维一致。
+      // —— 这张卡画的是**角度部分**，所以用 angularPhase 而不是 psiPhase（后者含 R）。
+      ? function (i) { return OM.phaseColor(OM.angularPhase('complex', l, m, 0, phArr[i]), 0.62); }
       : null;
     strokeCurve(cxP, N, function (i) {
       const r = Math.abs(PH[i]) * sP;
@@ -672,10 +674,10 @@ window.Charts = (function () {
         vals[j * G + i] = dd;
         if (dd > maxV) maxV = dd;
         if (sectionMode === 'phase') {
-          phases[j * G + i] = (mode === 'real')
-            // ★ 完整 ψ 的符号（含 R(r)）—— 只看 Y 会漏掉径向节点处的符号翻转
-            ? (OM.radialR(n, l, r) * OM.angularReal(l, m, th, ph) >= 0 ? 0 : Math.PI)
-            : OM.angularComplex(l, m, th, ph).arg();
+          // 与三维等值面**共用同一个判据**（OM.psiPhase）。原先这里独立写了一遍，
+          // 且复函数分支同样写成 arg(Y)、漏掉 R(r) —— 与三维错得一模一样，所以
+          // 两张图"看起来很一致"、也就没人发现它们一起错了。
+          phases[j * G + i] = OM.psiPhase(mode, n, l, m, r, th, ph, null, null);
         }
       }
     }

@@ -343,6 +343,63 @@ window.OM = (function () {
   }
 
   // ---------------------------------------------------------------------------
+  // 相位色的**判据**：只有这两个函数，别处不要再写第三遍
+  //
+  // ★ 为什么必须收敛成两处：三维等值面、截面热力图、球谐曲面原先各自就地写了
+  //   一遍判据，结果**分了叉** —— 三维与截面的「复函数」分支都写成 `arg(Y)`
+  //   （只取角度部分的辐角），把径向的符号丢掉了，于是"径向节点两侧颜色翻转"
+  //   在复函数档下完全看不见。实测 4p（3 层壳、2 个径向节点）：
+  //       实函数档  红蓝红蓝红蓝（正确，跨节点翻转）
+  //       复函数档  红红红蓝蓝蓝（错误，壳层不翻转）
+  //   而这两处的注释恰恰写着"不能只看 sign(Y)：径向节点两侧 R 会变号"。
+  //   **判据写三遍，迟早分叉；写一遍就不会。**
+  //
+  // ★ 两个函数的分工（用错就是上面那个 bug 的变体）：
+  //   · `psiPhase`     —— 完整波函数 ψ = R(r)·Y(θ,φ) 的相位。
+  //                      用于**三维等值面**与**截面热力图**（那里画的是完整 ψ）。
+  //   · `angularPhase` —— 只有角度部分 Y(θ,φ) 的相位，**不含 R**。
+  //                      用于**球谐曲面**与 Θ/Φ 卡片（那两处本来就没有径向信息 ——
+  //                      球谐曲面画的是 r = |Y|，硬乘一个 R 反而是错的）。
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 完整波函数 ψ 的相位（弧度）—— 三维等值面与截面热力图的取色依据。
+   *
+   * 判据一律取**完整 ψ 的相位**：
+   *   · 叠加态   → arg(Σ cᵢψᵢ)，干涉项天然含在内
+   *   · 实函数   → ψ 是实数，相位只有 0 / π，即 sign(R(r)·Y_real(θ,φ))
+   *   · 复函数   → arg(R(r)·Y_complex(θ,φ)) = arg(Y_complex) + (R<0 ? π : 0)
+   *     ★ 最后这一项就是先前漏掉的东西：不乘 R 的话，径向节点两侧不会变号。
+   *
+   * @param terms  叠加态分量数组；非空时优先，此时忽略 mode/n/l/m
+   * @param phases 叠加态各项的相对相位（弧度）
+   */
+  function psiPhase(mode, n, l, m, r, theta, phi, terms, phases) {
+    if (terms && terms.length) {
+      return psiSuperposition(terms, r, theta, phi, phases).arg();
+    }
+    if (mode === 'real') {
+      return radialR(n, l, r) * angularReal(l, m, theta, phi) >= 0 ? 0 : Math.PI;
+    }
+    return psiComplex(n, l, m, r, theta, phi, 'complex').arg();
+  }
+
+  /**
+   * 只有角度函数 Y(θ,φ) 的相位（弧度）—— 球谐曲面与 Θ/Φ 卡片的取色依据。
+   *
+   * ★ 这里**故意不乘 R(r)**：这两处画的本来就是角度部分（球谐曲面 r = |Y|、
+   *   Θ/Φ 卡画两个因子），它们没有径向信息，乘上 R 只会把"径向节点"这件事
+   *   错误地混进来。需要完整 ψ 的相位时用 psiPhase。
+   */
+  function angularPhase(mode, l, m, theta, phi) {
+    if (mode === 'real') {
+      return angularReal(l, m, theta, phi) >= 0 ? 0 : Math.PI;
+    }
+    return angularComplex(l, m, theta, phi).arg();
+  }
+
+
+  // ---------------------------------------------------------------------------
   // 点云采样：按 |ψ|² 重要性采样（概率上即真实的电子分布）
   // ---------------------------------------------------------------------------
   /**
@@ -999,6 +1056,10 @@ window.OM = (function () {
     samplingRadius, samplingAngleMax,
     samplePoints,
     lColor, phaseColor, phaseColorFor, hslToRgb,
+    // 相位色的**判据**（只有这两个，别处不要再写第三遍 —— 先前写三遍就分叉了）：
+    // psiPhase 用于完整 ψ（三维等值面 / 截面热力图），angularPhase 用于纯角度函数
+    // （球谐曲面 / ΘΦ 卡片）。用哪个见各自上方的注释。
+    psiPhase, angularPhase,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
     isoNeckHalf, shellGaps, shellPeakFractions,

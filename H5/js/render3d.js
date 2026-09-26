@@ -710,18 +710,12 @@ window.Orbit3D = (function () {
         const r = Math.hypot(x, y, z);
         const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
         const ph = Math.atan2(y, x);
-        let col;
-        if (P.terms) {
-          // 叠加态：相位直接取整个叠加态波函数的 arg ψ
-          col = OM.phaseColor(OM.psiSuperposition(P.terms, r, th, ph, phases).arg(), 0.62);
-        } else {
-          col = (P.mode === 'real')
-            // ★ 判据用**完整 ψ 的符号** = sign(R(r)·Y(θ,φ))，不能只看 sign(Y)：
-            //   径向节点两侧 R 会变号，只看 Y 会让内外壳同色 —— 而"径向节点处符号
-            //   翻转"恰恰是相位色最该显示的东西，也与叠加态分支的 arg ψ 口径一致。
-            ? OM.phaseColor(OM.radialR(P.n, P.l, r) * OM.angularReal(P.l, P.m, th, ph) >= 0 ? 0 : Math.PI, 0.62)
-            : OM.phaseColor(OM.angularComplex(P.l, P.m, th, ph).arg(), 0.62);
-        }
+        // 相位色的判据收敛到 OM.psiPhase 一处 —— 原先这里三个分支各写一遍，结果
+        // **复函数分支漏掉了 R(r)**（写成 arg(angularComplex)），径向节点两侧不变色。
+        // 实测 4p：实函数档是红蓝红蓝红蓝（正确），复函数档是红红红蓝蓝蓝（错误）。
+        // 判据写三遍迟早分叉，现在只有一处定义（见 math.js 的说明）。
+        const col = OM.phaseColor(
+          OM.psiPhase(P.mode, P.n, P.l, P.m, r, th, ph, P.terms, phases), 0.62);
         colors[3 * i] = col[0]; colors[3 * i + 1] = col[1]; colors[3 * i + 2] = col[2];
       }
     } else {
@@ -1352,34 +1346,26 @@ window.Orbit3D = (function () {
       const sT = Math.sin(th), cT = Math.cos(th);
       for (let j = 0; j <= NP; j++) {
         const ph = 2 * Math.PI * j / NP;
-        let Y, len;
+        let len;
         if (mode === 'real') {
-          Y = OM.angularReal(l, m, th, ph);
+          const Y = OM.angularReal(l, m, th, ph);
           len = (which === 'Y2') ? Y * Y : Math.abs(Y);
         } else {
-          const c = OM.angularComplex(l, m, th, ph);
-          const mag = c.abs();
+          const mag = OM.angularComplex(l, m, th, ph).abs();
           len = (which === 'Y2') ? mag * mag : mag;
-          // 复：按相位着色（与三维/截面共用 phaseColor）
-          const col = OM.phaseColor(c.arg(), 0.62);
-          const idx = (i * (NP + 1) + j) * 3;
-          clr[idx] = col[0]; clr[idx + 1] = col[1]; clr[idx + 2] = col[2];
         }
         rval[i * (NP + 1) + j] = len;
         if (len > maxR) maxR = len;
-        if (mode === 'real') {
-          // ★ 着色只由「实函数 / 复函数」决定，与「|Y| 还是 |Y|²」**无关**。
-          //   颜色表达的是相位信息（实函数 → 符号），而相位不因把半径画成 |Y| 还是
-          //   |Y|² 而改变——判据只改径向轮廓。复函数分支本来就是这么做的（两种判据
-          //   同色），这里统一过来，也才与模块注释、README 的描述一致。
-          //   （原先 |Y|² 另走一套强度色标，是全项目唯一一处"颜色随判据变"的地方。）
-          const idx = (i * (NP + 1) + j) * 3;
-          // ★ 与三维 / 截面共用**同一个 phaseColor**：本项目曾有三套色约定（三维 ±红/青、
-          //   角度图 +青/−橙、截面同三维），同一份 ψ 的正负在三张图里颜色不同，学生没法
-          //   跨图对照。角度图只画角度函数，故判据仍是 sign(Y)（这里没有径向信息）。
-          const c = OM.phaseColor(Y >= 0 ? 0 : Math.PI, 0.62);
-          clr[idx] = c[0]; clr[idx + 1] = c[1]; clr[idx + 2] = c[2];
-        }
+        // 着色用**角度部分的相位**（OM.angularPhase，**故意不含 R(r)**）：这张图画的
+        // 本来就是 r = |Y|，没有径向信息，硬乘一个 R 反而会把"径向节点"错误地混进来。
+        // ★ 它和三维等值面/截面用的 OM.psiPhase 是**两个不同用途的判据**，别混用 ——
+        //   两者各自的适用场合写在 math.js 的函数注释里。
+        // ★ 着色只由「实函数 / 复函数」决定，与「|Y| 还是 |Y|²」**无关**：颜色表达的
+        //   是相位（实函数 → 符号），而相位不因把半径画成 |Y| 还是 |Y|² 而改变 ——
+        //   判据只改轮廓。（原先 |Y|² 另走一套强度色标，是全项目唯一一处"颜色随判据变"。）
+        const idx = (i * (NP + 1) + j) * 3;
+        const col = OM.phaseColor(OM.angularPhase(mode, l, m, th, ph), 0.62);
+        clr[idx] = col[0]; clr[idx + 1] = col[1]; clr[idx + 2] = col[2];
       }
     }
     if (maxR < 1e-12) maxR = 1e-12;
