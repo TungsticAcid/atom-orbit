@@ -161,13 +161,42 @@ window.OM = (function () {
   function phiNorm() { return PHI_NORM; }
 
   /**
+   * ★★★ Condon–Shortley 相因子在两档下**不能共用**，这是本文件最容易踩的一处约定。
+   *
+   *   复球谐：Y_l^m = N_l^m · P_l^{|m|}(cosθ) · e^{imφ}，那个 P **必须**带 (-1)^{|m|}。
+   *     教材表 4.2.2 的 Θ_{1±1} = ∓(√3/2)sinθ 里那个 ∓ 就是它；表 4.2.3 复数列的
+   *     Y_11 = −√(3/8π) e^{iφ} sinθ 里的负号也是它。→ **保留**。
+   *
+   *   实球谐：由 ±m 两个复解线性组合而来（教材：|2p_x⟩ = (1/√2)(−|211⟩+|21−1⟩)）。
+   *     组合系数里那个 (−1)^m 恰好把相因子**约掉**，所以表 4.2.3 实数列写的是
+   *     Y_{p_x} = +√(3/4π) sinθcosφ —— **没有负号**。→ **不能保留**。
+   *
+   *   项目原先两档共用同一个 thetaFunc，实档便整体多出一个 (-1)^{|m|}。这个符号只在
+   *   |m| 为**奇数**时显形，而它恰好是"整体符号为约定、不影响 |ψ|²"那句话的盲区：
+   *   对**复**解整体相位确实无所谓，但实解是有名字的函数（p_x 就该在 +x 为正、
+   *   那个瓣才是红的），符号一错，名字与图形当场对不上。
+   */
+  function csPhase(m) { return (Math.abs(m) % 2 === 0) ? 1 : -1; }
+
+  /**
    * 极角函数 Θ_{l,m}(θ) —— ψ = R(r)·Θ(θ)·Φ(φ) 中间那一段，**实数**。
    * 即关联勒让德 P_l^{|m|}(cosθ) 乘上自己的归一化常数。
-   * ★ 用的是与 angularComplex / angularReal **同一个** assocLegendre，
-   *   故 Condon–Shortley 相因子的约定自动一致，不必另行处理。
+   * ★ 带 Condon–Shortley 相因子 —— 对应**复数解**，与教材表 4.2.2 逐项一致。
+   *   实数解请用 thetaFuncReal。
    */
   function thetaFunc(l, m, theta) {
     return thetaNorm(l, m) * assocLegendre(l, Math.abs(m), Math.cos(theta));
+  }
+
+  /**
+   * 实数解的极角函数 Θ_{l,m}(θ)：即去掉 Condon–Shortley 相因子的那一个。
+   * ★ 存在的理由是**恒等式**：Y_{l,m}(实数解) ≡ thetaFuncReal · phiFuncReal，
+   *   逐点成立。若实档继续用带相因子的 thetaFunc，这条恒等式就会差一个 (-1)^{|m|}，
+   *   Θ/Φ 卡片底部那行"max|Θ|×max|Φ| = max|Y|"的数字会对不上 —— 而那张卡的全部
+   *   卖点就是"相乘"这件事可以被逐位核对。
+   */
+  function thetaFuncReal(l, m, theta) {
+    return csPhase(m) * thetaFunc(l, m, theta);
   }
 
   /**
@@ -219,11 +248,16 @@ window.OM = (function () {
   /**
    * 实球谐函数 Y_{l,m}(θ, φ)（实数）。
    * m=0 → P_l^0 型（沿 z）；m>0 → cos(mφ) 型（如 p_x）；m<0 → sin(|m|φ) 型（如 p_y）。
-   * 整体符号为约定，|Y|² 不受影响。
+   *
+   * ★ 不带 Condon–Shortley 相因子（csPhase）—— 见上面那段说明：实解是 ±m 两个复解
+   *   线性组合的产物，组合系数里的 (−1)^m 把它约掉了。去掉之后：
+   *     · Y_{p_x} 在 +x 方向为**正**，与这个名字（及教材表 4.2.3）一致；
+   *     · Y = thetaFuncReal · phiFuncReal 逐点成立（Θ/Φ 卡片靠这条）。
+   *   对**复**解则相反，相因子必须保留 —— 那是教材表 4.2.2/4.2.3 的写法。
    */
   function angularReal(l, m, theta, phi) {
     const am = Math.abs(m);
-    const P = assocLegendre(l, am, Math.cos(theta));
+    const P = assocLegendre(l, am, Math.cos(theta)) * csPhase(m);
     const N = yNorm(l, m);
     if (am === 0) return N * P;
     if (m > 0) return Math.SQRT2 * N * P * Math.cos(am * phi);
@@ -1124,7 +1158,7 @@ window.OM = (function () {
     angularComplex, angularReal,
     // 角度部分的两个因子（Y = Θ·Φ）与各自的归一化常数：界面上的 Θ/Φ 卡片、
     // 公式卡片的分段展示都用它们，不要在图里另写一份归一化
-    thetaFunc, thetaNorm, phiFuncComplex, phiFuncReal, phiNorm,
+    thetaFunc, thetaFuncReal, csPhase, thetaNorm, phiFuncComplex, phiFuncReal, phiNorm,
     psiComplex, psiDensity,
     samplingRadius, samplingAngleMax,
     samplePoints,

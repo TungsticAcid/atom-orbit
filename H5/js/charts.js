@@ -270,8 +270,10 @@ window.Charts = (function () {
    * ★ 曲线的视觉半径各按**自身峰值**归一化（与径向图的约定一致），那只影响形状
    *   看起来多大；乘积关系由底部那行的**真实数值**保证，不依赖视觉半径。
    *
-   * @param mode 'real' | 'complex' —— 只影响 Φ（Θ 恒为实数）；复解取模，画出来
-   *             就是教材说的"一个圆圈"，并按相位彩虹着色。
+   * @param mode 'real' | 'complex' —— **Θ 与 Φ 都随档变**：
+   *             复解 Θ 带 Condon–Shortley 相因子（教材表 4.2.2）、Φ 取模画成"一个圆圈"
+   *             并按相位彩虹着色；实解 Θ 去掉该相因子、Φ 取 cos/sin，画成正负双色。
+   *             ★ 两档都满足 Y = Θ·Φ 逐点成立 —— 底部那行数字就是这条恒等式的兑现。
    */
   function drawThetaPhi(canvas, l, m, mode) {
     const { ctx, w, h } = setup(canvas);
@@ -284,12 +286,17 @@ window.Charts = (function () {
     const N = 360;
 
     // ---- 采样两个因子 ----
+    // ★ Θ 必须**按档取**：复解用带 Condon–Shortley 相因子的 thetaFunc（= 教材表 4.2.2），
+    //   实解用去掉了相因子的 thetaFuncReal。混用会让实档的底部那行
+    //   "max|Θ| × max|Φ| = max|Y|" 差一个 (-1)^{|m|} —— 而这张卡的全部意义
+    //   就是"相乘"可以被逐位核对，符号一对不上，卡片的论点就塌了。
+    const thetaOf = (mode === 'complex') ? OM.thetaFunc : OM.thetaFuncReal;
     const thArr = [], TH = [], phArr = [], PH = [];
     let mxT = 0, mxP = 0;
     for (let i = 0; i <= N; i++) {
       const t = (Math.PI * i) / N;
       thArr.push(t);
-      const v = OM.thetaFunc(l, m, t);
+      const v = thetaOf(l, m, t);
       TH.push(v);
       if (Math.abs(v) > mxT) mxT = Math.abs(v);
     }
