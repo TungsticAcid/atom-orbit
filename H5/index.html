@@ -52,14 +52,17 @@
         <div class="set">
           <!-- ★ 核电荷数 Z 放在量子数**之前**：它决定"这是哪个原子"，比 n/l/m 更根本。
                类氢离子与氢只差一条标度关系（r → r/Z），所以换 Z 不改变任何公式的形状。
-               ★ 上限取 6 而不是 3：类氢对**任意**核电荷都成立（只要还剩一个电子），
-                 没有理由卡在 1–3 —— 那只是最初实现时随手定的。1–6 正好覆盖第一周期
-                 全部的类氢离子（H → C⁵⁺），再往后（N⁶⁺…）在教学上已无新意。 -->
+               ★ 上限 36 **不是数学限制**：类氢公式对任意正整数 Z 都成立，只是纯缩放 ——
+                 形状一模一样，变的只有尺度（r→r/Z）与能级（E∝Z²）。Z=100 在数学上照样成立。
+                 真正的边界是**物理**的：Z 越大电子越贴核、速度越接近光速，而非相对论公式的
+                 相对论修正 ~(Zα)²（α≈1/137）—— Z=36 时约 7%。所以范围定在 1–36：
+                 再高就该只作定性示意，不该拿本模块的数值下定量结论。 -->
           <div class="row"><label for="zInput">核电荷数 Z</label>
-            <input type="number" id="zInput" class="num-val" min="1" max="6" step="1" value="1" /></div>
-          <input type="range" id="zSlider" min="1" max="6" step="1" value="1" />
-          <div class="hint">1 氢 H · 2 氦离子 He⁺ · 3 锂离子 Li²⁺ · 4 铍离子 Be³⁺ · 5 硼离子 B⁴⁺ · 6 碳离子 C⁵⁺<br>
-            （类氢＝只含一个电子，故任意核电荷都适用；换 Z 只缩放径向与能级，不改轨道形状）</div>
+            <input type="number" id="zInput" class="num-val" min="1" max="36" step="1" value="1" /></div>
+          <input type="range" id="zSlider" min="1" max="36" step="1" value="1" />
+          <div class="hint">Z 价类氢离子（只含一个电子）写作 X<sup>(Z−1)+</sup> ——
+            1 氢 H · 2 氦离子 He⁺ · 3 锂离子 Li²⁺ · 4 铍离子 Be³⁺ · 6 碳离子 C⁵⁺ … 到 36 氪离子 Kr³⁵⁺<br>
+            （换 Z 只缩放径向与能级，<b>不改轨道形状</b>；本模块按非相对论处理，Z 越大相对论效应越显著）</div>
         </div>
         <div class="set">
           <div class="row"><label for="nInput">主量子数 n</label>
@@ -160,7 +163,10 @@
              而复解的相位彩虹绕 z 轴一圈就把所有颜色走一遍，第一眼看到的是"花"
              而不是"这个轨道长什么样"。但相位缠绕本身是复解的真实特点（也是本作品
              的一个演示点），所以是**收起来**、不是删掉。 -->
-        <details class="adv-zone">
+        <!-- ★ 第 1 条：这两个折叠区的顺序是「量子态」在上、「三维着色」在下。
+             「量子态」那个 <details> 是 state-editor.js 动态建的，所以这里给静态的这个
+             一个 id，让它插到这个之前（见 state-editor.js 的 build）。 -->
+        <details class="adv-zone" id="colorZone">
           <summary class="adv-summary">进阶：三维着色</summary>
           <div id="colorGroup">
             <div class="divider"><span>三维着色</span></div>
@@ -174,17 +180,9 @@
           <div class="hint">复解选「相位色」会得到一圈彩虹 —— 那是 ψ 的辐角沿方位角缠绕
             （|e^{imφ}| = 1 的缘故），是复解的特点；但它对初学是额外负担，故不作默认。</div>
         </details>
-        <!-- ★ 第 8 条：球谐档原先把「三维着色」整组**静默隐藏**，用户会以为漏做了。
-             改为保留一行说明，把"为什么这一档没有着色选项"讲清楚。 -->
-        <div class="hint" id="sphColorHint" style="display:none">
-          球谐曲面是解析形状，整个曲面同属一个 l，刷成单色不携带信息，所以这一档没有「支壳层色」。
-          它的配色由实数解 / 复数解直接决定，想切换请用下面的「进阶：三维着色」。
-          也正因为曲面本身是解析形状，这一档没有「电子云 / 等值面」之分。
-          <br>
-          这一档也没有叠加态：叠加态说的是完整波函数 ψ = Σcᵢψᵢ，而这里画的是角度部分 Y，
-          渲染时各分量的 n 会被整块丢弃。所以切到这一档会自动回到单一本征态、并收起「量子态」入口；
-          切回「波函数」档不会自动恢复，需要重新选预设。
-        </div>
+        <!-- ★ 这里原有一段 #sphColorHint（球谐档下显示两段说明：为何没有支壳层色、
+             为何没有叠加态）。按用户第 5 条**整段删除** —— 界面留白比长篇解释更清爽，
+             需要的学生会去问智能体。main.js 里对应的显隐控制一并移除。 -->
         </div><!-- /.panel-body -->
       </aside>
     </section>
@@ -240,11 +238,12 @@
         </div>
         <canvas id="thetaPhiChart" class="chart"></canvas>
         <div class="hint">上面三维里看到的是两者相乘的结果；这里看两个因子各自长什么样</div>
-        <!-- ★ 第 9 条：这两条曲线原先没有任何颜色说明 —— 学生只能看到"一条蓝线、一条橙线"，
-             不知道颜色在表达什么（而它恰恰是这个项目其它所有视图的通用语言）。 -->
-        <div class="hint">曲线颜色 = 该因子在该处的<b>正负</b>：<span style="color:#96d7ff">蓝为正</span>、
-          <span style="color:#ffaa5a">橙为负</span>，与三维视图的相位色是同一套约定。
-          切到复数解时 Φ 的模是常数（画出来是一个圆），改按相位着色。</div>
+        <!-- ★ 这里原有三句配色说明（"蓝为正 / 橙为负，与三维同一套约定；复解改按相位"）。
+             按用户第 6 条**删除**：那句"与三维同一套约定"当时其实**不成立**（这里蓝/橙、
+             三维红/青），而列一堆色卡既啰嗦、又替代不了"让两处真的是同一套"。
+             现在 charts.js 的 POS/NEG 直接由 OM.phaseColor 算出来 —— 配色一致这件事
+             由代码保证，不再需要文字解释。相位着色也改为跟随「三维着色」的选项（第 7 条），
+             不再是"复解就自动彩虹"。 -->
       </div>
 
       <div class="card chart-card">
@@ -307,6 +306,8 @@
   <script src="js/agent/demo-mode.js"></script>
   <script src="js/agent/proactive-rules.js"></script>
   <script src="js/agent/state-editor.js"></script>
+  <!-- 收藏夹（第 11 条）：必须在 panel.js 之前 —— 面板的动作气泡与会话页都要用它 -->
+  <script src="js/agent/demo-favorites.js"></script>
   <script src="js/agent/panel.js"></script>
   <script src="js/agent/reference-table.js"></script>
   <script src="js/agent/bootstrap.js"></script>

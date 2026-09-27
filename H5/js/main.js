@@ -58,7 +58,6 @@
     thetaPhiChart: $('#thetaPhiChart'),
     targetSeg: $('#targetSeg'), yCritSet: $('#yCritSet'),
     yCritSeg: $('#yCritSeg'), yCritHint: $('#yCritHint'),
-    sphColorHint: $('#sphColorHint'),
     orbitTitle: $('#orbitTitle'), modeBadge: $('#modeBadge'),
     formulaTitle: $('#formulaTitle'), formulaBox: $('#formulaBox'), formulaNote: $('#formulaNote'),
     radialChart: $('#radialChart'), sectionChart: $('#sectionChart'),
@@ -471,9 +470,8 @@
     // ★ 「三维着色」**不再**在球谐档隐藏（第 6 条）：球谐曲面同样要选配色
     //   （支壳层单色 / 实数解的正负双色 / 复数解的相位彩虹），复数解的默认也在这里生效。
     //   原先整组收起，等于"复数解默认纯色"这条要求在这一档根本没有实现的地方。
-    // ★ 第 8 条：球谐档原先把「三维着色」整组**静默隐藏**，用户会以为漏做了。
-    //   改为一并显示一行说明，讲清"为什么这一档没有支壳层色的意义"。
-    if (els.sphColorHint) els.sphColorHint.style.display = sph ? '' : 'none';
+    // ★ 第 8 条那行「为什么这一档没有支壳层色」的说明（#sphColorHint）已按用户第 5 条删除：
+    //   两段解释在面板里占的篇幅与实际帮助不成比例，界面留白更好。
     if (sph) syncYCritHint();
     els.levelSet.style.display = (!sph && state.renderMode === 'surface') ? '' : 'none';
     els.pointSet.style.display = (!sph && state.renderMode === 'points') ? '' : 'none';
@@ -550,8 +548,10 @@
     const st = chartTermState(true);         // 截面：支持叠加态
     Charts.drawRadial(els.radialChart, rt.n, rt.l, state.radial, state.Z);
     // Θ/Φ 卡片画的是 Y 的**两个因子**（不随 |Y|/|Y|² 判据变 —— 判据改的是三维里
-    // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）
-    Charts.drawThetaPhi(els.thetaPhiChart, rt.l, rt.m, rt.mode);
+    // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）。
+    // ★ 但它的**着色**要跟着 state.colorMode 走（第 7 条）：原先这张卡自作主张
+    //   "是复解就彩虹"，于是三维选了「支壳层色」而这里仍是彩虹，两处对不上。
+    Charts.drawThetaPhi(els.thetaPhiChart, rt.l, rt.m, rt.mode, state.colorMode);
     Charts.drawSection(els.sectionChart, st.n, st.l, st.m, st.mode, state.plane, state.sectionMode, state.Z,
       (st.kind === 'super') ? st.terms : null, state.relPhase);
     // 换轨道 / 换平面都会改变"这一面是不是节面"，光标与触摸策略要跟着变（第 11 条）
@@ -708,7 +708,9 @@
     // trust:true 是 \htmlClass 生效的前提（用于按项高亮）
     katex.render(f.latex, els.formulaBox, { throwOnError: false, displayMode: true, trust: true });
     if (sup) {
-      els.orbitTitle.innerHTML = '叠加态' +
+      // ★ 这里必须自己写空格：.orbit-real 已不再带 margin-left（见 style.css 的说明），
+      //   否则"叠加态"与"N 个分量"会挤成一团。
+      els.orbitTitle.innerHTML = '叠加态 ' +
         '<span class="orbit-real">' + state.terms.length + ' 个分量</span>';
       els.modeBadge.textContent = '叠加态';
       return;
@@ -725,7 +727,9 @@
       const named = !!Formula.realOrbitalName(state.l, state.m);
       els.orbitTitle.innerHTML = state.n +
         (named ? '' : sub + ' ') +
-        '<span class="orbit-real">' + Formula.realOrbitalLabelHtml(state.l, state.m) + '</span>';
+        // poly 类只给 l≥4 的长多项式：那是"表达式"不是"名字"，用 .orbit-real 的 1em 会撑开顶栏
+        '<span class="orbit-real' + (named ? '' : ' poly') + '">' +
+        Formula.realOrbitalLabelHtml(state.l, state.m) + '</span>';
     } else {
       els.orbitTitle.innerHTML = state.n + sub + '<sub>' + f.mLabel + '</sub>';
     }
@@ -737,6 +741,31 @@
   function scheduleUpdate(ms) {
     clearTimeout(debounceId);
     debounceId = setTimeout(recompute, ms == null ? 120 : ms);
+  }
+
+  /**
+   * 让「进阶」折叠区展开后，新露出来的内容自动滚进可视区（第 2 条）。
+   *
+   * ★ 为什么需要：面板高度被钉成与三维卡片等高（见 layout.js 的 --panel-h），内容超出时
+   *   由 .panel-body **内部**滚动。折叠区默认收起，展开那一瞬间新内容往往落在可视区之下 ——
+   *   学生点了"进阶：三维着色"，看到的却还是原来那几行，以为点了没反应。
+   *
+   * ★ 两个实现细节：
+   *   ① `toggle` 事件**不冒泡**，没法用事件委托，只能给每个折叠区各绑一次
+   *      （静态的 #colorZone 在这里绑，动态建的 #advZone 由 state-editor.js 建完后调本函数）；
+   *   ② 必须等下一帧再量尺寸 —— 展开动作本身要触发布局，当帧量到的还是展开前的旧高度。
+   */
+  function bindAdvScroll(d) {
+    if (!d) return;
+    d.addEventListener('toggle', function () {
+      if (!d.open) return;
+      requestAnimationFrame(function () {
+        const body = d.closest('.panel-body');
+        if (!body) return;
+        const over = d.getBoundingClientRect().bottom - body.getBoundingClientRect().bottom;
+        if (over > 0) body.scrollTop += over + 10;   // +10 留一点余白，别贴着底边
+      });
+    });
   }
 
   // ---- 事件绑定 -----------------------------------------------------------
@@ -1229,6 +1258,12 @@
       });
     },
 
+    /**
+     * 给一个「进阶」折叠区绑「展开即滚进视野」（第 2 条）。
+     * ★ 必须导出：「量子态」那个折叠区是 state-editor.js 动态建的，它建完要调这里。
+     */
+    bindAdvScroll: bindAdvScroll,
+
     /** 导出当前视图为 PNG（教师备课用） */
     exportViewPNG() {
       try { return els.viewer.querySelector('canvas').toDataURL('image/png'); }
@@ -1242,6 +1277,10 @@
   function start() {
     Orbit3D.init(els.viewer);
     bindEvent();
+    // 进阶折叠区：展开后把新内容滚进可视区（第 2 条）。
+    // ★ 这里只管**静态**的「三维着色」；「量子态」那个是 state-editor.js 动态建的，
+    //   由它建完后自己调 OrbitApp.bindAdvScroll —— toggle 不冒泡，只能逐个绑。
+    bindAdvScroll(document.getElementById('colorZone'));
     // 记下初始档位 —— 这样 applyModeDefaultColor 只在**真的换档**时才重置着色，
     // 不会在启动时把 HTML 里写好的初始选中项又改一遍。
     lastModeForColor = activeValue('#modeSeg', 'data-mode') || 'real';

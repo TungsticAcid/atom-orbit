@@ -287,12 +287,17 @@ window.Charts = (function () {
    * ★ 曲线的视觉半径各按**自身峰值**归一化（与径向图的约定一致），那只影响形状
    *   看起来多大；乘积关系由底部那行的**真实数值**保证，不依赖视觉半径。
    *
-   * @param mode 'real' | 'complex' —— **Θ 与 Φ 都随档变**：
-   *             复解 Θ 带 Condon–Shortley 相因子（教材表 4.2.2）、Φ 取模画成"一个圆圈"
-   *             并按相位彩虹着色；实解 Θ 去掉该相因子、Φ 取 cos/sin，画成正负双色。
-   *             ★ 两档都满足 Y = Θ·Φ 逐点成立 —— 底部那行数字就是这条恒等式的兑现。
+   * @param mode      'real' | 'complex' —— **Θ 与 Φ 都随档变**：
+   *                  复解 Θ 带 Condon–Shortley 相因子（教材表 4.2.2）、Φ 取模画成"一个圆圈"；
+   *                  实解 Θ 去掉该相因子、Φ 取 cos/sin。
+   *                  ★ 两档都满足 Y = Θ·Φ 逐点成立 —— 底部那行数字就是这条恒等式的兑现。
+   * @param colorMode 'orbital' | 'phase' —— 线条的着色方式，**与三维视图共用同一个选项**（第 7 条）。
+   *                  原先这张卡自作主张"是复解就按相位彩虹"，于是三维选了「支壳层色」
+   *                  而这里仍是彩虹，两处对不上（学生对照时颜色不一致）。现在只认 state.colorMode：
+   *                    · 'phase'   → 按该点因子的正负 / 相位取色（与三维同一个 phaseColor 出口）
+   *                    · 'orbital' → 单色描边（复解的 Φ 是个圆，单色反而更能显出它"模为常数"）
    */
-  function drawThetaPhi(canvas, l, m, mode) {
+  function drawThetaPhi(canvas, l, m, mode, colorMode) {
     const { ctx, w, h } = setup(canvas);
     const padX = 6;
     const colW = (w - padX * 2) / 2;
@@ -346,19 +351,73 @@ window.Charts = (function () {
       }
     }
 
+    // ---- 角节面方向（第 10 条）----
+    // 这张卡上画的是 Θ(θ) 与 Φ(φ) 两个**因子**，而它们的**零点**正是角度节面所在的方向：
+    //   · Θ(θ_k) = 0 → 那个零点是"以 z 轴为轴、半顶角 θ_k"的**圆锥面**
+    //   · Φ(φ_k) = 0 → 那个零点是"过 z 轴、方位角 φ_k"的**平面**
+    // 但一张极坐标图只能画出方向、画不出面。所以用淡色虚线把**角度**标出来 ——
+    // 这样学生能把"图上这条线"与"三维视图里那个节面"对上，而不必自己换算角度。
+    // ★ 画在曲线之前：它是参考线，压在半透明的瓣上面会看不清瓣本身。
+    (function drawNodeRays() {
+      const cones = OM.angularNodes(l, m, mode).cones;    // Θ 的零点（两档相同）
+      // φ 的零点只在**实数解且 m≠0** 时存在（复解的 |Φ| 是常数，没有零点）
+      const planes = (mode === 'real') ? OM.angularNodes(l, m, mode).planes : [];
+      const groups = [
+        { cx: cxT, list: cones, sym: 'θ', base: 'z' },    // 左图：极角自 +z 起
+        { cx: cxP, list: planes, sym: 'φ', base: 'x' },   // 右图：方位角自 +x 起
+      ];
+      groups.forEach(function (g) {
+        g.list.forEach(function (ang, k) {
+          // 方向单位向量。两幅图的极坐标约定与各自曲线的 toXY 一致：
+          //   Θ：x = sinθ, y = −cosθ（自 +z 起）    Φ：x = cosφ, y = −sinφ（自 +x 起）
+          const dx = (g.sym === 'θ') ? Math.sin(ang) : Math.cos(ang);
+          const dy = (g.sym === 'θ') ? -Math.cos(ang) : -Math.sin(ang);
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,138,212,0.5)';      // 与三维的节面标注同一支粉色
+          ctx.lineWidth = 1.4;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(g.cx, cy);
+          ctx.lineTo(g.cx + Rho * dx, cy + Rho * dy);
+          ctx.stroke();
+          ctx.restore();
+          // 角度写在射线末端外侧。多个零点时交替远近一点，避免文字叠在一起。
+          const rLab = Rho * (1.12 + (k % 2) * 0.11);
+          ctx.save();
+          ctx.fillStyle = 'rgba(255,190,235,0.95)';
+          ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(g.sym + '=' + Math.round((ang * 180) / Math.PI) + '°',
+            g.cx + rLab * dx, cy + rLab * dy + 4);
+          ctx.restore();
+        });
+      });
+    })();
+
     // ---- 曲线：先填充（回路闭合自然成瓣）再逐段描边 ----
-    const POS = 'rgba(150,215,255,0.95)';
-    const NEG = 'rgba(255,170,90,0.95)';
-    const FILL = 'rgba(120,200,255,0.14)';
+    /**
+     * THREE 风格的三元组（0..1）→ CSS 颜色。
+     * ★ 必须 ×255：`phaseColor` / `lColor` 返回的是 **0..1**（见 math.js 的注释），
+     *   而 CSS 的 rgba() 是 0..255 量纲 —— 直接拼会把 0.9 当成 0.9/255，画出一条黑线（实测踩过）。
+     */
+    const cssOf = function (c, a) {
+      return 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) +
+        ',' + Math.round(c[2] * 255) + ',' + a + ')';
+    };
+    // ★ 第 6 条：正负双色不再手写色值，而是**由三维那套 phaseColor 算出来** ——
+    //   这样"与三维视图是同一套约定"由代码保证，而不是靠一句随时会过期的注释。
+    //   原先这里是蓝/橙，而三维是红/青，那句说明其实一直是假的（用户看出来了）。
+    const POS = cssOf(OM.phaseColor(0, 0.62), 0.95);          // 相位 0 → 红（三维实解正瓣同源）
+    const NEG = cssOf(OM.phaseColor(Math.PI, 0.62), 0.95);    // 相位 π → 青
+    const FILL = 'rgba(140,175,225,0.13)';                    // 瓣的填充：中性淡色，两档通用
 
     /**
-     * @param cx    极点 x
-     * @param count 采样点数（分段数 = count）
-     * @param toXY  (i) → [x, y]
-     * @param sign  (i) → 该点的**带符号**值（决定正/负瓣配色）
-     * @param phase 非空时按相位逐段彩虹着色（复解用），此时忽略正负配色
+     * @param cx      极点 x
+     * @param count   采样点数（分段数 = count）
+     * @param toXY    (i) → [x, y]
+     * @param colorAt (i) → 第 i 段描边用的 CSS 颜色
      */
-    function strokeCurve(cx, count, toXY, sign, phase) {
+    function strokeCurve(cx, count, toXY, colorAt) {
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       for (let i = 0; i <= count; i++) { const p = toXY(i); ctx.lineTo(p[0], p[1]); }
@@ -367,19 +426,16 @@ window.Charts = (function () {
       ctx.lineWidth = 2.2;
       for (let i = 0; i < count; i++) {
         const p0 = toXY(i), p1 = toXY(i + 1);
-        if (phase) {
-          // ★ phaseColor 返回的是 **0..1 的 THREE 风格三元组**（见 math.js 的 lColor 注释），
-          //   而 CSS 的 rgba() 是 0..255 量纲 —— 直接拼会把 0.9 当 0.9/255 处理，
-          //   画出来是一条黑线（实测踩过）。必须 ×255。
-          const c = phase(i);
-          ctx.strokeStyle = 'rgba(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) +
-            ',' + Math.round(c[2] * 255) + ',0.95)';
-        } else {
-          ctx.strokeStyle = sign(i) >= 0 ? POS : NEG;
-        }
+        ctx.strokeStyle = colorAt(i);
         ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
       }
     }
+
+    // 着色口径（第 7 条）：只认 state.colorMode，与三维视图同一个开关。
+    //   'orbital' → 单色（就用该支壳层的基础色，与三维的「支壳层色」同源）
+    //   'phase'   → 正负 / 相位取色
+    const usePhase = (colorMode === 'phase');
+    const PLAIN = cssOf(OM.lColor(l), 0.95);
 
     // ---- 左：Θ(θ) 的**完整剖面** ----
     // ★ 为什么不能只沿 θ∈[0,π] 画一遍：θ 只扫过半个平面，而半径取 |Θ| 恒为非负，
@@ -396,21 +452,32 @@ window.Charts = (function () {
       const r = Math.abs(TH[k]) * sT;
       const x = r * Math.sin(thArr[k]);
       return [cxT + (rightOf(i) ? x : -x), cy - r * Math.cos(thArr[k])];
-    }, function (i) { return TH[kOf(i)]; }, null);
+    }, usePhase
+      // ★ Θ 在**两档下都是实函数**（复解与实解的差别只在那个 CS 相因子），没有"相位沿
+      //   方位角缠绕"这回事 —— 所以它在相位模式下也是正负双色，而不是彩虹。
+      ? function (i) { return TH[kOf(i)] >= 0 ? POS : NEG; }
+      : function () { return PLAIN; });
 
     // ---- 右：Φ(φ) ----
     // 这里 φ 扫满 2π，本身就把左右两侧都走到了（r = |cos φ| 的两瓣正是两个整圆），
     // 不需要像 Θ 那样折返。
     const sP = Rho / mxP;
-    const phaseCols = (mode === 'complex')
-      // 走共享判据 OM.angularPhase（= arg Y_complex = m·φ），强度取 0.62 与三维一致。
-      // —— 这张卡画的是**角度部分**，所以用 angularPhase 而不是 psiPhase（后者含 R）。
-      ? function (i) { return OM.phaseColor(OM.angularPhase('complex', l, m, 0, phArr[i]), 0.62); }
-      : null;
     strokeCurve(cxP, N, function (i) {
       const r = Math.abs(PH[i]) * sP;
       return [cxP + r * Math.cos(phArr[i]), cy - r * Math.sin(phArr[i])];
-    }, function (i) { return PH[i]; }, phaseCols);
+    }, !usePhase
+      ? function () { return PLAIN; }          // 单色：复解的 Φ 是个圆，单色反而更显出"模为常数"
+      : (mode === 'complex')
+        // ★ 必须用 **Φ 自己的相位**（= m·φ），不能走 angularPhase。
+        //   后者算的是"完整角度部分 Y 的相位"，而本图把 θ 固定在 0 —— 极点处 Θ(0) = 0，
+        //   于是 Y ≡ 0，arg(0) 完全由浮点噪声的符号决定（实测 φ<90° 给 π、其余给 0），
+        //   画出来是红/青随机拼凑的两色 —— 那**不是**相位缠绕，只是噪声。
+        //   而这张卡要展示的恰恰是"复解的 Φ 模为常数（一个圆）、相位沿方位角均匀绕一圈"，
+        //   所以相位就该直接取 e^{imφ} 的辐角。
+        ? function (i) {
+            return cssOf(OM.phaseColor(OM.phiFuncComplex(m, phArr[i]).arg(), 0.62), 0.95);
+          }
+        : function (i) { return PH[i] >= 0 ? POS : NEG; });
 
     // ---- 标注 ----
     ctx.textAlign = 'center';

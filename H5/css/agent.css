@@ -852,6 +852,12 @@ body.agent-open .layout {
 /* 会话页里的「分支点」清单：全局视角，切分支的唯一答案 */
 .agent-conv-sec { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line, #2a3558); }
 .agent-conv-sec-t { font-size: 11px; color: var(--text-dim, #9aa7c6); margin-bottom: 8px; }
+/* 收藏的演示（第 11 条）：与会话列表同页，复用 .agent-conv-row 的行样式（含 cursor/hover）。
+   ★ 刻意**不带 overflow** —— 滚动交给外层 .agent-conv-list 统一管；若套上它那个
+      flex:1 + overflow-y:auto，就会变成"滚动条里再套一条滚动条"。
+   行高压紧一点：收藏可能攒好几条，不该把下面的会话列表挤没。 */
+.agent-fav-list { display: flex; flex-direction: column; }
+.agent-fav-list .agent-conv-row { min-height: 0; padding: 7px 10px; }
 .agent-fork {
   padding: 7px 9px; margin-bottom: 7px; border-radius: 9px;
   background: rgba(110, 168, 255, .05);

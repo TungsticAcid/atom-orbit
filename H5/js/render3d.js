@@ -1600,7 +1600,12 @@ window.Orbit3D = (function () {
     }
     if (types.indexOf('angular') >= 0) {
       const matA = new THREE.MeshBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false });
-      const nodes = OM.angularNodes(l, Math.abs(m), mode);
+      // ★ 必须把 **带符号的 m** 传进去，不能取绝对值 —— 这一处曾出过错：
+      //   angularNodes 内部是按符号分流的（m>0 给 cos φ 型、零点在 φ=π/2 即 **yz 平面**；
+      //   m<0 给 sin φ 型、零点在 φ=0 即 **xz 平面**），传 Math.abs(m) 会把两者压成同一种，
+      //   于是 3p_x 与 3p_y 的节面**画在同一个平面上** —— 而 p_y 的瓣正沿 ±y，
+      //   那个平面恰好穿过波函数中间。学生看到的是"一个穿过了波函数、一个刚好是节面"。
+      const nodes = OM.angularNodes(l, m, mode);
       // 锥面：用"圆环 + 母线"示意，读作以 z 轴为轴、半顶角 θ 的锥
       for (const th of nodes.cones) {
         const rho = R * Math.sin(th), z = R * Math.cos(th);
@@ -1627,8 +1632,16 @@ window.Orbit3D = (function () {
         const geo = new THREE.PlaneGeometry(R * 2, R * 2);
         const mesh = new THREE.Mesh(geo, matA.clone());
         mesh.userData.kind = 'node'; mesh.userData.spot = 'angular';
-        // 平面法线方向为 φ+90°，绕 z 转 ph 使其落在方位角 ph 处
-        mesh.rotation.set(Math.PI / 2, 0, ph);
+        // ★ 第四个参数（欧拉顺序 'ZYX'）**不能省**，这是"3p_x 与 3p_y 的节面落在同一个
+        //   平面上"的第二个原因（第一个是传了 Math.abs(m)），而且它更隐蔽：
+        //   PlaneGeometry 的法线初值是 +z。默认顺序 'XYZ' 生成 R = Rx·Ry·Rz，
+        //   作用到向量时 **Rz 先作用** —— 而绕 z 轴转无论如何都改不动 (0,0,1)，
+        //   于是 Rx(π/2) 把它压成 (0,−1,0) 之后，ph 就再也影响不到结果了：
+        //   所有节面平面一起落在同一方位（实测 dump 出的法线恒为 [0,−1,0]）。
+        //   'ZYX' 给出 R = Rz·Ry·Rx，Rx 先作用、Rz 最后作用，ph 才真正决定方位角：
+        //     ph=π/2（cos φ 型）→ 法线 (1,0,0)，节面是 yz 平面
+        //     ph=0  （sin φ 型）→ 法线 (0,−1,0)，节面是 xz 平面
+        mesh.rotation.set(Math.PI / 2, 0, ph, 'ZYX');
         g.add(mesh);
       }
       matA.dispose();
@@ -1734,9 +1747,19 @@ window.Orbit3D = (function () {
         if (o.isGroup) return;
         const s = new THREE.Vector3();
         o.getWorldScale(s);
+        // ★ 平面（角度节面）额外报**世界法线**：节面方位是"肉眼最难判断、又最容易画错"
+        //   的东西（p_x 与 p_y 的节面只差 90°，画错了画面看着都像"一个斜切的平面"），
+        //   报出来才能定量核对 —— 与 _proj 一样，靠截图猜迟早会猜错。
+        let nrm = null;
+        if (o.geometry && o.geometry.type === 'PlaneGeometry') {
+          const n = new THREE.Vector3(0, 0, 1)
+            .applyQuaternion(o.getWorldQuaternion(new THREE.Quaternion()));
+          nrm = [+n.x.toFixed(3), +n.y.toFixed(3), +n.z.toFixed(3)];
+        }
         out.push({
           type: o.type, vis: o.visible, scale: +s.x.toFixed(3),
           verts: o.geometry && o.geometry.getAttribute('position') ? o.geometry.getAttribute('position').count : 0,
+          nrm: nrm,
         });
       });
       return out;

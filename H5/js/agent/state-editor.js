@@ -606,7 +606,14 @@ window.StateEditor = (function () {
       //   （见 layout.js 的 --panel-h），.panel 带 overflow:hidden。挂成 .panel 的
       //   第二个 flex 子项时，这块**展开后会超出面板高度被裁掉**；挂进 .panel-body
       //   才与其它控件共用同一条滚动条。
-      (panel.querySelector('.panel-body') || panel).appendChild(d);
+      const pb = panel.querySelector('.panel-body') || panel;
+      // ★ 第 1 条：本折叠区要排在「进阶：三维着色」**之前**（也就是让三维着色在下方）。
+      //   那个是 index.html 里的静态 details，带 id="colorZone"；插到它前面即可。
+      //   找不到就退回追加到末尾 —— HTML 若改了名，宁可顺序不对也不该整块消失。
+      const colorZone = pb.querySelector('#colorZone');
+      if (colorZone) pb.insertBefore(d, colorZone); else pb.appendChild(d);
+      // ★ 第 2 条：展开后把新露出的内容滚进可视区。toggle 事件不冒泡，只能在建的时候绑。
+      if (window.OrbitApp && window.OrbitApp.bindAdvScroll) window.OrbitApp.bindAdvScroll(d);
     }
     host = document.getElementById('stateEditor');
     if (!host) return;

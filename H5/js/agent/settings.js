@@ -195,6 +195,10 @@ window.Settings = (function () {
         localStorage.removeItem('orbit.agent.fabPos');
         // ★ 原先漏了自定义预设：按钮写着"清除本机全部数据"，却一直没删它们
         localStorage.removeItem('orbit.statePresets');
+        // ★ 收藏的演示同理（第 11 条）：漏了它就会"点了清除、收藏还在"。
+        //   用 DemoFavorites 导出的 key，免得两处各写一份字符串、改一处漏一处。
+        localStorage.removeItem(window.DemoFavorites
+          ? window.DemoFavorites.STORAGE_KEY : 'orbit.agent.demoFavorites');
         // 对话是"一个索引 key + 每个会话一个 key"，必须按前缀遍历删 ——
         // 漏了这一步，"清除全部数据"会把整段对话留在本机
         const convKeys = [];

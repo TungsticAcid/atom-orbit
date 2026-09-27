@@ -162,7 +162,10 @@ window.QuestionEngine = (function () {
     /** 角度节面几何（锥面 vs 平面） */
     angularGeometry(pick) {
       const { l, m } = pick;
-      const a = OM().angularNodes(l, Math.abs(m), 'real');
+      // 传带符号的 m（与 render3d 的节面渲染同一口径）：本函数只数**个数**，
+      // 而 cos 型与 sin 型的零点个数相同（都是 |m| 个），所以这里改与不改结果一样 ——
+      // 但几何**位置**不同，将来若要用到位置，取绝对值就会静默给错。
+      const a = OM().angularNodes(l, m, 'real');
       const nCones = a.cones.length, nPlanes = a.planes.length;
       const shape = (nCones && nPlanes) ? (nCones + ' 个锥面 + ' + nPlanes + ' 个平面')
         : (nCones ? nCones + ' 个锥面' : nPlanes + ' 个平面');

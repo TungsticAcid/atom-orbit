@@ -37,13 +37,14 @@ window.SceneBridge = (function () {
   const VOCAB = {
     setNuclearCharge: {
       group: '原子', concept: 'K1',
-      desc: '设置核电荷数 Z（类氢原子）：1 氢、2 氦离子 He⁺、3 锂离子 Li²⁺、'
-          + '4 铍离子 Be³⁺、5 硼离子 B⁴⁺、6 碳离子 C⁵⁺（第一周期的全部类氢离子）。'
-          + '类氢＝只含一个电子，故任意 Z 都适用。'
+      desc: '设置核电荷数 Z（类氢原子，1–36）：1 氢、2 氦离子 He⁺、3 锂离子 Li²⁺、'
+          + '4 铍离子 Be³⁺、6 碳离子 C⁵⁺ … 到 36 氪离子 Kr³⁵⁺。'
+          + '类氢＝只含一个电子，故任意 Z 都适用（上限 36 是**物理**限制而非数学限制：'
+          + '非相对论公式的相对论修正 ~(Zα)²，Z=36 时约 7%，再高只宜作定性示意）。'
           + '类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），**角向部分与 Z 无关** —— '
           + '所以换 Z 会改变三维尺度、径向分布图横轴、截面视窗与能级，但球谐曲面纹丝不动。'
           + '★ 与量子数不同，换 Z **不会**退出叠加态（Z 是原子的属性，叠加态整体跟着缩放）。',
-      params: { Z: 'int 1–6' },
+      params: { Z: 'int 1–36' },
     },
     setQuantumNumbers: {
       group: '量子数', concept: 'K1',
@@ -422,13 +423,18 @@ window.SceneBridge = (function () {
    *   立刻重新执行那一步，等于白退。正确做法是让循环继续停在原地等「下一步」。
    * ★ 演示已结束时：说明循环已经退出，于是重新起一个循环并 parkImmediately=true
    *   让它先停在闸门上。这样"播完之后还能退回去重看"才成立。
-   * ★ 只在手动模式可用。自动连播中回退会与正在往前跑的循环打架。
+   * ★ 第 11 条：可用性判据从"是否处于手动模式"改成"循环是否真在往前跑"。
+   *   原判据 `if (!manual) return 失败` 有个致命后果：**连续播放播完之后 manual 仍是 false**，
+   *   于是学生看完一遍想退回去重看某一步，得到的是"自动连播中无法回退"—— 而那时根本没有
+   *   在连播。真正该问的是"循环是否正停在闸门上"：停了就能退，正跑着才不能退。
    */
   function prev() {
     if (!queue.length) return { ok: false, error: '当前没有可回退的演示' };
-    if (!manual) return { ok: false, error: '自动连播中无法回退，请先切到手动逐步' };
+    if (playing && !manual && !atGate) return { ok: false, error: '自动连播中无法回退，请先切到「⏸ 逐步」' };
     if (playing && !atGate) return { ok: false, error: '当前步骤正在播放，请稍候再回退' };
     if (qIndex <= 0) return { ok: false, error: '已经是第一步了' };
+    // 退回去之后要按"逐步"走下去 —— 否则循环会接着自己往前跑，等于白退
+    if (!manual) manual = true;
     qIndex--;
     restoreSnapshot(snapshots[qIndex]);
     if (!playing) {
@@ -485,9 +491,14 @@ window.SceneBridge = (function () {
       index: qIndex,                   // 已执行步数
       total: qTotal,
       waitingForUser: atGate,          // 是否正停在「下一步」闸门上
-      canPrev: manual && qIndex > 0 && (!playing || atGate),
+      // ★ 第 11 条：与 prev() 同一判据 —— 只要循环停在闸门上（或已结束）就能退。
+      //   原先还要求 manual，于是"连播播完之后想退回去重看"被判成不可用。
+      canPrev: qIndex > 0 && (!playing || atGate),
       canNext: atGate && qIndex < queue.length,
-      canReplay: !playing && queue.length > 0,   // 播完后可重播
+      // ★ 第 11 条：重播的可行性取决于**演示记录**在不在，而不是播放队列。
+      //   队列会被 stop() 清空，记录不会 —— 原先写 `!playing && queue.length > 0`，
+      //   于是学生一点「■ 停止」，界面上就再也给不出重播入口。
+      canReplay: !!demos[String(demoSeq)],
       // ★ 给**整条队列**（而不是只给未来步骤）、带 params、带稳定 id：
       //   模型得能指认"第 3 步把阈值设成了几"，才谈得上整改它。原先只给
       //   slice(qIndex) 的 {action, speech} —— 看不到已执行的、没有参数，
@@ -809,13 +820,13 @@ window.SceneBridge = (function () {
     const S = () => (window.OrbitApp ? window.OrbitApp.getState() : {});
     switch (name) {
       case 'setNuclearCharge': {
-        // ★ Z 是**枚举**（第一周期六个类氢离子），不是连续量 —— 这里必须拒绝而不是钳制：
-        //   钳制会变成"静默改请求"（模型说 Z=9、画面给 C⁵⁺），而它很可能照旧按 9 去讲。
+        // ★ Z 是 1–36 的**整数**（不再是"第一周期六种"那个枚举），但仍必须**拒绝**而不是钳制：
+        //   钳制会变成"静默改请求"（模型说 Z=50、画面给 Kr³⁵⁺），而它很可能照旧按 50 去讲。
         //   半径、阈值这类连续量才适合钳制（模型说 99% → 给到上限 80% 是它想要的意思）。
         const z = Number(p.Z);
-        if (!Number.isInteger(z) || z < 1 || z > 6) {
-          return { err: 'Z 应为 1–6 的整数（1 氢 H / 2 氦离子 He⁺ / 3 锂离子 Li²⁺ / '
-            + '4 铍离子 Be³⁺ / 5 硼离子 B⁴⁺ / 6 碳离子 C⁵⁺）' };
+        if (!Number.isInteger(z) || z < 1 || z > 36) {
+          return { err: 'Z 应为 1–36 的整数（Z 价类氢离子写作 X^(Z−1)+，如 1 氢 H、'
+            + '2 氦离子 He⁺、3 锂离子 Li²⁺、6 碳离子 C⁵⁺、36 氪离子 Kr³⁵⁺）' };
         }
         return { params: { Z: z } };
       }
@@ -1458,26 +1469,22 @@ window.SceneBridge = (function () {
   }
 
   /**
-   * 「重新演示」：从第一步重播当前这条分镜。
-   * 先把画面还原到演示开始前的样子，再从头走一遍。
+   * 「重新演示」：从第一步重播。
+   *
+   * ★ 第 11 条：必须**从演示记录装载**，不能复用当前 `queue`。
+   *   原实现是 `queue.slice()` 存下来、`stop()` 之后再塞回去 —— 而 `stop()` 会清空 queue，
+   *   于是学生一旦点过「■ 停止」（这是最常见的结局：看一半不看了），
+   *   「↻ 重新演示」就永远回一个"没有可重播的演示"。
+   *   演示记录 `demos` 独立于播放队列存在、刷新后还会由对话历史重建，
+   *   才是可靠的来源。这条路径与 `replayDemo` 完全重合，故直接委托 ——
+   *   免得"按 demoId 重播"与"重播最近一条"两份实现各自漂移。
    */
-  function replay() {
-    if (!queue.length) return { ok: false, error: '没有可重播的演示' };
-    const q = queue.slice();
-    const snaps = snapshots.slice();
-    const man = manual;
-    stop();                              // 会清空队列并推进 generation
-    queue = q;
-    snapshots = snaps;
-    qIndex = 0;
-    qTotal = q.length;
-    manual = man;
-    playing = true;
-    atGate = false;
-    restoreSnapshot(snaps[0]);           // 回到"第一步之前"
-    emitProgress({ phase: 'replay', total: q.length, manual: manual });
-    runQueue(generation, true);         // 后台播放，不 await
-    return { ok: true, total: q.length };
+  function replay(id) {
+    const rec = (id == null || id === '') ? demos[String(demoSeq)] : getDemo(id);
+    if (!rec || !rec.steps || !rec.steps.length) {
+      return { ok: false, error: '还没有放过任何演示，没有可重播的内容' };
+    }
+    return replayDemo(rec.id);
   }
 
   /** 给播放进度用的中文动作名（与 panel 的气泡文案保持一致的语感） */
@@ -1540,6 +1547,9 @@ window.SceneBridge = (function () {
     queueInfo, getStep, replaceStep, insertAfter, removeStep, jumpTo,
     // 演示记录：重播 / 整改 / 从对话历史重建（见文件中部"演示记录"一节）
     reviseDemo, replayDemo, listDemos, getDemo, syncDemosFromHistory,
+    // ★ loadDemo 也要导出：收藏夹回放走的正是这条路（把存下来的步骤清单重新校验、
+    //   装载、播放）—— 它与"按 demoId 重播"的区别只是步骤来自 localStorage 而非记录表。
+    loadDemo,
     isRunning: () => playing,
     MAX_ACTIONS_PER_TURN, MAX_QUEUE,
     DEFAULT_DWELL_MS,

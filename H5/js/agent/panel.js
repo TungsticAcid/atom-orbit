@@ -567,6 +567,40 @@ window.Panel = (function () {
         else addChip((r && r.error) || '重播失败', 'warn');
       });
       foot.appendChild(rp);
+
+      // ④ 「☆ 收藏」：把这条演示的**步骤清单**存到本机（第 11 条）。
+      //    与「重播」是两件不同的事，两者都要有：
+      //      · 重播用的是**演示记录**（易失 —— 刷新即散，靠对话历史重建；历史被裁剪就没了）
+      //      · 收藏进的是 **localStorage**（持久、跨会话）—— 上周讲的那条下周仍在
+      //    ★ 刻意**不进工具表**：哪条演示值得留着反复看是**人的判断**，模型猜不出来，
+      //      也不该替他决定。所以它只是一个按钮，没有任何对应的场景动作。
+      if (window.DemoFavorites) {
+        const fb = el('button', { class: 'agent-act-btn', type: 'button',
+          text: '☆ 收藏', title: '把这条演示存到本机，之后随时可重播（跨刷新、跨会话）' });
+        fb.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          const rec = window.SceneBridge.getDemo ? window.SceneBridge.getDemo(demoId) : null;
+          if (!rec || !rec.steps || !rec.steps.length) {
+            fb.textContent = '演示已失效';
+            fb.disabled = true;
+            return;
+          }
+          // ★ 演示记录里的步骤形状就是 {action, params, speech}，与收藏夹要求的形状一致，
+          //   直接给即可。参考实现（crystal）那边记录里存的是内部步骤名，所以它得写
+          //   `s.name || s.action` —— 那个写法照抄到这边会得到 undefined，
+          //   表现是"收藏成功、回放却什么都不发生，且不报错"。
+          const r = window.DemoFavorites.save('', rec.steps, { origin: rec.origin });
+          if (r && r.ok) {
+            fb.textContent = '★ 已收藏';
+            fb.disabled = true;        // 防连点存出多条（收藏夹不做去重）
+            addChip('已收藏「' + r.label + '」（' + r.count + ' 步）—— 在「会话」页里可以找到并重播');
+          } else {
+            fb.textContent = '（收藏失败）';
+            addChip((r && r.error) || '收藏失败', 'warn');
+          }
+        });
+        foot.appendChild(fb);
+      }
       body.appendChild(foot);
       const sm = d.querySelector('summary');
       if (sm) sm.insertAdjacentHTML('beforeend',
@@ -1051,6 +1085,47 @@ window.Panel = (function () {
         box.appendChild(chips);
         sec.appendChild(box);
       });
+      list.appendChild(sec);
+    }
+    // ---- 收藏的演示（第 11 条）----
+    // ★ 为什么放在**会话页**而不是别处：收藏夹是跨会话的（存在 localStorage），
+    //   而会话页正是"本机留下了什么"的汇总处 —— 会话在上、收藏在下，都在这里。
+    //   点一下即重播，走 SceneBridge.loadDemo：按**当前**视图把那份步骤清单重新执行一遍
+    //   （所以存的是步骤而不是截图，一年后回放仍然对）。
+    if (window.DemoFavorites) {
+      const favs = window.DemoFavorites.list();
+      const sec = el('div', { class: 'agent-conv-sec' });
+      sec.appendChild(el('div', { class: 'agent-conv-sec-t',
+        text: favs.length
+          ? '收藏的演示（' + favs.length + ' 条，点一下重播）'
+          : '收藏的演示（还没有 —— 在动作气泡上点「☆ 收藏」）' }));
+      // ★ 用独立的 .agent-fav-list 而不是套 .agent-conv-list —— 后者是会话列表专用的
+      //   滚动容器（flex:1 + overflow-y:auto），套进来会变成"滚动条里再套一条滚动条"。
+      //   这里只是一列行，滚动交给外层的会话列表。
+      const favList = el('div', { class: 'agent-fav-list' });
+      favs.forEach(function (f) {
+        const row = el('div', { class: 'agent-conv-row' });
+        row.appendChild(el('span', { class: 'agent-conv-t', text: '★ ' + f.label }));
+        row.appendChild(el('span', { class: 'agent-conv-meta',
+          text: f.steps.length + ' 步 · ' + agoText(f.at) }));
+        const del = el('button', { class: 'agent-act-btn', text: '✕', title: '从收藏夹删除' });
+        del.type = 'button';
+        del.onclick = function (ev) {
+          ev.stopPropagation();
+          window.DemoFavorites.remove(f.key);
+          renderConvList();              // 就地刷新这一节
+        };
+        row.appendChild(del);
+        row.onclick = function () {
+          // ★ 先收起会话页：面板挡着三维视图，学生就成了"听着重播、却看不见画面"
+          leaveConvPage();
+          const r = window.SceneBridge.loadDemo(f.steps, { origin: 'favorite', reason: 'favorite' });
+          if (r && r.ok) addChip('正在重播收藏「' + f.label + '」（共 ' + r.total + ' 步）');
+          else addChip('无法播放这条收藏：' + ((r && r.error) || '未知原因'), 'warn');
+        };
+        favList.appendChild(row);
+      });
+      sec.appendChild(favList);
       list.appendChild(sec);
     }
     const st = S.stats();

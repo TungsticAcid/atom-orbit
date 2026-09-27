@@ -60,15 +60,23 @@ html, body {
   min-width: 78px; text-align: right;
 }
 /* m 下标（仅复解档的 m=+1）与实轨道名（p_x、d_xy…）
-   ★ 实轨道名原先写成 0.5em + text-dim（≈11px 的暗灰），而前缀那个 n 是 22px 的强调色 ——
-     一个"3"摆在前面、后面的"p_x"小得几乎看不见，而这恰恰是**实数解档唯一的名字**。
-     现在放大到 0.72em 并用正文色，与 n 组成一个完整的轨道名。 */
+   ★ 第 3 条：实解档的轨道名要与前面的 n **同色同号**。
+     复解档渲染成 `3p<sub>m=0</sub>` —— `3p` 同为 22px 强调色，只有下标小；而实解档
+     把 `p_x` 单独缩到 0.72em 并改成正文色，于是"3"与"p_x"看着像两个不相干的词，
+     而这恰恰是**实数解档唯一的名字**。现在 font-size:1em + color:inherit 之后，
+     实解档的 `3p` 与复解档的 `3p` 逐像素一致，`x` 由下面 .orbit-title sub 的 0.6em
+     统一管 —— 不再单写一条 .orbit-real sub 去覆盖它（那条正是两档下标大小不一的来源）。 */
 .orbit-title sub { font-size: 0.6em; font-weight: 400; }
 .orbit-title .orbit-real {
-  font-size: 0.72em; font-weight: 400; color: var(--text);
-  margin-left: 6px; white-space: nowrap;
+  font-size: 1em; font-weight: 400; color: inherit;
+  /* ★ 不能再留 margin-left：复解档的 `3p` 是**同一个文本节点**、字形紧贴，
+     而实解档的 `p` 在这个 span 里 —— 加上 margin 就变成 `3 p_x`，两档一眼能看出不一样。
+     需要间隔的场合（"叠加态 3 个分量"、l≥4 的 "6h 多项式"）由调用方在文本里写空格。 */
+  white-space: nowrap;
 }
-.orbit-title .orbit-real sub { font-size: 0.72em; }
+/* l≥4 没有惯用名，名字退化成直角坐标多项式（6h 那一组，最长 30 字符）——
+   1em 会把顶栏撑开，故单独保持小号：它是个"表达式"而不是"名字"，小一号正合适。 */
+.orbit-title .orbit-real.poly { font-size: 0.72em; }
 .badge {
   background: linear-gradient(135deg, #2b3d6b, #3b2f6b);
   border: 1px solid #4a5a96;
