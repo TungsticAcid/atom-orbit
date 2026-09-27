@@ -1608,6 +1608,19 @@ window.Orbit3D = (function () {
       const nodes = OM.angularNodes(l, m, mode);
       // 锥面：用"圆环 + 母线"示意，读作以 z 轴为轴、半顶角 θ 的锥
       for (const th of nodes.cones) {
+        // ★ 半顶角 **90° 的锥面其实是一个平面**（就是 xy 平面）—— 锥退化了。
+        //   若照锥面的画法画成"一圈线 + 四条母线"，学生看到的是"一个圆"，
+        //   会读成"节面是圆锥面/圆柱面"，而它明明是个平面；更糟的是**同一个 xy 平面**
+        //   若由 φ 方向给出（走下面的 planes 分支）却画成矩形 —— 同一种几何、两种画法，
+        //   这正是"4p_z 的节面是圆形、4p_x 却是矩形"的来源。
+        //   统一到这里：θ=90° 归入平面画法（PlaneGeometry 的法线初值就是 +z，无需旋转）。
+        if (Math.abs(th - Math.PI / 2) < 0.02) {
+          const geo0 = new THREE.PlaneGeometry(R * 2, R * 2);
+          const mesh0 = new THREE.Mesh(geo0, matA.clone());
+          mesh0.userData.kind = 'node'; mesh0.userData.spot = 'angular';
+          g.add(mesh0);
+          continue;
+        }
         const rho = R * Math.sin(th), z = R * Math.cos(th);
         const circle = new THREE.EllipseCurve(0, 0, rho, rho, 0, Math.PI * 2, false, 0);
         const pts = circle.getPoints(64).map((p) => new THREE.Vector3(p.x, p.y, z));

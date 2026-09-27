@@ -10,11 +10,15 @@ window.Formula = (function () {
   const SUBSHELL = OM.SUBSHELL;
 
   // e^{imφ} 的指数：|m|=1 时省略系数 1，写出更简洁的 e^{±iφ}
+  /**
+   * e^{imφ} 里的指数。★ 用 `\varphi` 而不是 `\phi` —— 全文（含 Φ 的自变量）都用
+   * `\varphi`，两种字形混着出现在同一行里会让人以为是两个不同的角。
+   */
   function mExponent(m) {
-    if (m === 1) return '\\mathrm{i}\\phi';
-    if (m === -1) return '-\\mathrm{i}\\phi';
+    if (m === 1) return '\\mathrm{i}\\varphi';
+    if (m === -1) return '-\\mathrm{i}\\varphi';
     if (m === 0) return '0';
-    return m + '\\mathrm{i}\\phi';
+    return m + '\\mathrm{i}\\varphi';
   }
 
   // ---- 关联勒让德 P_l^m(cosθ) 的显式多项式展开 ---------------------------------
@@ -479,8 +483,32 @@ window.Formula = (function () {
     //   "角度部分自己还是两个单变量函数的乘积"。把 Φ、Θ 各自单列一行、再写相乘，
     //   这件事才在公式上看得见 —— 与界面下方那张 Θ/Φ 卡片是同一个论点。
 
-    // ③ 方位角函数 Φ_m(φ)：常数本身就是闭式，不需要近似值
-    rows.push('\\Phi_{' + m + '}(\\varphi) &= ' + W('F', phiConst + (phiTrig ? '\\,' + phiTrig : '')));
+    // ③ 方位角函数 Φ(φ)
+    // ★ 下标必须**区分两档**，并把"实解是组合出来的"写在明面上（用户第 2 条）：
+    //   · 复解 Φ_m —— 下标就是磁量子数 m，在这里名副其实（Φ_m 是 L̂z 的本征函数）。
+    //   · 实解 Φ_{±m} —— 实解那一支**由 ±m 两个复解线性组合而来**。下标仍写 m 的话，
+    //     学生会以为实解也有个叫 m 的量子数，而"组合"这件事在公式上完全看不见。
+    //   组合关系（系数由 math.js 的 phiFuncReal 反推）：
+    //     cos 型 (m>0)：Φ_{±m} = (1/√2)(Φ_{+m} + Φ_{−m})
+    //     sin 型 (m<0)：Φ_{±m} = (1/(i√2))(Φ_{+m} − Φ_{−m})
+    //   验算：Φ_{+m} + Φ_{−m} = 2·(1/√(2π))·cos(mφ) = √(2/π)·cos(mφ)，
+    //   而 phiFuncReal 给的是 (1/√π)·cos(mφ) —— 两者恰差 1/√2，正是那个系数。
+    let phiRef, phiBody;
+    if (mode === 'complex') {
+      phiRef = '\\Phi_{' + m + '}';
+      phiBody = phiConst + (phiTrig ? '\\,' + phiTrig : '');
+    } else if (am === 0) {
+      // m = 0：±0 无从组合，实解与复解在这里是同一个常数
+      phiRef = '\\Phi_{0}';
+      phiBody = phiConst;
+    } else {
+      phiRef = '\\Phi_{\\pm ' + am + '}';
+      const phiCoef = (m > 0) ? '\\frac{1}{\\sqrt{2}}' : '\\frac{1}{i\\sqrt{2}}';
+      const phiMid = (m > 0) ? ' + ' : ' - ';
+      phiBody = phiCoef + '\\left(\\Phi_{+' + am + '}' + phiMid + '\\Phi_{-' + am + '}\\right) = '
+        + phiConst + (phiTrig ? '\\,' + phiTrig : '');
+    }
+    rows.push(phiRef + '(\\varphi) &= ' + W('F', phiBody));
 
     // ④ 极角函数 Θ_{l,m}(θ)：多项式已取整，常数同步吸收倍数，故本行与 Y 行逐位一致
     const NthetaDisp = sqrtRatioTex(BigInt(Pth) * Gp * Gp, BigInt(Qth) * Lp * Lp);
@@ -494,7 +522,7 @@ window.Formula = (function () {
     if (pExpRaw !== '1') yFac.push(pExp);                        // P₀⁰ ≡ 1，省略
     if (phiTrig) yFac.push(phiTrig);                             // e⁰ ≡ 1，省略
     const yCoef = overSqrtPiTex(BigInt(Pang) * Gp * Gp, BigInt(Qang) * Lp * Lp);
-    rows.push(yTag + '(\\theta,\\varphi) &= \\Theta_{' + l + ',' + m + '}(\\theta)\\cdot\\Phi_{' + m + '}(\\varphi) = ' +
+    rows.push(yTag + '(\\theta,\\varphi) &= \\Theta_{' + l + ',' + m + '}(\\theta)\\cdot' + phiRef + '(\\varphi) = ' +
       W('Y', leadSign + yCoef + (yFac.length ? '\\,' + yFac.join('\\,') : '')));
 
     // ---- ⑥ 完整波函数：代入并约简后的闭式（与教材 R 表、例题同形） ----
