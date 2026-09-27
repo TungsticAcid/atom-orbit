@@ -49,21 +49,28 @@
              --panel-h），内容比它高时要在**内部**滚动，而不是把整行栅格撑高 -->
         <div class="panel-body">
 
-        <div class="set">
-          <!-- ★ 核电荷数 Z 放在量子数**之前**：它决定"这是哪个原子"，比 n/l/m 更根本。
-               类氢离子与氢只差一条标度关系（r → r/Z），所以换 Z 不改变任何公式的形状。
-               ★ 上限 36 **不是数学限制**：类氢公式对任意正整数 Z 都成立，只是纯缩放 ——
-                 形状一模一样，变的只有尺度（r→r/Z）与能级（E∝Z²）。Z=100 在数学上照样成立。
-                 真正的边界是**物理**的：Z 越大电子越贴核、速度越接近光速，而非相对论公式的
-                 相对论修正 ~(Zα)²（α≈1/137）—— Z=36 时约 7%。所以范围定在 1–36：
-                 再高就该只作定性示意，不该拿本模块的数值下定量结论。 -->
-          <div class="row"><label for="zInput">核电荷数 Z</label>
-            <input type="number" id="zInput" class="num-val" min="1" max="36" step="1" value="1" /></div>
-          <input type="range" id="zSlider" min="1" max="36" step="1" value="1" />
-          <div class="hint">Z 价类氢离子（只含一个电子）写作 X<sup>(Z−1)+</sup> ——
-            1 氢 H · 2 氦离子 He⁺ · 3 锂离子 Li²⁺ · 4 铍离子 Be³⁺ · 6 碳离子 C⁵⁺ … 到 36 氪离子 Kr³⁵⁺<br>
-            （换 Z 只缩放径向与能级，<b>不改轨道形状</b>；本模块按非相对论处理，Z 越大相对论效应越显著）</div>
-        </div>
+        <!-- ★ 核电荷数 Z **收进折叠区**（用户：它不是重要的东西）。
+             它决定"这是哪个原子"，但默认 Z = 1（氢）已覆盖绝大多数教学场景 ——
+             摊在面板顶部时它占掉一大块（label + 输入框 + 滑块 + 两行提示），
+             而学生一节课可能一次都不动它。
+             ★ summary 上**必须带当前值**：折起来之后，若标题只剩"核电荷数"四个字，
+               学生就再也想不起来自己是不是改过它了 —— 而 Z 会静默改掉所有尺度与能级
+               （r → r/Z、E ∝ Z²）。值由 main.js 的 syncZZoneSummary 写回。
+             ★ 上限 36 **不是数学限制**：类氢公式对任意正整数 Z 都成立，只是纯缩放 ——
+               形状一模一样，变的只有尺度与能级。真正的边界是**物理**的：Z 越大电子越贴核、
+               速度越接近光速，而非相对论公式的相对论修正 ~(Zα)²（α≈1/137）——
+               Z=36 时约 7%。再高只宜作定性示意，不该拿本模块的数值下定量结论。 -->
+        <details class="adv-zone" id="zZone">
+          <summary class="adv-summary">核电荷数 Z = 1</summary>
+          <div class="set">
+            <div class="row"><label for="zInput">核电荷数 Z</label>
+              <input type="number" id="zInput" class="num-val" min="1" max="36" step="1" value="1" /></div>
+            <input type="range" id="zSlider" min="1" max="36" step="1" value="1" />
+            <div class="hint">Z 价类氢离子（只含一个电子）写作 X<sup>(Z−1)+</sup> ——
+              1 氢 H · 2 氦离子 He⁺ · 3 锂离子 Li²⁺ · 4 铍离子 Be³⁺ · 6 碳离子 C⁵⁺ … 到 36 氪离子 Kr³⁵⁺<br>
+              （换 Z 只缩放径向与能级，<b>不改轨道形状</b>；本模块按非相对论处理，Z 越大相对论效应越显著）</div>
+          </div>
+        </details>
         <div class="set">
           <div class="row"><label for="nInput">主量子数 n</label>
             <input type="number" id="nInput" class="num-val" min="1" max="6" step="1" value="3" /></div>

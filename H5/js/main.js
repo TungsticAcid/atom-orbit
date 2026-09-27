@@ -405,6 +405,7 @@
   // ---- 主重算 ---------------------------------------------------------------
   function recompute() {
     readFromControls();
+    syncZZoneSummary();          // 折叠区标题上的 Z 跟着走（见该函数的说明）
     // ★ 换轨道时套用该轨道的推荐阈值（用户/智能体明确指定过就不动，见 levelUserAdjusted）。
     //   必须放在 readFromControls 之后：那时 n/l/m 已是新值，而 level 刚被滑块覆盖成旧值，
     //   正需要在这里改掉。轨道标识不含 psiCrit —— 切判据按既有设计保持读数不变。
@@ -766,6 +767,23 @@
         if (over > 0) body.scrollTop += over + 10;   // +10 留一点余白，别贴着底边
       });
     });
+  }
+
+  /**
+   * 把当前 Z 写回「核电荷数」折叠区的标题。
+   *
+   * ★ 为什么必须写：Z 收进折叠区后，summary 是学生判断"这是哪个原子"的**唯一线索**。
+   *   Z 会静默改掉所有尺度与能级（r → r/Z、E ∝ Z²），标题上不写出来，
+   *   学生改过一次再折回去，就再也想不起来画面为什么和刚才不一样了。
+   */
+  let lastZSummary = '';
+  function syncZZoneSummary() {
+    const sm = document.querySelector('#zZone summary');
+    if (!sm) return;
+    const txt = '核电荷数 Z = ' + (state.Z || 1);
+    if (txt === lastZSummary) return;      // recompute 走得很频繁，值没变就别碰 DOM
+    lastZSummary = txt;
+    sm.textContent = txt;
   }
 
   // ---- 事件绑定 -----------------------------------------------------------
@@ -1278,9 +1296,10 @@
     Orbit3D.init(els.viewer);
     bindEvent();
     // 进阶折叠区：展开后把新内容滚进可视区（第 2 条）。
-    // ★ 这里只管**静态**的「三维着色」；「量子态」那个是 state-editor.js 动态建的，
-    //   由它建完后自己调 OrbitApp.bindAdvScroll —— toggle 不冒泡，只能逐个绑。
+    // ★ 这里管**静态**的那两个（核电荷数、三维着色）；「量子态」那个是 state-editor.js
+    //   动态建的，由它建完后自己调 OrbitApp.bindAdvScroll —— toggle 不冒泡，只能逐个绑。
     bindAdvScroll(document.getElementById('colorZone'));
+    bindAdvScroll(document.getElementById('zZone'));
     // 记下初始档位 —— 这样 applyModeDefaultColor 只在**真的换档**时才重置着色，
     // 不会在启动时把 HTML 里写好的初始选中项又改一遍。
     lastModeForColor = activeValue('#modeSeg', 'data-mode') || 'real';
