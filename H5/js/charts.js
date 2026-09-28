@@ -36,6 +36,52 @@ window.Charts = (function () {
     ctx.strokeRect(pad.l, pad.t, w - pad.l - pad.r, h - pad.t - pad.b);
   }
 
+  /**
+   * 在 canvas 上画一段**含变量**的数学文字：变量用斜体，其余（数字、函数名、括号、
+   * 单位、中文）用正体。
+   *
+   * ★ 为什么需要它：`fillText` 只能整段一种字体，而"变量斜体、数字与函数名正体"
+   *   是数学排版的基本约定，也是本项目其余各处（KaTeX 公式、面板标签、顶栏符号）的口径。
+   *   只有 canvas 这一路做不到 —— 于是三张 2D 图的说明文字里，ψ、Y、Θ、Φ、R、r、x、y、z
+   *   全是正体（用户第 5 条）。做法就是按段切换 `ctx.font` 逐段画。
+   *
+   * ★ 斜体字体由**调用方当前的 ctx.font** 派生（在字号前插 "italic "），
+   *   所以调用点不必另给一个字体串 —— 原来怎么写还怎么写，只是把字符串拆成段。
+   *
+   * ★ 逐段画时必须把 textAlign 临时改成 left 自己算起点：否则每一段都会各自按
+   *   center/right 对齐到锚点，几段文字会叠在一起。
+   *
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {string} s 用 `*` 标出斜体段的文字，如 `'*Θ*(*θ*)'`、`'*R*(*r*)*²*'`
+   *                   （奇数号段为斜体；这些标注里不会出现真的星号）
+   * @param {number} x 锚点（尊重调用方设置的 textAlign）
+   * @param {number} y 基线
+   * @param {boolean} [halo] 是否先描一圈深色底再填字（压在彩色填充上的标签需要，见 axisLabel）
+   */
+  function fillMath(ctx, s, x, y, halo) {
+    const parts = s.split('*').map(function (t, i) { return [t, i % 2 === 1]; });
+    const base = ctx.font;
+    const it = /italic/.test(base) ? base : base.replace(/^(\s*)/, '$1italic ');
+    const ws = parts.map(function (p) {
+      ctx.font = p[1] ? it : base;
+      return ctx.measureText(p[0]).width;
+    });
+    const total = ws.reduce(function (a, b) { return a + b; }, 0);
+    const al = ctx.textAlign;
+    let cx = x;
+    if (al === 'center') cx = x - total / 2;
+    else if (al === 'right' || al === 'end') cx = x - total;
+    ctx.textAlign = 'left';
+    parts.forEach(function (p, i) {
+      ctx.font = p[1] ? it : base;
+      if (halo) ctx.strokeText(p[0], cx, y);
+      ctx.fillText(p[0], cx, y);
+      cx += ws[i];
+    });
+    ctx.textAlign = al;
+    ctx.font = base;
+  }
+
   // --- 强度配色（深蓝 → 蓝 → 青 → 黄 → 红，类火图） ----------------------------
   const STOPS = [
     [0.00, 8, 14, 40],
@@ -82,7 +128,8 @@ window.Charts = (function () {
     R2: [120, 255, 200],
     D: [255, 190, 90],
   };
-  const RADIAL_NAME = { R: 'R(r)', R2: 'R(r)²', D: 'D(r)' };
+  // ★ 值里用 `*` 标出斜体段（变量斜体、括号与数字正体）—— 见 fillMath 的说明。
+  const RADIAL_NAME = { R: '*R*(*r*)', R2: '*R*(*r*)²', D: '*D*(*r*)' };
 
   // 径向图的特征标注状态（由 scene-bridge 的 highlightRadialFeature 驱动）
   let radialHighlight = null;
@@ -217,7 +264,7 @@ window.Charts = (function () {
     ctx.font = '12px system-ui, sans-serif';
     // x 轴：钟标居中偏右、**压在刻度数字下面一行**（原先 x = w−pad.r−34 与最后一个
     // 刻度（如 41.4）横向重叠，看着挤在一起）
-    ctx.fillText('r (a₀)', w - pad.r - 46, h - 4);
+    fillMath(ctx, '*r* (*a*₀)', w - pad.r - 46, h - 4);
     // y 轴：原先写作 (pad.l − 68) = 负坐标 → 一半画到画布外被裁，看着像"数幅度"。
     // 改放在绘图区左上方的留白里（那里正好空着，图例在右上）
     ctx.fillText('归一化值', pad.l + 2, pad.t - 5);
@@ -266,7 +313,7 @@ window.Charts = (function () {
       ctx.fillRect(lx, pad.t + 2, 12, 3);
       ctx.fillStyle = 'rgba(220,228,245,0.9)';
       ctx.font = '11px system-ui, sans-serif';
-      ctx.fillText(RADIAL_NAME[c.key], lx + 15, pad.t + 6);
+      fillMath(ctx, RADIAL_NAME[c.key], lx + 15, pad.t + 6);
       lx += 64;
     });
   }
@@ -291,9 +338,10 @@ window.Charts = (function () {
    *                  复解 Θ 带 Condon–Shortley 相因子（教材表 4.2.2）、Φ 取模画成"一个圆圈"；
    *                  实解 Θ 去掉该相因子、Φ 取 cos/sin。
    *                  ★ 两档都满足 Y = Θ·Φ 逐点成立 —— 底部那行数字就是这条恒等式的兑现。
-   * @param colorMode 'orbital' | 'phase' —— 线条的着色方式，**与三维视图共用同一个选项**（第 7 条）。
-   *                  原先这张卡自作主张"是复解就按相位彩虹"，于是三维选了「支壳层色」
-   *                  而这里仍是彩虹，两处对不上（学生对照时颜色不一致）。现在只认 state.colorMode：
+   * @param colorMode 'orbital' | 'phase' —— 线条的着色方式，**与三维视图同源**。
+   *                  原先这张卡自作主张"是复解就按相位彩虹"，于是三维选了支壳层色
+   *                  而这里仍是彩虹，两处对不上（学生对照时颜色不一致）。
+   *                  现在由调用方传 **deriveColorMode() 的派生值**（见 main.js）：
    *                    · 'phase'   → 按该点因子的正负 / 相位取色（与三维同一个 phaseColor 出口）
    *                    · 'orbital' → 单色描边（复解的 Φ 是个圆，单色反而更能显出它"模为常数"）
    */
@@ -387,7 +435,7 @@ window.Charts = (function () {
           ctx.fillStyle = 'rgba(255,190,235,0.95)';
           ctx.font = '11px system-ui, sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText(g.sym + '=' + Math.round((ang * 180) / Math.PI) + '°',
+          fillMath(ctx, '*' + g.sym + '*=' + Math.round((ang * 180) / Math.PI) + '°',
             g.cx + rLab * dx, cy + rLab * dy + 4);
           ctx.restore();
         });
@@ -431,8 +479,9 @@ window.Charts = (function () {
       }
     }
 
-    // 着色口径（第 7 条）：只认 state.colorMode，与三维视图同一个开关。
-    //   'orbital' → 单色（就用该支壳层的基础色，与三维的「支壳层色」同源）
+    // 着色口径：由调用方传入 **deriveColorMode() 的派生值**（判据的推论，见 main.js），
+    // 与三维视图同源 —— 不再是一个可以单独设置的开关。
+    //   'orbital' → 单色（就用该支壳层的基础色，与三维纯色同源）
     //   'phase'   → 正负 / 相位取色
     const usePhase = (colorMode === 'phase');
     const PLAIN = cssOf(OM.lColor(l), 0.95);
@@ -483,8 +532,8 @@ window.Charts = (function () {
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(200,210,235,0.95)';
     ctx.font = 'bold 12px system-ui, sans-serif';
-    ctx.fillText('Θ(θ)', cxT, 14);
-    ctx.fillText('Φ(φ)', cxP, 14);
+    fillMath(ctx, '*Θ*(*θ*)', cxT, 14);
+    fillMath(ctx, '*Φ*(*φ*)', cxP, 14);
     // 中间的乘号 —— 整张卡的论点就是它
     ctx.fillStyle = 'rgba(150,170,210,0.9)';
     ctx.font = 'bold 15px system-ui, sans-serif';
@@ -499,15 +548,14 @@ window.Charts = (function () {
       ctx.textAlign = align || 'center';
       ctx.lineWidth = 3;
       ctx.strokeStyle = 'rgba(10,15,31,0.9)';
-      ctx.strokeText(t, x, y);
       ctx.fillStyle = 'rgba(206,219,244,0.98)';
-      ctx.fillText(t, x, y);
+      fillMath(ctx, t, x, y, true);        // true = 先描一圈底色（压在瓣色上也要读得清）
     };
     const INSET = 15;
-    axisLabel('+z', cxT, cy - Rho + INSET);
-    axisLabel('−z', cxT, cy + Rho - 4);
-    axisLabel('+y', cxP, cy - Rho + INSET);
-    axisLabel('+x', cxP + Rho - 8, cy - 4, 'right');
+    axisLabel('+*z*', cxT, cy - Rho + INSET);
+    axisLabel('−*z*', cxT, cy + Rho - 4);
+    axisLabel('+*y*', cxP, cy - Rho + INSET);
+    axisLabel('+*x*', cxP + Rho - 8, cy - 4, 'right');
 
     // ---- 底部：把"相乘"落成可核对的数字 ----
     // ★ max|Y| 取两因子峰值之积。Y = Θ·Φ 且两个自变量独立，所以 |Y| 的最大值
@@ -517,12 +565,12 @@ window.Charts = (function () {
     ctx.font = '10px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(170,190,225,0.9)';
     const f3 = function (x) { return x.toFixed(3); };
-    ctx.fillText('max:  Θ ' + f3(mxT) + '  ×  Φ ' + f3(mxP) + '  =  Y ' + f3(mxT * mxP),
+    fillMath(ctx, 'max:  *Θ* ' + f3(mxT) + '  ×  *Φ* ' + f3(mxP) + '  =  *Y* ' + f3(mxT * mxP),
                  w * 0.5, h - 5);
   }
 
   // --- 截面图 -------------------------------------------------------------
-  const PLANES = { xy: 'xy 平面', xz: 'xz 平面', yz: 'yz 平面' };
+  const PLANES = { xy: '*xy* 平面', xz: '*xz* 平面', yz: '*yz* 平面' };
 
   /**
    * 截面视图窗口（缩放 / 平移）。由 main.js 的事件绑定驱动（滚轮缩放、拖拽平移、
@@ -616,11 +664,11 @@ window.Charts = (function () {
     if (y0 >= 0 && y0 <= h) { ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke(); }
     ctx.fillStyle = 'rgba(220,228,245,0.92)';
     ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(PLANES[plane], 8, 18);
+    fillMath(ctx, PLANES[plane], 8, 18);
     // 轴名固定贴在画布边缘：它说明的是"横/纵轴各是什么"，与视窗位置无关
     const lab = plane === 'xy' ? ['x', 'y'] : plane === 'xz' ? ['x', 'z'] : ['y', 'z'];
-    ctx.fillText(lab[0], w - 14, h / 2 - 6);
-    ctx.fillText(lab[1], w / 2 + 6, 16);
+    fillMath(ctx, '*' + lab[0] + '*', w - 14, h / 2 - 6);
+    fillMath(ctx, '*' + lab[1] + '*', w / 2 + 6, 16);
   }
 
   // 2D 行进方块：网格 vals(G×G) 上提取 level 等高线线段（像素坐标）
@@ -669,7 +717,7 @@ window.Charts = (function () {
       ctx.fillStyle = 'rgba(255,170,90,0.95)';
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('本平面为节面 · |ψ|² ≈ 0', w / 2, h / 2 - 6);
+      fillMath(ctx, '本平面为节面 · |*ψ*|² ≈ 0', w / 2, h / 2 - 6);
       ctx.textAlign = 'left';
       return;
     }
@@ -750,7 +798,7 @@ window.Charts = (function () {
     // 说明
     ctx.fillStyle = 'rgba(200,215,240,0.8)';
     ctx.font = '10px system-ui, sans-serif';
-    ctx.fillText('等高线 |ψ|² · 白线 = 节面 (ψ = 0)', 8, h - 6);
+    fillMath(ctx, '等高线 |*ψ*|² · 白线 = 节面 (*ψ* = 0)', 8, h - 6);
   }
 
   // 在等高线上标数值：深色底板 + 同层色文字，居中于 (x,y)
@@ -767,7 +815,8 @@ window.Charts = (function () {
     ctx.restore();
   }
 
-  function drawSection(canvas, n, l, m, mode, plane, sectionMode, Z, terms, relPhase) {
+  function drawSection(canvas, n, l, m, mode, plane, sectionMode, Z, terms, relPhase,
+                       psiCrit, levelFraction) {
     const { ctx, w, h } = setup(canvas);
     // ★ 叠加态（第 G 批）：截面图是四张 2D 图里**唯一**能直接画叠加态的 —— 在平面上求
     //   |ψ_super|² 即可，densitySuperposition 已经算得动。Θ/Φ 卡与径向分布不行：
@@ -836,7 +885,16 @@ window.Charts = (function () {
     const tctx = tmp.getContext('2d');
     const img = tctx.createImageData(G, G);
     const data = img.data;
+    // ★ 整面为节面时**必须给一个统一色**：此时 vals 处处 ≈ 0，而 phases 是"数值零"
+    //   的辐角 —— 纯噪声。相位档会把噪声映射成一整片随机色，看着像有结构，实际什么都没有。
+    //   （用户第 4 条：3p_y 的 xz 截面显示为节面，图像却不是纯色。）
+    const flat = nodalPlane ? colorScale(0) : null;
     for (let p = 0; p < G * G; p++) {
+      const o = p * 4;
+      if (flat) {
+        data[o] = flat[0]; data[o + 1] = flat[1]; data[o + 2] = flat[2]; data[o + 3] = 255;
+        continue;
+      }
       const t = Math.pow(vals[p] / maxV, 0.55);
       let rgb = colorScale(t);
       if (sectionMode === 'phase') {
@@ -844,19 +902,44 @@ window.Charts = (function () {
         const hsl = OM.hslToRgb(hue, 0.85, 0.15 + 0.62 * t);
         rgb = [Math.round(hsl[0] * 255), Math.round(hsl[1] * 255), Math.round(hsl[2] * 255)];
       }
-      const o = p * 4;
       data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; data[o + 3] = 255;
     }
     tctx.putImageData(img, 0, 0);
     ctx.drawImage(tmp, 0, 0, w, h);
 
     drawSectionFrame(ctx, w, h, plane, win);
+
+    // ★ 第 6 条：把**当前等值面对应的那条线**画出来。
+    //   三维里那个面，在截面上就是这一条 —— 有了它，"阈值调到多少、三维就缩到哪里"
+    //   才能在两张图之间对上号。阈值换算走 OM.isoLevelAbs（与三维同一个出口）。
+    if (!nodalPlane && levelFraction > 0) {
+      const thr = OM.isoLevelAbs(n, l, m, mode, Z, sup, levelFraction, psiCrit || 'psi2');
+      if (thr > 0 && thr < maxV) {
+        const segs = marchSquareSegments(vals, G, thr, w, h);
+        if (segs.length) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+          ctx.lineWidth = 1.6;
+          ctx.setLineDash([6, 3]);
+          ctx.beginPath();
+          for (const sg of segs) { ctx.moveTo(sg[0][0], sg[0][1]); ctx.lineTo(sg[1][0], sg[1][1]); }
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 线上不给文字（密集处会糊），只在左下角标一行说明
+          const pf = levelFraction * 100;
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.font = '11px system-ui, sans-serif';
+          ctx.textAlign = 'left';
+          fillMath(ctx, '虚线 = 当前等值面（' + (pf >= 10 ? pf.toFixed(1) : pf.toFixed(2)) + '% 峰值）', 8, h - 8);
+        }
+      }
+    }
+
     // 节面提示（填色模式下，把"空白"变成教学点）
     if (nodalPlane) {
       ctx.fillStyle = 'rgba(255,170,90,0.95)';
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('本平面为节面 · |ψ|² ≈ 0', w / 2, h / 2 - 6);
+      fillMath(ctx, '本平面为节面 · |*ψ*|² ≈ 0', w / 2, h / 2 - 6);
       ctx.textAlign = 'left';
     }
     // 颜色图例
@@ -887,18 +970,24 @@ window.Charts = (function () {
     // 标注
     ctx.fillStyle = 'rgba(220,228,245,0.9)';
     ctx.font = '10px system-ui, sans-serif';
+    // ★ 说明文字一律画在色条**上方、右对齐**（原先：相位档画在 y + bh + 15，而色条是
+    //   贴底摆的（y = h − bh − 14），那一行落在画布**外**，整句被裁掉只剩半个字；
+    //   密度档画在 x − 8 左对齐，一路向右铺过去，压到右边缘的横轴标签 x 上）。
+    //   右对齐到色条左侧就不会与任何东西打架。
+    ctx.textAlign = 'right';
     if (phaseMode) {
       ctx.fillText('0', x + bw + 4, y + 9);
       ctx.fillText('π', x + bw + 4, y + bh / 2 + 3);
       ctx.fillText('2π', x + bw + 4, y + bh + 3);
       ctx.fillStyle = 'rgba(180,196,225,0.75)';
-      ctx.fillText('相位 arg ψ', x + bw + 4, y + bh + 15);
+      fillMath(ctx, '相位 arg *ψ*', x - 6, y - 5);
     } else {
       ctx.fillText('最大', x + bw + 4, y + 9);
       ctx.fillText('0', x + bw + 4, y + bh + 3);
       ctx.fillStyle = 'rgba(180,196,225,0.75)';
-      ctx.fillText('|ψ|² 最大 ' + fmtNum(maxV), x - 8, y - 4);
+      fillMath(ctx, '|*ψ*|² 最大 ' + fmtNum(maxV), x - 6, y - 5);
     }
+    ctx.textAlign = 'left';   // 恢复默认，别把对齐状态漏给后面画的图元
   }
 
   return {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#0b1020" />
-  <title>原子轨道三维可视化 · Hydrogen Orbital Visualizer</title>
+  <title>原子轨道三维可视化 · Hydrogen-like Atomic Orbital Visualizer</title>
   <link rel="icon" type="image/png" href="assets/favicon.png" />
   <link rel="stylesheet" href="libs/katex.min.css" />
   <link rel="stylesheet" href="css/style.css" />
@@ -16,7 +16,7 @@
     <div class="brand">
       <span class="logo">⚛</span>
       <h1>原子轨道三维可视化</h1>
-      <span class="subtitle">Hydrogen Orbital Visualizer</span>
+      <span class="subtitle">Hydrogen-like Atomic Orbital Visualizer</span>
     </div>
     <div class="top-meta">
       <span id="orbitTitle" class="orbit-title">1s</span>
@@ -63,26 +63,26 @@
         <details class="adv-zone" id="zZone">
           <summary class="adv-summary">核电荷数 Z = 1</summary>
           <div class="set">
-            <div class="row"><label for="zInput">核电荷数 Z</label>
+            <div class="row"><label for="zInput">核电荷数 <i>Z</i></label>
               <input type="number" id="zInput" class="num-val" min="1" max="36" step="1" value="1" /></div>
             <input type="range" id="zSlider" min="1" max="36" step="1" value="1" />
-            <div class="hint">Z 价类氢离子（只含一个电子）写作 X<sup>(Z−1)+</sup> ——
+            <div class="hint"><i>Z</i> 价类氢离子（只含一个电子）写作 <i>X</i><sup>(<i>Z</i>−1)+</sup> ——
               1 氢 H · 2 氦离子 He⁺ · 3 锂离子 Li²⁺ · 4 铍离子 Be³⁺ · 6 碳离子 C⁵⁺ … 到 36 氪离子 Kr³⁵⁺<br>
-              （换 Z 只缩放径向与能级，<b>不改轨道形状</b>；本模块按非相对论处理，Z 越大相对论效应越显著）</div>
+              （换 <i>Z</i> 只缩放径向与能级，<b>不改轨道形状</b>；本模块按非相对论处理，<i>Z</i> 越大相对论效应越显著）</div>
           </div>
         </details>
         <div class="set">
-          <div class="row"><label for="nInput">主量子数 n</label>
+          <div class="row"><label for="nInput">主量子数 <i>n</i></label>
             <input type="number" id="nInput" class="num-val" min="1" max="6" step="1" value="3" /></div>
           <input type="range" id="nSlider" min="1" max="6" step="1" value="3" />
         </div>
         <div class="set">
-          <div class="row"><label for="lInput">角量子数 l</label>
+          <div class="row"><label for="lInput">角量子数 <i>l</i></label>
             <input type="number" id="lInput" class="num-val" min="0" max="2" step="1" value="1" /></div>
           <input type="range" id="lSlider" min="0" max="2" step="1" value="1" />
         </div>
         <div class="set" id="mSet">
-          <div class="row"><label for="mInput">磁量子数 m</label>
+          <div class="row"><label for="mInput">磁量子数 <i>m</i></label>
             <input type="number" id="mInput" class="num-val" min="-1" max="1" step="1" value="0" /></div>
           <input type="range" id="mSlider" min="-1" max="1" step="1" value="0" />
         </div>
@@ -95,7 +95,7 @@
              程序改用直角坐标多项式标记（见 formula.js 的 realOrbitalCartesian）。 -->
         <div class="set" id="realOrbSet" style="display:none">
           <div class="divider"><span>实轨道</span></div>
-          <div class="seg wrap" id="realOrbSeg"></div>
+          <div class="seg wrap center" id="realOrbSeg"></div>
           <div class="hint" id="realOrbHint"></div>
         </div>
 
@@ -104,9 +104,9 @@
              球谐画的是极坐标曲面 r = |Y|（解析形状，直接三角化），
              波函数画的是 ψ 的等值面 / 粒子云（标量场 + marching tetrahedra）。
              所以切换档位不是"换个着色"，而是换一条完整的重建路径（见 main.js 的 updateViewer）。 -->
-        <div class="seg" id="targetSeg">
+        <div class="seg center" id="targetSeg">
           <button class="seg-btn" data-target="spherical">球谐函数</button>
-          <button class="seg-btn active" data-target="wave">波函数</button>
+          <button class="seg-btn active" data-target="wave">空间波函数</button>
         </div>
         <!-- 球谐档专用的判据（|Y| / |Y|²）。波函数档用下面「等值面判据」那一组 ——
              两者是同一个概念的两个化身（画幅 = 函数值还是它的平方），但**值域不同**
@@ -115,18 +115,19 @@
         <div class="set" id="yCritSet" style="display:none">
           <div class="row"><label>球谐判据</label>
             <div class="seg small" id="yCritSeg">
-              <button class="seg-btn active" data-k="Y">|Y|</button>
-              <button class="seg-btn" data-k="Y2">|Y|²</button>
+              <!-- ★ 第 5 条：Y 是函数名，用斜体（与 ψ 同一口径） -->
+              <button class="seg-btn active" data-k="Y">|<i>Y</i>|</button>
+              <button class="seg-btn" data-k="Y2">|<i>Y</i>|²</button>
             </div>
           </div>
           <!-- ★ 这句提示**按 l 变**（由 main.js 的 syncYCritHint 填）：l=0 时 Y 是常数，
                |Y| 与 |Y|² 只差一个比例因子，画出来完全一样，两个按钮会一起禁用。
                原先这里写死了"相切的鸡蛋"，而那是 p 轨道（l=1）才有的形状 ——
                l=0 的学生看到的是个球，却被告诉"这是相切的鸡蛋"。 -->
-          <div class="hint" id="yCritHint">|Y|² 的曲面比 |Y| 的"瘦"</div>
+          <div class="hint" id="yCritHint">|<i>Y</i>|² 的曲面比 |<i>Y</i>| 的"瘦"</div>
         </div>
         <div class="divider"><span>波函数形式</span></div>
-        <div class="seg" id="modeSeg">
+        <div class="seg center" id="modeSeg">
           <button class="seg-btn active" data-mode="real"
                   title="波函数的实数解：由 ±m 两个复数解组合而来，不再是 L̂z 的本征函数；用实轨道名标记（p_x、d_xy…）">实数解</button>
           <button class="seg-btn" data-mode="complex"
@@ -138,19 +139,31 @@
              所以整组包一层，切到球谐档时一并隐藏 —— 免得留下"改了没反应"的控件。 -->
         <div id="renderGroup">
           <div class="divider"><span>三维渲染</span></div>
-          <div class="seg" id="renderSeg">
+          <div class="seg center" id="renderSeg">
             <button class="seg-btn" data-mode="points">电子云</button>
             <button class="seg-btn active" data-mode="surface">等值面</button>
           </div>
         </div>
 
-        <div class="set" id="levelSet">
+        <!-- ★ 判据**必须**放在 #levelSet 之外（原先它在里面，是个真问题）：
+             #levelSet 只在「等值面」渲染模式下显示，而判据决定的是**着色** ——
+             电子云档下它也得看得见、点得到，否则就成了"一个看不见的选项在决定
+             你眼前画面的颜色"。提到这一层后，电子云与等值面两档都能选。
+             整组的显隐（仅波函数档显示）由 main.js 的 updateViewer 管。
+             ★ 按钮文案随实/复解变（第 4 条）：实解写 ψ（不带绝对值竖线），
+               复解写 |ψ|。由 main.js 的 syncPsiCritLabels 写回。 -->
+        <div class="set" id="psiCritSet">
           <div class="row"><label>等值面判据</label>
             <div class="seg small" id="psiSeg">
-              <button class="seg-btn active" data-mode="psi2">|ψ|²</button>
-              <button class="seg-btn" data-mode="psi">|ψ|</button>
+              <button class="seg-btn active" data-mode="psi2"
+                      title="画 |ψ|² 的等值面。函数处处非负，没有正负可谈 —— 曲面为纯色。">|<i>ψ</i>|²</button>
+              <button class="seg-btn" data-mode="psi"
+                      title="画 ψ 本身的等值面（有正负）。实解在此双色。"><i>ψ</i></button>
             </div>
           </div>
+        </div>
+
+        <div class="set" id="levelSet">
           <!-- 阈值滑块是 0–1000 的**对数刻度**（阈值跨 0.3%–80%、共 2.4 个数量级，
                线性刻度下低端根本拖不到；中点 = √(0.3%×80%) ≈ 4.9%，落在常用阈值附近）。
                换算与量程依据见 main.js 的 levelFromSlider -->
@@ -165,31 +178,16 @@
           <input type="range" id="pointCountSlider" min="8000" max="80000" step="1000" value="50000" />
         </div>
 
-        <!-- ★ 第 19 条：默认之外的选择收进「进阶」。
-             默认值应当让**最该看见的东西**第一眼就在 —— 实数解的正负双色是物理，
-             而复解的相位彩虹绕 z 轴一圈就把所有颜色走一遍，第一眼看到的是"花"
-             而不是"这个轨道长什么样"。但相位缠绕本身是复解的真实特点（也是本作品
-             的一个演示点），所以是**收起来**、不是删掉。 -->
-        <!-- ★ 第 1 条：这两个折叠区的顺序是「量子态」在上、「三维着色」在下。
-             「量子态」那个 <details> 是 state-editor.js 动态建的，所以这里给静态的这个
-             一个 id，让它插到这个之前（见 state-editor.js 的 build）。 -->
-        <details class="adv-zone" id="colorZone">
-          <summary class="adv-summary">进阶：三维着色</summary>
-          <div id="colorGroup">
-            <div class="divider"><span>三维着色</span></div>
-            <div class="seg" id="colorSeg">
-              <button class="seg-btn" data-mode="orbital"
-                      title="按支壳层上色（s 蓝 / p 绿 / d 橙 / f 紫）；不显示 ψ 的正负">支壳层色</button>
-              <button class="seg-btn active" data-mode="phase"
-                      title="按 ψ 的正负上色：角度与径向节点的符号翻转都会显示出来">相位色</button>
-            </div>
-          </div>
-          <div class="hint">复解选「相位色」会得到一圈彩虹 —— 那是 ψ 的辐角沿方位角缠绕
-            （|e^{imφ}| = 1 的缘故），是复解的特点；但它对初学是额外负担，故不作默认。</div>
-        </details>
-        <!-- ★ 这里原有一段 #sphColorHint（球谐档下显示两段说明：为何没有支壳层色、
-             为何没有叠加态）。按用户第 5 条**整段删除** —— 界面留白比长篇解释更清爽，
-             需要的学生会去问智能体。main.js 里对应的显隐控制一并移除。 -->
+        <!-- ★ 这里原先有一整个「进阶：三维着色」折叠区（#colorZone，内含 #colorSeg 的
+             「支壳层色 / 相位色」两个按钮与一段复解彩虹说明）。用户第 5 条**整块删除** ——
+             着色不是独立选项，而是判据的推论：画 |ψ|² 就纯色，画 ψ 时实解才双色。
+             推导见 main.js 的 deriveColorMode。
+             连带后果：复解那圈"相位彩虹"随之消失（复解的 arg ψ 是连续缠绕、
+             不是两个值，用双色编码本就是错的）。要讲相位缠绕，用**截面卡的相位图** ——
+             截面能看到完整一圈 φ，比球面上的彩虹更清楚。
+        -->
+        <!-- ★ 更早还有一段 #sphColorHint（球谐档下解释"为何没有支壳层色"），
+             也是按用户要求删掉的：界面留白比长篇解释更清爽，需要的学生会去问智能体。 -->
         </div><!-- /.panel-body -->
       </aside>
     </section>
@@ -210,9 +208,9 @@
           <span class="card-title">径向分布</span>
           <div class="card-head-right">
             <div class="seg small" id="radialSeg">
-              <button class="seg-btn active" data-k="R">R</button>
-              <button class="seg-btn active" data-k="R2">R²</button>
-              <button class="seg-btn active" data-k="D">D</button>
+              <button class="seg-btn active" data-k="R"><i>R</i></button>
+              <button class="seg-btn active" data-k="R2"><i>R</i>²</button>
+              <button class="seg-btn active" data-k="D"><i>D</i></button>
             </div>
             <div class="seg small" id="radialMarkSeg" title="在选中曲线上标出峰值 / 节点半径（两类可同时开）">
               <button class="seg-btn" data-m="peak">峰值</button>
@@ -237,7 +235,7 @@
         <div class="card-head">
           <span class="card-title">角度部分的两个因子</span>
         </div>
-        <div class="hint" style="margin-top:2px">Y(θ,φ) = Θ(θ) · Φ(φ)　—　左图极角自 +z 起，右图自 +x 起</div>
+        <div class="hint" style="margin-top:2px"><i>Y</i>(<i>θ</i>,<i>φ</i>) = <i>Θ</i>(<i>θ</i>) · <i>Φ</i>(<i>φ</i>)　—　左图极角自 +<i>z</i> 起，右图自 +<i>x</i> 起</div>
         <div class="hint" id="thetaPhiTermBar" style="display:none">
           显示的是叠加态中的
           <select class="chart-term" id="thetaPhiTermSel"></select>
@@ -253,13 +251,17 @@
              不再是"复解就自动彩虹"。 -->
       </div>
 
-      <div class="card chart-card">
+      <!-- ★ 第 8 条：球谐档下**整张截面卡收起**（加 id 供 main.js 控制显隐）。
+           理由：这张图画的始终是**含径向的完整 ψ**（drawSection 恒用 psiDensity，
+           从不是球谐 Y），而球谐档的三维画的是 Y —— 那时若只把标签改叫 |Y|²/Y，
+           就成了"写着 Y、画的是 ψ"。收起比改错标签诚实。 -->
+      <div class="card chart-card" id="sectionCard">
         <div class="card-head">
-          <span class="card-title">截面密度</span>
+          <span class="card-title">截面</span>
           <div class="seg small" id="planeSeg">
-            <button class="seg-btn" data-p="xy">xy</button>
-            <button class="seg-btn active" data-p="xz">xz</button>
-            <button class="seg-btn" data-p="yz">yz</button>
+            <button class="seg-btn" data-p="xy"><i>xy</i></button>
+            <button class="seg-btn active" data-p="xz"><i>xz</i></button>
+            <button class="seg-btn" data-p="yz"><i>yz</i></button>
           </div>
         </div>
         <!-- ★ 截面图**可以**直接画叠加态（在平面上求 |ψ_super|² 即可，densitySuperposition 已有），
@@ -269,10 +271,20 @@
           显示
           <select class="chart-term" id="sectionTermSel"></select>
         </div>
+        <!-- ★ 第 8 条：这两个按钮的命名**跟随三维视图的对象** —— 三维看的是 ψ，
+             这里就叫 |ψ|² 与 ψ（与上面「等值面判据」同一组名字：它们确实指同一个量
+             的两个化身，一个管等值面轮廓、一个管平面上的填色）。
+             球谐档下本卡整块收起，所以不存在"该叫 |Y|²/Y"的情况。
+             ★ 「等高线」**保留原名**：它画的是 |ψ|² 的等值线 + 白线节面（ψ = 0）两样东西，
+               是唯一同时呈现密度层级与零集的模式，一个符号概括不了。
+             ★ 这三个按钮原先没有 title，补上 —— 与判据按钮同名，需要一句话分清。 -->
         <div class="seg small" id="phaseSeg" style="margin:2px 0 6px">
-          <button class="seg-btn active" data-mode="intensity">密度着色</button>
-          <button class="seg-btn" data-mode="phase">相位着色</button>
-          <button class="seg-btn" data-mode="contour">等高线</button>
+          <button class="seg-btn active" data-mode="intensity"
+                  title="按该点 |ψ|² 的大小填色：越亮 = 密度越大 = 越可能在这里找到电子">|ψ|²</button>
+          <button class="seg-btn" data-mode="phase"
+                  title="按该点 ψ 的相位填色：实数解只有 0 与 π 两种色（即正负），复数解绕原点一周走完整圈">ψ</button>
+          <button class="seg-btn" data-mode="contour"
+                  title="|ψ|² 的等高线，白线标出节面（ψ = 0）—— 最适合用来数节面">等高线</button>
         </div>
         <canvas id="sectionChart" class="chart"></canvas>
         <!-- 手动缩放/平移过才出现；双击图表同样可复位 -->
@@ -281,7 +293,13 @@
     </section>
   </main>
 
-  <footer class="foot">按 |ψ|²·r²·|Y|² 重要性采样 · 电子云与等值面可切换 · 手机 / 平板 / 桌面自适配</footer>
+  <!-- ★ 页脚原先写的是"按 |ψ|²·r²·|Y|² 重要性采样"——那句话**把 |Y|² 算了两遍**：
+       |ψ|² = |R|²·|Y|² 里已经含着一个 |Y|²，再乘一次等于 |R|²·|Y|⁴·r²。
+       代码里实际做的是：径向按 D(r) = |R|²r² 拒绝采样、方向按 |Y|² 拒绝采样
+       （见 math.js 的 samplePoints），合起来是 |R|²r²·|Y|² = |ψ|²·r²。
+       那个 r² 是**球坐标的雅可比**，不是波函数的一部分。
+       页脚是给使用者看的，与其堆一串公式，不如把"这是什么"一句话说清。 -->
+  <footer class="foot">电子云按 |<i>ψ</i>|² 重要性采样（统计上即真实的电子分布）· 等值面是同一密度的等值面 · 手机 / 平板 / 桌面自适配</footer>
 
   <!-- 依赖（全局构建，file:// 可离线运行） -->
   <script src="libs/three.min.js"></script>

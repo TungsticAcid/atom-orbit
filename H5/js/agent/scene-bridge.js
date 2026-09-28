@@ -68,14 +68,15 @@ window.SceneBridge = (function () {
       desc: '切换三维渲染方式：粒子云（概率统计）/ 等值面（形状）',
       params: { mode: "'points'|'surface'" },
     },
-    setColorMode: {
-      group: '模式', concept: 'K7',
-      desc: '三维着色：轨道色（按支壳层）/ 相位色（按 arg ψ，使"符号"可见）',
-      params: { mode: "'orbital'|'phase'" },
-    },
+    // ★ 这里原有 setColorMode（三维着色：轨道色 / 相位色）。用户第 5 条把那个开关**删了** ——
+    //   着色不是独立选项，而是判据的推论：画 |ψ|² 就没有正负可谈（纯色），画 ψ 时实解才双色。
+    //   要改变着色，改 setPsiCriterion 即可（那里说明了对应关系）。
     setPsiCriterion: {
       group: '等值面', concept: 'K8',
-      desc: '切换等值面判据 |ψ| 或 |ψ|²（同一读数下二者对应不同大小的曲面）',
+      desc: '切换等值面判据 |ψ| 或 |ψ|²（同一读数下二者对应不同大小的曲面）。'
+        + '**着色也由它决定**：|ψ|² → 纯色（函数非负，无正负可谈）；'
+        + 'ψ + 实数解 → 按 sign(ψ) 双色（径向与角度节点的符号翻转都会显出来）；'
+        + 'ψ + 复数解 → 仍是纯色（复解的 arg ψ 是连续缠绕，不是两个值）。',
       params: { criterion: "'psi'|'psi2'" },
     },
     setIsosurfaceLevel: {
@@ -146,10 +147,10 @@ window.SceneBridge = (function () {
     setFormulaHighlight: {
       group: '公式', concept: 'K1/K2',
       desc: '★ 高亮 KaTeX 公式中的某一项（null 取消），实现公式—图形—数值三向联动。'
-          + '可选：R 径向部分、L 拉盖尔多项式、F 方位角函数 Φ、T 极角函数 Θ、'
-          + 'Y 球谐函数（= Θ·Φ）、P 关联勒让德、N 归一化常数。'
+          + '可选：R 径向部分、F 方位角函数 Φ、T 极角函数 Θ、P 关联勒让德、'
+          + 'Y 球谐函数（= Θ·Φ）。'
           + '讲"Y 是两个因子相乘"时依次点亮 F → T → Y 最直观。',
-      params: { part: "'R'|'L'|'F'|'T'|'Y'|'P'|'N'|null" },
+      params: { part: "'R'|'F'|'T'|'Y'|'P'|null" },
     },
     showReferenceTable: {
       group: '导航', concept: '',
@@ -177,12 +178,13 @@ window.SceneBridge = (function () {
     },
     loadPreset: {
       group: '叠加态', concept: 'K9',
-      desc: '载入预设量子态：叠加态示例或杂化轨道（sp / sp² / sp³）',
+      desc: '载入内置预设量子态（叠加态示例）。可用键见 availableKeys —— '
+        + '杂化轨道预设（sp / sp² / sp³）已暂时隐藏，不在其中，别凭记忆去试。',
       params: { key: '预设键，见 availableKeys' },
     },
     setSuperposition: {
       group: '叠加态', concept: 'K9',
-      desc: '★ 自定义叠加态 ψ = Σ cᵢψᵢ（系数可任意，用于构造"不等性杂化"这类非等价组合）。'
+      desc: '★ 自定义叠加态 ψ = Σ cᵢψᵢ（系数可任意，用于构造系数不等的非等价组合）。'
         + '传入 2 项以上即退出单一本征态；传空数组等价于回到纯态。'
         + '程序把你给的系数**等比归一化**到 Σ|cᵢ|² = 1（基组正交归一，故只需这一条），'
         + '所以落库的绝对值可能与你给的不同，但比值不变 —— 讲解时请引用工具返回的实际值。',
@@ -207,11 +209,11 @@ window.SceneBridge = (function () {
     },
     savePreset: {
       group: '叠加态', concept: 'K9',
-      desc: '★ 把叠加态存成一个**具名预设按钮**。现场凑出来的系数（如不等性杂化的示意系数）'
+      desc: '★ 把叠加态存成一个**具名预设按钮**。现场凑出来的系数'
         + '本来对话一过就没了，存成预设后学生自己就能一键复现、反复对照。'
         + '缺省存当前叠加态；建议同时在 note 里写明"示意系数，非真实分子数据"这类边界。',
       params: {
-        label: 'string 按钮上显示的名字（如"不等性杂化（示意）"）',
+        label: 'string 按钮上显示的名字（如"两个 p 的斜向组合"）',
         terms: '[{ n, l, m, mode?, c:{re,im} }, …]? 缺省用当前叠加态',
         note: 'string? 说明文字，会显示在预设下方',
         key: 'string? 自定键名，缺省自动生成（自定义键统一以 u- 开头）',
@@ -219,10 +221,33 @@ window.SceneBridge = (function () {
     },
     deletePreset: {
       group: '叠加态', concept: 'K9',
-      desc: '删除一个自定义预设。内置预设（sp/sp²/sp³ 等）不可删——它们是教学内容。',
+      desc: '删除一个自定义预设。内置预设不可删——它们是教学内容。',
       params: { key: 'string 预设键，见 loadPreset 的 availableKeys' },
     },
   };
+
+  /**
+   * **暂时隐藏的动作**（用户第 4 条：整个「进阶：量子态」板块，与杂化轨道板块一起隐藏）。
+   *
+   * ★ 与杂化的做法一致 —— **只隐入口，实现全部保留**：VOCAB 里的定义、validate 的分支、
+   *   applyInstant 的派发，以及 StateEditor 里的编辑器与预设表都原样留着，
+   *   日后把这张表清空即可恢复。
+   *
+   * ★ 为什么整组隐（连 `loadPreset` 与 `clearSuperposition` 也隐）：叠加态现在**没有任何
+   *   入口可以建立**（面板藏了、setSuperposition 也藏了）。单独留着"载入预设"或
+   *   "退出叠加态"，只会让模型看到一组无来由的动作、并据此讲一套学生界面上看不到的东西。
+   *   （注意 `setQuantumNumbers` 仍会顺手退出叠加态，所以不存在"进去出不来"。）
+   *
+   * ★ 三处同时生效才算藏住：工具清单（listActions 不列）、参数校验（validate 拒绝）、
+   *   演示/收藏夹回放（loadDemo 走的也是 validate）。只做前两处的话，一条含
+   *   `setSuperposition` 的旧收藏仍能整条回放出来。
+   */
+  const HIDDEN_ACTIONS = {
+    loadPreset: 1, setSuperposition: 1, setCoefficient: 1, setRelPhase: 1,
+    clearSuperposition: 1, savePreset: 1, deletePreset: 1,
+  };
+  /** 该动作当前是否被隐藏 */
+  function isHiddenAction(name) { return !!HIDDEN_ACTIONS[name]; }
 
   // ---------------------------------------------------------------------------
   // 运行状态
@@ -818,6 +843,11 @@ window.SceneBridge = (function () {
 
   function validate(name, p) {
     const S = () => (window.OrbitApp ? window.OrbitApp.getState() : {});
+    // ★ 被隐藏的动作（量子态整组）在这里统一拒绝 —— 见 HIDDEN_ACTIONS 的说明。
+    //   放在最前排：模型凭记忆或旧上下文硬发时，这是唯一的闸门。
+    if (isHiddenAction(name)) {
+      return { err: '动作 ' + name + ' 当前不可用（量子态功能已暂时隐藏）' };
+    }
     switch (name) {
       case 'setNuclearCharge': {
         // ★ Z 是 1–36 的**整数**（不再是"第一周期六种"那个枚举），但仍必须**拒绝**而不是钳制：
@@ -854,8 +884,6 @@ window.SceneBridge = (function () {
         return ['real', 'complex'].indexOf(p.mode) >= 0 ? { params: { mode: p.mode } } : { err: 'mode 非法' };
       case 'setRenderMode':
         return ['points', 'surface'].indexOf(p.mode) >= 0 ? { params: { mode: p.mode } } : { err: 'mode 非法' };
-      case 'setColorMode':
-        return ['orbital', 'phase'].indexOf(p.mode) >= 0 ? { params: { mode: p.mode } } : { err: 'mode 非法' };
       case 'setPsiCriterion':
         return ['psi', 'psi2'].indexOf(p.criterion) >= 0 ? { params: { criterion: p.criterion } } : { err: 'criterion 非法' };
       case 'setIsosurfaceLevel': {
@@ -900,15 +928,24 @@ window.SceneBridge = (function () {
         return ['radial', 'angular'].indexOf(p.type) >= 0 ? { params: { type: p.type, on: p.on !== false } } : { err: 'type 非法' };
       case 'setFormulaHighlight': {
         const part = p.part || null;
-        if (part !== null && ['R', 'L', 'F', 'T', 'Y', 'P', 'N'].indexOf(part) < 0) {
-          return { err: "part 应为 'R'|'L'|'F'|'T'|'Y'|'P'|'N' 或 null" };
+        // ★ 第 8 条之后公式只剩 R / Φ / Θ / Y / ψ 五行，N 与 L 已被**直接代入**
+        //   （不再单列），故这两个部位一并从可选值里去掉 —— 留着它们会变成
+        //   "合法但什么也高亮不到"，那是比报错更难查的空动作。
+        if (part !== null && ['R', 'F', 'T', 'Y', 'P'].indexOf(part) < 0) {
+          return { err: "part 应为 'R'|'F'|'T'|'Y'|'P' 或 null" };
         }
         return { params: { part: part } };
       }
       case 'loadPreset': {
         if (!p.key) return { err: '需要 key' };
-        if (!window.StateEditor || !window.StateEditor.PRESETS[p.key]) {
+        const SE = window.StateEditor;
+        if (!SE || !SE.PRESETS[p.key]) {
           return { err: '未知预设：' + p.key };
+        }
+        // ★ 杂化预设已隐藏（用户第 9 条）→ 这里也要**拒**，不只是从工具清单里摘掉。
+        //   模型凭记忆或旧上下文硬发 loadPreset{key:'sp-1'} 时，这条是最后一道闸。
+        if (SE.isHybrid && SE.isHybrid(SE.PRESETS[p.key])) {
+          return { err: '预设 ' + p.key + ' 当前不可用（杂化轨道功能已暂时隐藏）' };
         }
         return { params: { key: p.key } };
       }
@@ -1020,7 +1057,6 @@ window.SceneBridge = (function () {
       case 'setQuantumNumbers': return A.applyAction({ action: 'setQuantumNumbers', params: p });
       case 'setWavefunctionMode': return A.applyAction({ action: 'setWavefunctionMode', params: p });
       case 'setRenderMode': return A.applyAction({ action: 'setRenderMode', params: p });
-      case 'setColorMode': return A.applyAction({ action: 'setColorMode', params: p });
       case 'setPsiCriterion': return A.applyAction({ action: 'setPsiCriterion', params: p });
       case 'setIsosurfaceLevel': return A.applyAction({ action: 'setIsosurfaceLevel', params: p });
       case 'showRadial': return A.applyAction({ action: 'showRadial', params: p });
@@ -1491,7 +1527,7 @@ window.SceneBridge = (function () {
   const LABEL = {
     setNuclearCharge: '设置核电荷数 Z', setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
     setWavefunctionMode: '切换波函数实数解 / 复数解', setRenderMode: '切换渲染方式',
-    setColorMode: '切换着色', setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
+    setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',
     showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值 / 节点（可同时）',
     linkRadialTo3D: '画出参考球', setViewTarget: '切换球谐/波函数', setAngularView: '切换角度判据',
@@ -1517,9 +1553,13 @@ window.SceneBridge = (function () {
   /** 供模型了解可用动作（渐进式披露：按需拉取，不常驻提示词） */
   function listActions() {
     const SE = window.StateEditor;
-    const presetKeys = (SE && SE.PRESETS) ? Object.keys(SE.PRESETS) : [];
+    // ★ 预设清单走 StateEditor.visibleKeys()，**不要**自己 Object.keys(PRESETS)：
+    //   杂化预设已按用户第 9 条隐藏（连同智能体接口）。自己列全量的话，模型仍能从
+    //   工具清单里读到 'sp-1' 并照着调 —— 界面藏了、接口没藏，等于没藏。
+    const presetKeys = (SE && SE.visibleKeys) ? SE.visibleKeys()
+      : ((SE && SE.PRESETS) ? Object.keys(SE.PRESETS) : []);
     const customKeys = presetKeys.filter((k) => SE.isCustom && SE.isCustom(k));
-    return Object.keys(VOCAB).map((name) => {
+    return Object.keys(VOCAB).filter((name) => !isHiddenAction(name)).map((name) => {
       const v = VOCAB[name];
       const item = {
         action: name, group: v.group, concept: v.concept,

@@ -352,10 +352,15 @@ window.Formula = (function () {
       const useName = (md === 'real' && name);
       return {
         re: re, im: im, mag: mag, w: mag * mag,
-        nm: useName ? ('\\psi_{' + t.n + name + '}')
-                    : ('\\psi_{' + t.n + ',' + t.l + ',' + t.m + '}'),
+        // 复项连写 ψ_{322}（与单态公式的 psiTag 同一口径）；实项沿用轨道名 ψ_{\mathrm{p}_x}。
+        // ⚠️ String() 不能省 —— t.n + t.l + t.m 是数值相加（见 buildPsi 里的同类说明）。
+        nm: useName ? ('\\psi_{' + t.n + realOrbitalNameTex(t.l, t.m) + '}')
+                    : ('\\psi_{' + String(t.n) + String(t.l) + String(t.m) + '}'),
         label: useName ? (t.n + plainName(name))
                        : (t.n + sub + (t.m !== 0 ? '（m=' + (t.m > 0 ? '+' : '') + t.m + '）' : '')),
+        // HTML 版（说明文字走 innerHTML，里面的轨道名要真下标、方向坐标要斜体）
+        labelHtml: useName ? (t.n + realOrbitalLabelHtml(t.l, t.m))
+                           : (t.n + sub + (t.m !== 0 ? '（<i>m</i>=' + (t.m > 0 ? '+' : '') + t.m + '）' : '')),
       };
     });
     // 展开式：系数为 1 时省略；第一项为负要带负号，其余用 ± 连接。
@@ -384,16 +389,17 @@ window.Formula = (function () {
       + '\\end{aligned}';
     // ★ 这句原先写的是"系数按 Σ|cᵢ|² = 1 自动归一化；|cᵢ|² 是测到该分量的概率"，两处不严谨：
     //   ① Σ|cᵢ|²=1 是**态**的归一化，且以基组正交归一为前提（一般式是 Σᵢⱼ cᵢ*cⱼSᵢⱼ = 1）。
-    //      本程序的基组（同一中心的实/复原子轨道、sp/sp³ 杂化轨道）恰好正交归一，所以这条
-    //      式子成立 —— 但那是本程序的特例，不是普遍结论；程序实际做的只是把系数**等比缩放**。
+    //      本程序的基组（同一中心的实/复原子轨道）恰好正交归一，所以这条式子成立 ——
+    //      但那是本程序的特例，不是普遍结论；程序实际做的只是把系数**等比缩放**。
     //   ② |cᵢ|² 是**投影到该分量**的概率，只有当该分量确实是所测力学量的本征态时，它才等于
     //      "测到那个本征值"的概率。反例就在本程序里：p_x = (p₊+p₋)/√2 测 L_z 给 ±ℏ 各 1/2
     //      （成立）；但测**能量**时两个分量简并，概率恒为 1，|cᵢ|² 与能量概率无关。
-    //   注：#formulaNote 是 textContent 渲染，故这里只能写纯文本，不能用 $...$ 或 **。
-    const note = '系数按 Σ|cᵢ|² = 1 等比归一化（本程序基组正交归一，故只需这一条），'
-      + '因此只有比值有物理意义；|cᵢ|² 是投影到该分量的概率，'
+    //   注：#formulaNote 走 innerHTML（说明里的变量要斜体，用户第 5 条），故这里可以带
+    //      <i> 标签，但**仍然不能用 $...$** —— KaTeX 只在公式体里解析。
+    const note = '系数按 Σ|<i>c</i>ᵢ|² = 1 等比归一化（本程序基组正交归一，故只需这一条），'
+      + '因此只有比值有物理意义；|<i>c</i>ᵢ|² 是投影到该分量的概率，'
       + '只有该分量是所测力学量的本征态时才等于"测到该本征值"的概率 —— '
-      + comp.map(function (x) { return x.label + ' ' + exactTex(x.w); }).join('、');
+      + comp.map(function (x) { return x.labelHtml + ' ' + exactTex(x.w); }).join('、');
     return {
       title: '叠加态 · ' + terms.length + ' 个分量',
       note: note,
@@ -440,7 +446,7 @@ window.Formula = (function () {
     // Φ 一侧的因子：复解 e^{imφ}；实解 cos(mφ)/sin(mφ)（m=0 时无因子）
     let phiTrig = '';
     if (mode === 'complex') {
-      if (m !== 0) phiTrig = 'e^{' + mExponent(m) + '}';
+      if (m !== 0) phiTrig = '\\mathrm{e}^{' + mExponent(m) + '}';
     } else if (am > 0) {
       phiTrig = (am === 1)
         ? (m > 0 ? '\\cos\\varphi' : '\\sin\\varphi')
@@ -456,27 +462,49 @@ window.Formula = (function () {
     const realName = (mode === 'real') ? realOrbitalName(l, m) : '';
     const useName = (mode === 'real' && realName);
     const useFR = (mode === 'real' && !realName);
-    const psiTag = useName ? ('\\psi_{' + n + realName + '}')
+    // ★ 第 5 条：LaTeX 里支壳层字母要**正体**（\mathrm{p}），故取 Tex 版；纯文本通道仍用 realName。
+    const texName = useName ? realOrbitalNameTex(l, m) : '';
+    // ★ 复解的下标**连写、不留逗号**（ψ_{322}、Y_{22}）—— 用户口径：三个一位数连写
+    //   反而更接近教材上的 ψ_{nlm} 通式，逗号是印刷体为断词服务的，这里用不着。
+    //   m 为负时写作 ψ_{32-2}（用户给的例子就是 Y_{1-1}，同一个写法）。
+    //   ⚠️ 必须先 String()：n、l、m 都是**数字**，直接写 n + l + m 会做数值加法，
+    //      n=3,l=2,m=−2 会得到 3 —— 公式静默变成 ψ_3，不报错、只是错。
+    // ★ l≥4（useFR）**仍留逗号**：那里的第三下标是教材的 f(r) 记号，是个**表达式**，
+    //   连写成 65f(r) 谁也读不出来。"不加逗号"这条只适用于数字。
+    const compSub = String(n) + String(l) + String(m);
+    const psiTag = useName ? ('\\psi_{' + n + texName + '}')
       : (useFR ? ('\\psi_{' + n + ',' + l + ',f(r)}')
-               : ('\\psi_{' + n + ',' + l + ',' + m + '}'));
-    const yTag = useName ? ('Y_{' + realName + '}')
-      : (useFR ? ('Y_{' + l + ',f(r)}') : ('Y_{' + l + ',' + m + '}'));
+               : ('\\psi_{' + compSub + '}'));
+    const yTag = useName ? ('Y_{' + texName + '}')
+      : (useFR ? ('Y_{' + l + ',f(r)}') : ('Y_{' + l + String(m) + '}'));
 
     const rows = [];
 
     // ---- ① 径向部分 R_{n,l}(r)：通式（常数在下一行给出） ----
+    // ---- ① 径向部分 R_{n,l}(r)：**代入后的显式式**（ρ 也一并代入） ----
     // 教材形式 R = N ρˡ e^{-ρ/2} L_k^{2l+1}(ρ)，ρ = 2Zr/(na₀)
-    const rParts = [W('N', 'N_{' + n + ',' + l + '}')];
-    if (l >= 1) rParts.push(l === 1 ? '\\rho' : '\\rho^{' + l + '}');     // ρ⁰ ≡ 1，省略
-    rParts.push('e^{-\\rho/2}');
-    if (k > 0) rParts.push(W('L', 'L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho)')); // L₀ ≡ 1，省略
-    rows.push('R_{' + n + ',' + l + '}(r) &= ' + W('R', rParts.join('\\,')) +
-      ',\\qquad \\rho=\\frac{2Zr}{n a_0}');
-    // ② 径向归一化常数 —— 精确根式（原先这里是 4 位小数）
-    rows.push('N_{' + n + ',' + l + '} &= ' + sqrtRatioTex(Prad, Qrad));
-    if (k > 0) {
-      rows.push('L_{' + k + '}^{' + (2 * l + 1) + '}(\\rho) &= ' + W('L', laguerreExp(k, 2 * l + 1)));
-    }
+    // ★ 第 8 条：归一化常数 N_{n,l} 与拉盖尔多项式 L_k^{2l+1} 原先各占一整行。
+    //   但 N 只在 R 这一行里出现、L 也只在 R 这一行里出现 —— 单独列出来等于把
+    //   读者往回引一次（"N 是多少？往上看"），而那一行再没别的用处。
+    //   现在**直接代入**：R 一行就是教材最终给出的那个闭式，与 R 表逐项可比。
+    // ★ 第 3 条：连 ρ 也一并代入 —— 它同样只是个中间记号，留在行尾又要读者自己回代一次。
+    //   代入后整行只含 r、Z、a₀。采用"全部代入"的写法后，"R = N ρˡ e^{-ρ/2} L(ρ)"
+    //   这条教材骨架在公式区里不再出现，但骨架本身并不因此丢失 —— ψ 行给出的正是
+    //   同一条式子的最终形态，而 R 行现在与它同一口径。
+    const rhoTex = '\\frac{2Zr}{n a_0}';
+    const rhoPow = (q) => (q === 1 ? rhoTex : '\\left(' + rhoTex + '\\right)^{' + q + '}');
+    // 把拉盖尔多项式里的 ρ 换成它的值：\rho^{q} → （…）^q，裸 \rho → （…）
+    const substRho = (s) => s
+      .replace(/\\rho\^\{(\d+)\}/g, (mm, q) => rhoPow(+q))
+      .replace(/\\rho/g, rhoTex);
+    const rParts = [sqrtRatioTex(Prad, Qrad)];   // 归一化常数（原先以 N_{n,l} 符号占位）
+    if (l >= 1) rParts.push(rhoPow(l));          // ρ⁰ ≡ 1，省略
+    rParts.push('\\mathrm{e}^{-' + (n === 1 ? 'Zr/a_0' : 'Zr/' + n + 'a_0') + '}');
+    if (k > 0) rParts.push('\\left(' + substRho(laguerreExp(k, 2 * l + 1)) + '\\right)');
+    //   ★ 括号不能省：代入之前它是个**符号** L_k(ρ)，代入之后是一串多项式，
+    //     而前面紧跟的是 e 的指数项。不括起来那个 "− 3ρ + 3" 看起来像是加在
+    //     指数尾巴上，而不是乘上去的因子。
+    rows.push('R_{' + n + ',' + l + '}(r) &= ' + W('R', rParts.join('\\,')));
 
     // ---- 角度部分：按 Φ(φ) → Θ(θ) → Y = Θ·Φ 的顺序写 ----
     // ★ 这个顺序是**有意**的。教材讲分离变量多停在 ψ = R(r)·Y(θ,φ) 就停了，学生看不到
@@ -493,28 +521,32 @@ window.Formula = (function () {
     //     sin 型 (m<0)：Φ_{±m} = (1/(i√2))(Φ_{+m} − Φ_{−m})
     //   验算：Φ_{+m} + Φ_{−m} = 2·(1/√(2π))·cos(mφ) = √(2/π)·cos(mφ)，
     //   而 phiFuncReal 给的是 (1/√π)·cos(mφ) —— 两者恰差 1/√2，正是那个系数。
+    // ★ 第 5 条：Θ、Φ 是**函数**（分离变量分出来的两个因子），按数学排版惯例用**斜体**
+    //   —— 而 KaTeX 默认把大写希腊字母排成正体（沿 TeX 的惯例）。故显式 \mathit{}。
     let phiRef, phiBody;
     if (mode === 'complex') {
-      phiRef = '\\Phi_{' + m + '}';
+      phiRef = '\\mathit{\\Phi}_{' + m + '}';
       phiBody = phiConst + (phiTrig ? '\\,' + phiTrig : '');
     } else if (am === 0) {
       // m = 0：±0 无从组合，实解与复解在这里是同一个常数
-      phiRef = '\\Phi_{0}';
+      phiRef = '\\mathit{\\Phi}_{0}';
       phiBody = phiConst;
     } else {
-      phiRef = '\\Phi_{\\pm ' + am + '}';
+      phiRef = '\\mathit{\\Phi}_{\\pm ' + am + '}';
       const phiCoef = (m > 0) ? '\\frac{1}{\\sqrt{2}}' : '\\frac{1}{i\\sqrt{2}}';
       const phiMid = (m > 0) ? ' + ' : ' - ';
-      phiBody = phiCoef + '\\left(\\Phi_{+' + am + '}' + phiMid + '\\Phi_{-' + am + '}\\right) = '
+      phiBody = phiCoef + '\\left(\\mathit{\\Phi}_{+' + am + '}' + phiMid + '\\mathit{\\Phi}_{-' + am + '}\\right) = '
         + phiConst + (phiTrig ? '\\,' + phiTrig : '');
     }
     rows.push(phiRef + '(\\varphi) &= ' + W('F', phiBody));
 
-    // ④ 极角函数 Θ_{l,m}(θ)：多项式已取整，常数同步吸收倍数，故本行与 Y 行逐位一致
+    // ④ 极角函数 Θ_{lm}(θ)：多项式已取整，常数同步吸收倍数，故本行与 Y 行逐位一致
+    // ★ 第 8 条：原先把归一化常数另写成 "，N_Θ = √(...)"。那个 N_Θ 只在**本行开头**
+    //   用了一次，等于同一个数在一行里写两遍 —— 直接代入即可，不再单列。
+    // ★ 第 7 条：下标连写 Θ_{lm}（与 ψ_{322}、Y_{22} 同一口径）。
     const NthetaDisp = sqrtRatioTex(BigInt(Pth) * Gp * Gp, BigInt(Qth) * Lp * Lp);
-    rows.push('\\Theta_{' + l + ',' + m + '}(\\theta) &= ' +
-      W('T', NthetaDisp + (pExpRaw === '1' ? '' : '\\,' + W('P', pExpRaw))) +
-      ',\\qquad ' + W('N', 'N_{\\Theta}') + ' = ' + NthetaDisp);
+    rows.push('\\mathit{\\Theta}_{' + l + m + '}(\\theta) &= ' +
+      W('T', NthetaDisp + (pExpRaw === '1' ? '' : '\\,' + W('P', pExpRaw))));
 
     // ⑤ 球谐函数 = 两个因子的乘积，常数已乘开并化成闭式根号
     //    这一行与教材的 Y 表逐项一致：Y_{d_{z²}} = √(5/16π)(3cos²θ−1)、Y_{p_x} = √(3/4π)sinθcosφ
@@ -522,7 +554,7 @@ window.Formula = (function () {
     if (pExpRaw !== '1') yFac.push(pExp);                        // P₀⁰ ≡ 1，省略
     if (phiTrig) yFac.push(phiTrig);                             // e⁰ ≡ 1，省略
     const yCoef = overSqrtPiTex(BigInt(Pang) * Gp * Gp, BigInt(Qang) * Lp * Lp);
-    rows.push(yTag + '(\\theta,\\varphi) &= \\Theta_{' + l + ',' + m + '}(\\theta)\\cdot' + phiRef + '(\\varphi) = ' +
+    rows.push(yTag + '(\\theta,\\varphi) &= \\mathit{\\Theta}_{' + l + m + '}(\\theta)\\cdot' + phiRef + '(\\varphi) = ' +
       W('Y', leadSign + yCoef + (yFac.length ? '\\,' + yFac.join('\\,') : '')));
 
     // ---- ⑥ 完整波函数：代入并约简后的闭式（与教材 R 表、例题同形） ----
@@ -580,10 +612,15 @@ window.Formula = (function () {
     //   "…(Z/a₀)^{3/2} 2Z²r²/a₀² − 18Zr/a₀ + 27 e^{…}" 里那个 +27 会看起来像在加指数。
     const qBlock = (qParts.length > 1) ? '\\left(' + qShow + '\\right)' : qShow;
 
-    const zExp = (l === 0) ? '\\frac{3}{2}' : ('\\frac{' + (3 + 2 * l) + '}{2}');
+    // ★ 第 6 条：指数写成 `5/2` 而不是 `\frac{5}{2}` —— 上标里的分式会把行高撑开，
+    //   而在那个字号下分数线细得几乎看不见，反不如斜杠清楚。
+    //   （l=0 → 3/2；l=1 → 5/2；l=2 → 7/2）
+    const zExp = (l === 0) ? '3/2' : ((3 + 2 * l) + '/2');
     const zPow = '\\left(\\frac{Z}{a_0}\\right)^{' + zExp + '}';
     const rPow = (l === 0) ? '' : (l === 1 ? 'r' : 'r^{' + l + '}');
-    const ePow = 'e^{-' + (n === 1 ? 'Zr/a_0' : 'Zr/' + n + 'a_0') + '}';
+    // ★ 自然对数的底 e 用**正体**（\mathrm{e}）：KaTeX 默认把单字母当变量斜体，
+    //   而 e 在这里是常数不是变量（与虚数单位 \mathrm{i} 同一个道理，见 mExponent）。
+    const ePow = '\\mathrm{e}^{-' + (n === 1 ? 'Zr/a_0' : 'Zr/' + n + 'a_0') + '}';
     const angStr = yFac.length ? ('\\,' + yFac.join('\\,')) : '';
 
     rows.push(psiTag + '(r,\\theta,\\varphi) &= ' + leadSign + kTex + '\\,' + zPow +
@@ -591,11 +628,16 @@ window.Formula = (function () {
 
     const latex = '\\begin{aligned} ' + rows.join('\\\\[3pt] ') + '\\end{aligned}';
 
-    const modeName = mode === 'real' ? '波函数实数解' : '波函数复数解';
+    // ★ 用「空间波函数」而不是「波函数」：与面板上「视图对象」那个按钮**逐字一致**
+    //   （用户第 3 条把按钮改成了这个名字）。同一件事两处叫法不同正是这一批要清掉的毛病。
+    const modeName = mode === 'real' ? '空间波函数实数解' : '空间波函数复数解';
     // ★ 只有复解才写 m —— m 是复球谐的本征值指标，实解换成实轨道名之后这个标记没有意义。
     //   界面上原先无条件拼 "m=+1"，于是实档的标题读起来是"3p 轨道（m=+1 · p_x）"，
     //   把一个只属于复解的指标贴到了实解上。
     const mLabel = useName ? '' : ('m=' + (m > 0 ? '+' + m : m));
+    // ★ 第 5 条：m 是量子数（变量），标题里要斜体。title 走 textContent 放不了标签，
+    //   故单独备一个 HTML 版给 titleHtml —— 两者只差这一个 <i>，必须同步维护。
+    const mLabelHtml = useName ? '' : ('<i>m</i>=' + (m > 0 ? '+' + m : m));
     const note = buildNote(n, l, m, mode);
 
     return {
@@ -623,7 +665,7 @@ window.Formula = (function () {
       // ★ 卡片标题要用真下标：纯文本版把下划线原样印出来（"3p_x"），
       //   看着像代码而不像化学式。调用方用 innerHTML 塞这一个字段即可。
       titleHtml: (useName ? (n + realOrbitalLabelHtml(l, m)) : (n + sub)) + ' 轨道' +
-        (mLabel ? '（' + mLabel + '）' : '') + ' · ' + modeName,
+        (mLabelHtml ? '（' + mLabelHtml + '）' : '') + ' · ' + modeName,
       mLabel: mLabel,
       modeName: modeName,
       note: note,
@@ -849,9 +891,12 @@ window.Formula = (function () {
   function realOrbitalNameHtml(l, m) {
     const name = realOrbitalName(l, m);
     if (!name) return '';
+    // ★ 第 5 条：下标里的 **x / y / z 是坐标变量，用斜体**；数字与括号保持正体。
+    //   （下标里出现的小写字母只有方向坐标这一种，故可以整类斜体化。）
+    const vars = (s) => supUnicode(s).replace(/([a-z])/g, '<i>$1</i>');
     return name
-      .replace(/_\{([^}]*)\}/g, function (mm, inner) { return '<sub>' + supUnicode(inner) + '</sub>'; })
-      .replace(/_([a-z])/g, function (mm, c) { return '<sub>' + c + '</sub>'; });
+      .replace(/_\{([^}]*)\}/g, function (mm, inner) { return '<sub>' + vars(inner) + '</sub>'; })
+      .replace(/_([a-z])/g, function (mm, c) { return '<sub><i>' + c + '</i></sub>'; });
   }
 
   /**
@@ -861,7 +906,74 @@ window.Formula = (function () {
    */
   function realOrbitalLabelHtml(l, m) {
     if (realOrbitalName(l, m)) return realOrbitalNameHtml(l, m);
-    return cartesianBare(l, m).replace(/\^\{(\d+)\}/g, '<sup>$1</sup>');
+    // ★ 第 1 条：直角坐标多项式里的 x / y / z / r 是**变量**，要斜体
+    //   （g、h 没有惯用名，实轨道按钮与公式卡标题上显示的就是这串多项式）。
+    //   ⚠️ 顺序不能颠倒：先生成 <sup>N</sup> 再按 [a-z] 斜体化，会把 sup 这三个字母
+    //      本身也斜体化、标签被拆坏。先斜体化、再换 <sup>。
+    return cartesianBare(l, m)
+      .replace(/([a-z])/g, '<i>$1</i>')
+      .replace(/\^\{(\d+)\}/g, '<sup>$1</sup>');
+  }
+
+  /**
+   * 实轨道名的 **LaTeX 版**：支壳层字母（s/p/d/f）用**正体**，方向下标（x、y、z）保持斜体。
+   *
+   * ★ 依据是数学排版惯例：支壳层字母是**标签**（地位同函数名），不是变量；
+   *   而 x、y、z 是坐标**变量**，该斜体。教材上写的就是 $\mathrm{p}_x$ 而不是 $p_x$。
+   *   （用户第 5 条："公式中，ψ_3px 的 p 应该正体"。）
+   * ★ 为什么单独一个函数而不直接改 realOrbitalName：那个返回值同时供给**纯文本**
+   *   通道（公式卡标题的 textContent 版、日志、LLM 上下文、题目），
+   *   只在 LaTeX 这一侧加 \mathrm，才不会把反斜杠带进那些地方。
+   */
+  function realOrbitalNameTex(l, m) {
+    const nm = realOrbitalName(l, m);
+    if (!nm) return '';
+    return nm.replace(/^([spdfgh])/, '\\mathrm{$1}');   // 只换首字母：下标里的 x/y/z 仍斜体
+  }
+
+  /**
+   * **顶栏（右上角）显示的符号** —— 当前正在看的那个数学对象的记号，返回 HTML。
+   *
+   * ★ 为什么要单独有一个出口：符号的拼接原先散在三处（buildPsi 的 psiTag/yTag、
+   *   buildSuperposition 的 nm、main.js 里顶栏自己拼的 `n + sub + <sub>mLabel</sub>`），
+   *   三处各写一套，改一处就漏两处。这里收成一处。
+   *
+   * ★ 顶栏显示"符号"而不是"轨道名"，是这一批改动的核心：
+   *   原先顶栏写 `3d_z²`（一个**名字**），而三维里画的可能是 Y、可能是 ψ ——
+   *   名字没有说清"我现在看的是哪个量"。现在球谐档写 Y、波函数档写 ψ。
+   *
+   *   target='spherical'（球谐档）  Y_{1-1}（复解）/ Y_{p_z}（实解，维持轨道名）
+   *   target='wave'     （波函数档）ψ_{322}（复解）/ ψ_{3d_{z²}}（实解，多级下标）
+   *
+   * ★ 球谐档**不写 n**：Y 只由 l、m 决定，与主量子数无关（写上去是错的）。
+   *
+   * @param {number} n 主量子数
+   * @param {number} l 角量子数
+   * @param {number} m 磁量子数（实解时代表 cos/sin 型：>0 取 cos、<0 取 sin）
+   * @param {string} mode 'real' | 'complex'
+   * @param {string} target 'spherical' | 'wave'
+   * @returns {string} 可塞进 innerHTML 的 HTML（含 <sub>，实解为**二级**下标）
+   */
+  function symbolHtml(n, l, m, mode, target) {
+    // ★ 第 5 条：ψ / Y 是**算符作用下的函数**，按数学排版惯例用斜体（HTML 里显式 <i>）。
+    const head = (target === 'spherical') ? '<i>Y</i>' : '<i>ψ</i>';   // Y / ψ
+    if (mode === 'real') {
+      const name = realOrbitalName(l, m);
+      if (name) {
+        // 实解：球谐档不写 n，波函数档写 n（ψ 是 n 的态）。realOrbitalNameHtml 已带
+        // 一层 <sub>，外面再套一层即得**多级下标**（ψ 的 3d 一级、z² 二级）。
+        const inner = (target === 'spherical' ? '' : String(n)) + realOrbitalNameHtml(l, m);
+        return head + '<sub>' + inner + '</sub>';
+      }
+      // l≥4（g、h 无惯用名）→ 教材的 f(r) 记号，保留逗号（连写不可读，见 buildPsi 的说明）
+      return (target === 'spherical')
+        ? 'Y<sub>' + l + ',f(r)</sub>'
+        : 'ψ<sub>' + String(n) + ',' + String(l) + ',f(r)</sub>';
+    }
+    // 复解：连写下标，与公式卡同一口径
+    return (target === 'spherical')
+      ? head + '<sub>' + String(l) + String(m) + '</sub>'
+      : head + '<sub>' + String(n) + String(l) + String(m) + '</sub>';
   }
 
   /**
@@ -931,18 +1043,30 @@ window.Formula = (function () {
     return false;
   }
 
+  /**
+   * 公式下方的说明文字 —— 返回 **HTML**（调用方 `#formulaNote` 走 innerHTML，见 main.js）。
+   *
+   * ★ 为什么改成 HTML：说明里到处是变量（φ、m、z、r、Y…），按数学排版惯例要斜体，
+   *   而原先走 textContent，它们全是正体（用户第 5 条）。KaTeX 只解析 $…$，
+   *   这一块是纯说明文字、不套 $…$，所以自带标签是唯一办法。
+   * ★ 斜体 / 正体的分界（与公式区同一套口径）：
+   *     · 变量与函数符号（ψ Y R r φ θ m l n z x y c）→ 斜体
+   *     · 函数名 cos / sin、纯数字、"3d"这类**轨道名整体** → 正体
+   */
   function buildNote(n, l, m, mode) {
     const sub = SUBSHELL[Math.min(l, SUBSHELL.length - 1)];
+    const V = (s) => '<i>' + s + '</i>';
+    const varsIn = (s) => String(s).replace(/([a-z])/g, '<i>$1</i>');
     if (n === 1 && l === 0) return '1s：球对称，概率密度随半径单调衰减；没有径向节点。';
     if (l === 0) return n + 's：球对称分布，没有角度节面；径向节点 ' + (n - 1) + ' 个。';
     const radialNodes = n - l - 1;
     const am = Math.abs(m);
     const orient = mode === 'complex'
-      ? '复数解绕 z 轴对称（环面 / 锥面），相位沿方位角缠绕。'
-      : (m > 0 ? 'cos(' + am + 'φ) 型：瓣在 xy 面内沿一个方向张开。'
-              : (m < 0 ? 'sin(' + am + 'φ) 型：瓣与同 |m| 的 cos(' + am + 'φ) 型绕 z 轴相差 '
-                  + (90 / am) + '°。'
-                       : 'm=0 型：沿 z 轴的"橄榄"形。'));
+      ? '复数解绕 ' + V('z') + ' 轴对称（环面 / 锥面），相位沿方位角缠绕。'
+      : (m > 0 ? 'cos(' + am + V('φ') + ') 型：瓣在 ' + V('xy') + ' 面内沿一个方向张开。'
+              : (m < 0 ? 'sin(' + am + V('φ') + ') 型：瓣与同 |' + V('m') + '| 的 cos('
+                  + am + V('φ') + ') 型绕 ' + V('z') + ' 轴相差 ' + (90 / am) + '°。'
+                       : V('m') + '=0 型：沿 ' + V('z') + ' 轴的"橄榄"形。'));
     // ★ 命名这件事要主动交代，学生问过（"4f 的七个有各自的名字吗？g、h 呢？"）：
     //   p、d 有公认名，f 的七个是惯例用法，g、h 没有通名。界面上给不出名字时，
     //   与其默默写个 m，不如把"为什么没有"和"改用什么标记"一起说清楚。
@@ -960,9 +1084,9 @@ window.Formula = (function () {
         //     本身就是乘积，不能再套括号。
         const poly = cartesianPlain(l, m);
         naming = '（' + sub + ' 支壳层没有公认的通名 —— 高角动量轨道在文献里只按对称性分类。'
-          + '这里用角向部分的直角坐标多项式标记：Y = '
-          + (topLevelSum(poly) ? '(' + poly + ')' : poly)
-          + ' / r' + supUnicode('^' + l) + '。）';
+          + '这里用角向部分的直角坐标多项式标记：' + V('Y') + ' = '
+          + (topLevelSum(poly) ? '(' + varsIn(poly) + ')' : varsIn(poly))
+          + ' / ' + V('r') + supUnicode('^' + l) + '。）';
       }
     }
     return '径向节点 ' + radialNodes + ' 个、角度节面 ' + l + ' 个；' + orient + naming;
@@ -972,6 +1096,8 @@ window.Formula = (function () {
     buildPsi, buildSuperposition, legendreCoeffs, laguerreCoeffs,
     realOrbitalName, realOrbitalNameHtml, realOrbitalLabel, realOrbitalLabelHtml,
     realOrbitalCartesian, realOrbitalM, realOrbitalLabelPlain,
+    /** 顶栏符号（球谐档 Y / 波函数档 ψ）的唯一构造出口 */
+    symbolHtml,
     /** 把实数写成精确闭式（叠加态系数用），供自检脚本调用 */
     exactTex, plainName,
   };

@@ -116,23 +116,29 @@ window.DemoMode = (function () {
           actions: [
             { action: 'setQuantumNumbers', params: { n: 2, l: 1, m: 1 } },
             { action: 'setWavefunctionMode', params: { mode: 'complex' } },
-            { action: 'setColorMode', params: { mode: 'orbital' } },
             { action: 'setRenderMode', params: { mode: 'surface' } },
             { action: 'setAutoRotate', params: { on: true } },
           ],
         },
         {
-          speech: '打开相位着色——绕一圈，彩虹正好走完一周，这就是相位缠绕（arg = mφ）。',
+          // ★ 这一步原先发的是 setColorMode{phase}（"打开相位着色，绕一圈彩虹走完一周"）。
+          //   那个开关已按用户第 5 条删除 —— 复解的 arg ψ 是**连续缠绕**、不是两个值，
+          //   用双色去编码它本来就是错的，那圈彩虹也一并去掉了。
+          //   改看**截面卡的相位图**：截面能看到完整一圈 φ，比球面上的彩虹更清楚，
+          //   "绕一圈走完 |m| 个周期"这句话在截面上是字面成立的。
+          speech: '相位 ψ 的缠绕在三维球面上看不全一整圈。切到 xy 截面的相位图：绕原点走一周，'
+            + '相位正好走完 |m| 个整周期 —— 这就是 arg ψ = mφ（|m|=1 走一周，|m|=2 走两周）。',
           actions: [
-            { action: 'setColorMode', params: { mode: 'phase' } },
+            { action: 'setSectionPlane', params: { plane: 'xy' } },
+            { action: 'setSectionMode', params: { mode: 'phase' } },
           ],
         },
         {
-          speech: '现在切回实函数。环变成了两个定向的瓣——变成 $p_x$。注意：**能量没有变**。',
+          speech: '现在切回实函数。环变成了两个定向的瓣——变成 $p_x$。注意：**能量没有变**。'
+            + '截面还留在相位图上，正好对照：实解的相位只有 0 与 π 两个值（两种颜色），不再是连续的缠绕。',
           actions: [
             { action: 'setAutoRotate', params: { on: false } },
             { action: 'setWavefunctionMode', params: { mode: 'real' } },
-            { action: 'setColorMode', params: { mode: 'orbital' } },
           ],
         },
         {

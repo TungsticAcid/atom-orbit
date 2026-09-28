@@ -631,12 +631,10 @@ window.Orbit3D = (function () {
    * 这正是切换按钮能被看出来差别的原因。
    */
   function levelAbsFor(P, fraction, psiCrit) {
-    // ★ 叠加态用「无干涉参考峰值」Σ|cᵢ|²peakᵢ 作基准，而不是实际扫描峰值：
-    //   干涉会让实际峰值高出近 2 倍，若按它取 30%，曲面会远小于单一轨道并碎成几块。
-    const peak = (P.terms && P.terms.length)
-      ? OM.superpositionRefPeak(P.terms, P.Z)
-      : OM.maxDensity(P.n, P.l, P.m, P.mode, P.Z);
-    return (psiCrit === 'psi') ? fraction * fraction * peak : fraction * peak;
+    // ★ 换算本体已收到 math.js 的 OM.isoLevelAbs（唯一出口）—— 这里只做一次转接。
+    //   原先换算写在本函数里，而"真正抽等值面"那一行**自己又写了一遍**（还写错了），
+    //   于是同一读数在面板上与画面上是两个不同的面。见 OM.isoLevelAbs 的说明。
+    return OM.isoLevelAbs(P.n, P.l, P.m, P.mode, P.Z, P.terms, fraction, psiCrit);
   }
 
   function setSurfaceLevel(fraction, colorMode, psiCrit) {
@@ -975,7 +973,20 @@ window.Orbit3D = (function () {
     disposeFine();
     surfaceGeoRef = null;
     const __t0 = performance.now();
-    const iso = Math.max(1e-9, surfaceLevelFraction * fieldMax);
+    // ★ 阈值换算**必须走 levelAbsFor 这唯一一个出口**。这里原先是
+    //   `surfaceLevelFraction * fieldMax`（纯线性），于是判据取 |ψ| 时**少平方了一次** ——
+    //   取景、标尺、面板上的百分比换算全都按 levelAbsFor（|ψ| 档要平方），
+    //   只有真正抽等值面的这一行没跟上：同一个读数下 |ψ| 档的阈值比 |ψ|² 档小一个量级，
+    //   曲面胀出好几倍。
+    //   实测（3p_z）：|ψ|² 档取 10% 与 |ψ| 档取 31.6% 本应是**同一个面**（绝对阈值都是
+    //   1.674e-4、期望外半径都是 12.018），却分别抽出 52252 与 2736 个顶点 ——
+    //   面板上明写着"⟺"，画出来却根本不是一个面。这是用户从界面上看出来的。
+    //   ★ 顺带修好一处**休眠**的错：叠加态按 fieldMax（实际扫描峰值）取值时，干涉会把
+    //   峰值抬高近 2 倍，曲面会碎成几块 —— levelAbsFor 用"无干涉参考峰值"正是为避免它
+    //   （见该函数的说明）。量子态下架后这条暂时无人触发，但换算只该有一处。
+    const iso = Math.max(1e-9, surfaceParams
+      ? levelAbsFor(surfaceParams, surfaceLevelFraction, surfaceParams.psiCrit)
+      : surfaceLevelFraction * fieldMax);
     // 先决定要不要精细化：粗网格抽取时就要跳过节点球内的单元
     const finePlan = planFinePatch(iso);
     const geo = extractSurface(iso, finePlan ? finePlan.radius : 0, false);
@@ -1373,15 +1384,14 @@ window.Orbit3D = (function () {
         // 本来就是 r = |Y|，没有径向信息，硬乘一个 R 反而会把"径向节点"错误地混进来。
         // ★ 它和三维等值面/截面用的 OM.psiPhase 是**两个不同用途的判据**，别混用 ——
         //   两者各自的适用场合写在 math.js 的函数注释里。
-        // ★ 着色只由「实函数 / 复函数」决定，与「|Y| 还是 |Y|²」**无关**：颜色表达的
-        //   是相位（实函数 → 符号），而相位不因把半径画成 |Y| 还是 |Y|² 而改变 ——
-        //   判据只改轮廓。（原先 |Y|² 另走一套强度色标，是全项目唯一一处"颜色随判据变"。）
+        // ★ 着色**由判据派生**（见 main.js 的 deriveColorMode），已不再是一个独立开关。
+        //   调用方传进来的 cm 就是"实/复 + |Y|/|Y|²"两者的合成结果：
+        //     「|Y|」+ 实数解 → 'phase' 按 sign(Y) 双色
+        //     「|Y|²」        → 'orbital' 纯色（Y² 非负，本就没有正负可谈）
+        //     一切复数解      → 'orbital' 纯色（arg Y 是绕 z 轴的连续缠绕，不是两个值）
         const idx = (i * (NP + 1) + j) * 3;
-        // ★ 着色现在**跟随「三维着色」控件**（第 6 条），不再写死：
-        //   · 'orbital' → 整个曲面刷成该支壳层的单色（与波函数档的支壳层色同一套）。
-        //     ★ 这是复数解档的**默认** —— 复解的相位绕 z 轴一圈就把颜色走遍，
-        //       默认给彩虹的话学生第一眼看到的是"花"而不是"这个角向部分的形状"。
-        //   · 'phase'   → 实数解按 sign(Y) 分正负双色、复数解按相位彩虹（原先的行为）。
+        //   · 'orbital' → 整个曲面刷成该支壳层的单色
+        //   · 'phase'   → 实数解按 sign(Y) 分正负双色
         //   注意判据用 OM.angularPhase（**不含 R(r)**）：这张图画的是 r = |Y|，
         //   没有径向信息，硬乘一个 R 会把"径向节点"错误地混进来。
         const col = (cm === 'orbital')
@@ -1412,7 +1422,20 @@ window.Orbit3D = (function () {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(clr, 3));
     geo.setIndex(indices);
-    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    // ★ 法线必须算：光照材质靠它决定明暗，而这张曲面原先用的是**不受光**的
+    //   MeshBasicMaterial —— 几何上根本没给 normal 属性，场景里那三盏灯对它完全浪费。
+    geo.computeVertexNormals();
+    // ★ 材质与波函数等值面**同一套**（MeshStandardMaterial + 同一组参数）：
+    //   原先这里是 MeshBasicMaterial，顶点色直接铺上去，于是整个曲面是一块匀色 ——
+    //   看不出哪一瓣朝向观察者、哪一瓣背过去，三维结构被压成了二维剪影。
+    //   （用户："球谐函数的三维视图没有空间波函数那么有光泽，看不出三维结构。"）
+    //   ★ 顶点色在 Standard 里是**乘**在光照结果上的，而这里的顶点色承载的正是
+    //     "相位色 / 支壳层色"这条信息，所以底色调成 white、roughness 与等值面一致，
+    //     保证两档观感相同 —— 用户要的正是"一样有光泽"。
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff, vertexColors: true, roughness: 0.5, metalness: 0.0,
+      side: THREE.DoubleSide,
+    });
     angMesh = new THREE.Mesh(geo, mat);
     angGroup.add(angMesh);
   }
@@ -1535,6 +1558,34 @@ window.Orbit3D = (function () {
   }
 
   /**
+   * 节面 chip 上的文字 —— **按当前轨道算出真有几种节面**，而不是只写"你开了哪一类"。
+   *
+   * ★ 为什么要按轨道算：这个 chip 描述的是**画面上高亮着的东西**，而高亮的内容每次换轨道
+   *   都会重建（见 refreshSpotlight）。原先文字是写死的"径向节面 + 角度节面高亮"，
+   *   于是 3s（两层球壳、没有角度节面）与 3d（两个锥面、没有径向节面）显示**同一句话**，
+   *   而画面根本不是一回事 —— 文字没跟上它描述的对象（用户第 1 条）。
+   * ★ 数量为 0 的那一类**不写**：写"角度节面 ×0"只会让人去找一个不存在的东西。
+   * ★ 数量直接给出来还有教学价值：径向节面数 = n−l−1、角度节面数 = l，学生点开就能对。
+   */
+  function nodeChipText(types) {
+    const S = (window.OrbitApp && window.OrbitApp.getState()) || {};
+    const n = S.n, l = S.l, m = S.m, mode = S.wavefunction || 'real';
+    const Zn = S.nuclearCharge || 1;
+    const parts = [];
+    if (types.indexOf('radial') >= 0 && n != null && l != null) {
+      const k = OM.radialZeros(n, l, Zn).length;
+      if (k > 0) parts.push('径向节面 ×' + k);
+    }
+    if (types.indexOf('angular') >= 0 && l != null) {
+      const nd = OM.angularNodes(l, m, mode) || {};
+      const k = ((nd.cones || []).length) + ((nd.planes || []).length);
+      if (k > 0) parts.push('角度节面 ×' + k);
+    }
+    if (!parts.length) return '本轨道没有节面';
+    return parts.join(' + ') + '高亮';
+  }
+
+  /**
    * 高亮节面（把节点公式变成可点亮、可数的几何对象）。
    *   type='radial'  → 在每个径向零点半径处画线框球（"套娃"结构）
    *   type='angular' → 在每个角度节面的 θ 处画圆锥、φ 处画过 z 轴的平面
@@ -1559,9 +1610,7 @@ window.Orbit3D = (function () {
         curSpotlight.types = curSpotlight.types.filter((t) => types.indexOf(t) < 0);
         if (!curSpotlight.types.length) curSpotlight = null;
       }
-      setChip('nodes', curSpotlight
-        ? (curSpotlight.types.map((t) => (t === 'radial' ? '径向节面' : '角度节面')).join(' + ') + '高亮  ✕')
-        : null,
+      setChip('nodes', curSpotlight ? nodeChipText(curSpotlight.types) + '  ✕' : null,
         curSpotlight ? function () { spotlightNodes(curSpotlight.types, false); } : null);
       notifyAuxChange();
       return;
@@ -1569,7 +1618,7 @@ window.Orbit3D = (function () {
     curSpotlight = { types: (curSpotlight ? curSpotlight.types.concat(types) : types)
       .filter((t, i, a) => a.indexOf(t) === i) };
     // 同一个标签兼管两类节面，点击即全部清除
-    setChip('nodes', curSpotlight.types.map((t) => (t === 'radial' ? '径向节面' : '角度节面')).join(' + ') + '高亮  ✕',
+    setChip('nodes', nodeChipText(curSpotlight.types) + '  ✕',
       function () { spotlightNodes(curSpotlight.types.slice(), false); });
 
     const S = (window.OrbitApp && window.OrbitApp.getState()) || {};
@@ -1584,10 +1633,22 @@ window.Orbit3D = (function () {
 
     if (types.indexOf('radial') >= 0) {
       // 径向节面：以核为中心的球壳
+      // ★ 两极那束密集的线**没有物理含义**：SphereGeometry 是经纬参数化造出来的球，
+      //   经线从一极出发、到另一极汇合；而 `wireframe: true` 会把三角化后的**每一条边**
+      //   都画出来（含对角边），于是两极收成一束。径向节面本身是**球壳**（r = 常数）、
+      //   各向同性，连经线纬线都是人为的。
+      // ★ 但**极点朝向**可以选，而且该选 z：
+      //   three.js 的 SphereGeometry 极点按它的惯例在 ±y，而本程序是化学约定、z 竖直，
+      //   θ 从 +z 量起。转 90° 让网格的赤道落在 xy 平面、两极落在 ±z，线框的经纬结构就与
+      //   全程序的 θ 约定、以及绕 z 建的角度节面（锥面/平面）对齐了。
+      //   顺带一个实测好处：初始相机在 (0,−4,3)，±y 极点与视线只差 37°（正对着看，
+      //   那束线落在球面投影的中央）；转到 ±z 后差 53°，挪到上下轮缘、被球体自遮一部分。
       const zeros = OM.radialZeros(n, l, Zn);
       const seg = 48;
       for (const r of zeros) {
         const geo = new THREE.SphereGeometry(r, seg, 24);
+        // ★ 极点从 three.js 的默认 ±y 转到 ±z —— 见上面那段说明（对齐本程序的 θ 约定）
+        geo.rotateX(Math.PI / 2);
         const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
           color: 0x7ad4ff, wireframe: true, transparent: true, opacity: 0.30, depthWrite: false,
         }));
@@ -1622,23 +1683,28 @@ window.Orbit3D = (function () {
           continue;
         }
         const rho = R * Math.sin(th), z = R * Math.cos(th);
+        // ★ 填充锥面（用户："对于锥形的角度节面，应稍微填充一下"）。
+        //   原先只画"一圈线 + 四条母线"，读起来是个线框，与"过 z 轴的半透明矩形"那种
+        //   填充画法**不一致** —— 同样是角度节面，一个要学生自己脑补出面来，一个是现成的面。
+        //   锥的顶点在核、张口朝 ±z：半顶角 θ ⟹ 底半径 : 高 = tanθ，
+        //   故取 高 = |R cosθ|、底半径 = R sinθ，与线框那个圆正好重合。
+        const coneH = Math.abs(z);
+        const coneGeo = new THREE.ConeGeometry(rho, coneH, 48, 1, true);   // openEnded：只要侧面
+        // ConeGeometry 的顶点在 +H/2、底在 −H/2、轴沿 y。先平移把顶点挪到原点，
+        // 再绕 x 转 ∓90° 让轴落到 ±z（θ<90° 张口朝 +z，θ>90° 朝 −z）。
+        coneGeo.translate(0, -coneH / 2, 0);
+        coneGeo.rotateX(z >= 0 ? -Math.PI / 2 : Math.PI / 2);
+        const cone = new THREE.Mesh(coneGeo, matA.clone());
+        cone.userData.kind = 'node'; cone.userData.spot = 'angular';
+        g.add(cone);
+        // 口沿那圈线保留：填充面在深色背景上对比度不高，一圈亮线把"锥的口"交代清楚。
+        // （原先还有 4 条母线；有了填充面之后它们成了多余的线，去掉。）
         const circle = new THREE.EllipseCurve(0, 0, rho, rho, 0, Math.PI * 2, false, 0);
         const pts = circle.getPoints(64).map((p) => new THREE.Vector3(p.x, p.y, z));
         const cg = new THREE.BufferGeometry().setFromPoints(pts);
         const line = new THREE.Line(cg, new THREE.LineBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.55 }));
         line.userData.kind = 'node'; line.userData.spot = 'angular';
         g.add(line);
-        // 4 条母线，帮助读出锥面
-        for (let k = 0; k < 4; k++) {
-          const a = (k * Math.PI) / 2;
-          const lg = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(rho * Math.cos(a), rho * Math.sin(a), z),
-          ]);
-          const ll = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xff8ad4, transparent: true, opacity: 0.35 }));
-          ll.userData.kind = 'node'; ll.userData.spot = 'angular';
-          g.add(ll);
-        }
       }
       // 平面节点（实函数 m≠0）：过 z 轴的半透明矩形
       for (const ph of nodes.planes) {
@@ -1718,7 +1784,7 @@ window.Orbit3D = (function () {
     if (curSpotlight && curSpotlight.types.indexOf('radial') >= 0) {
       curSpotlight.types = curSpotlight.types.filter((t) => t !== 'radial');
       setChip('nodes', curSpotlight.types.length
-        ? (curSpotlight.types.map((t) => (t === 'radial' ? '径向节面' : '角度节面')).join(' + ') + '高亮  ✕')
+        ? nodeChipText(curSpotlight.types) + '  ✕'
         : null,
         curSpotlight.types.length ? function () { spotlightNodes(curSpotlight.types.slice(), false); } : null);
       if (!curSpotlight.types.length) curSpotlight = null;
@@ -1771,6 +1837,10 @@ window.Orbit3D = (function () {
         }
         out.push({
           type: o.type, vis: o.visible, scale: +s.x.toFixed(3),
+          // ★ 报出**几何类型**：判断"某个东西到底画成了什么形状"最直接的依据。
+          //   例如角度节面是锥面还是平面、有没有被填充（Mesh）还是只是一圈线（Line），
+          //   靠截图猜容易看错（透视下一个半透明锥与一个三角形很像）。
+          geo: (o.geometry && o.geometry.type) || null,
           verts: o.geometry && o.geometry.getAttribute('position') ? o.geometry.getAttribute('position').count : 0,
           nrm: nrm,
         });

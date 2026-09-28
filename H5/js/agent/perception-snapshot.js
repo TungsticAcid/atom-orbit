@@ -22,7 +22,6 @@ window.Perception = (function () {
     n: 'setN', l: 'setL', m: 'setM',
     wavefunction: 'setWavefunctionMode',
     render: 'setRenderMode',
-    color: 'setColorMode',
     psiCriterion: 'setPsiCriterion',
     levelFraction: 'setIsosurfaceLevel',
     plane: 'setSectionPlane',
@@ -140,7 +139,6 @@ window.Perception = (function () {
         target: s.viewTarget,
         wavefunction: s.wavefunction,
         render: s.render,
-        color: s.color,
       },
       isosurface: {
         criterion: s.psiCriterion,
@@ -194,7 +192,7 @@ window.Perception = (function () {
         (s.orbital.nuclearCharge && s.orbital.nuclearCharge !== 1
           ? ' Z=' + s.orbital.nuclearCharge + '（类氢，非氢原子）' : ''),
       '【模式】看' + (s.mode.target === 'spherical' ? '球谐函数 Y' : '完整波函数 ψ') +
-        ' / ' + s.mode.wavefunction + ' / ' + s.mode.render + ' / 着色:' + s.mode.color,
+        ' / ' + s.mode.wavefunction + ' / ' + s.mode.render,
       '【等值面】判据 ' + s.isosurface.criterion + '，阈值 ' + (s.isosurface.levelFraction * 100).toFixed(1) + '%',
       '【图表】径向 [' + (s.charts.radial || []).join(',') + ']；球谐判据 ' + s.charts.angular +
         '；截面 ' + s.charts.section.plane + '/' + s.charts.section.mode +

@@ -76,10 +76,13 @@ window.ErrorDiagnosis = (function () {
     'complex-real': {
       cause: 'E1 概念混淆',
       label: '把实轨道与复轨道当成两种不同的物理',
+      // ★ 这里原有两步 setColorMode（切相位色再切回轨道色）。那个开关已按用户第 5 条
+      //   删除，而复解的相位缠绕仍然值得给学生看 —— 改看**截面的相位图**：
+      //   截面能看到完整一圈 φ，比三维球面上那圈彩虹更清楚。
       actions: [
         { action: 'setWavefunctionMode', params: { mode: 'complex' } },
-        { action: 'setColorMode', params: { mode: 'phase' } },
-        { action: 'setColorMode', params: { mode: 'orbital' } },
+        { action: 'setSectionPlane', params: { plane: 'xy' } },
+        { action: 'setSectionMode', params: { mode: 'phase' } },
         { action: 'setWavefunctionMode', params: { mode: 'real' } },
       ],
       speech: '你看，切到复函数时密度是个环，切回实函数变成两个瓣。' +

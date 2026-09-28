@@ -22,7 +22,9 @@
     viewTarget: 'wave',
     mode: 'real',            // 'real' | 'complex'
     renderMode: 'surface',   // 'points' | 'surface'（默认等值面）
-    colorMode: 'orbital',    // 三维着色：'orbital' 轨道色 | 'phase' 相位色
+    // ★ 这里原先有 colorMode 字段（「三维着色」开关）。用户第 5 条把那个开关删了 ——
+    //   着色不是独立选项，而是**判据的推论**（画 |ψ|² 就没有正负可谈）。
+    //   现在由 deriveColorMode() 现算，不进 state、不进任何快照。
     level: 0.10,             // 等值面阈值（占峰值的比值）
     // ★ 默认 10% 而不是 30%：径向节点会把等值面切成多层壳，而**外层壳的峰值
     //   往往很低**（3p 的外层壳只有全局峰值的 11.9%）——按 30% 取阈值时外层壳
@@ -54,13 +56,14 @@
     mSlider: $('#mSlider'), mInput: $('#mInput'), mSet: $('#mSet'),
     realOrbSet: $('#realOrbSet'), realOrbSeg: $('#realOrbSeg'), realOrbHint: $('#realOrbHint'),
     levelSlider: $('#levelSlider'), levelInput: $('#levelInput'), levelSet: $('#levelSet'), psiHint: $('#psiHint'),
+    psiCritSet: $('#psiCritSet'), psiSeg: $('#psiSeg'),
     pointCountSlider: $('#pointCountSlider'), pointCountInput: $('#pointCountInput'), pointSet: $('#pointSet'),
     thetaPhiChart: $('#thetaPhiChart'),
     targetSeg: $('#targetSeg'), yCritSet: $('#yCritSet'),
     yCritSeg: $('#yCritSeg'), yCritHint: $('#yCritHint'),
     orbitTitle: $('#orbitTitle'), modeBadge: $('#modeBadge'),
     formulaTitle: $('#formulaTitle'), formulaBox: $('#formulaBox'), formulaNote: $('#formulaNote'),
-    radialChart: $('#radialChart'), sectionChart: $('#sectionChart'),
+    radialChart: $('#radialChart'), sectionChart: $('#sectionChart'), sectionCard: $('#sectionCard'),
     viewer: $('#viewer'),
   };
 
@@ -165,20 +168,29 @@
   }
 
   /**
-   * 两档各自的**默认着色**（第 19 条）。切换档位时重置为该档默认；同一档内用户手动
-   * 改过之后保持不变 —— 只在他再次切换档位时才覆盖，不偷偷改他的显式选择。
-   *   实数解 → 相位色（正负双色）：符号翻转是实解最核心、最该第一眼看见的物理；
-   *   复数解 → 支壳层色（纯色）：复解的相位绕 z 轴一圈就把颜色走遍，默认给彩虹的话
-   *            学生第一眼看到的是"花"，而不是"这个轨道长什么样"。
-   * 想要复解那一圈彩虹的，去「进阶 → 三维着色」里打开（界面上写明了位置 ——
-   * 收起来不等于删掉，不写清楚就会被当成"这功能没了"）。
+   * 三维着色 —— **由判据推导**，不再是一个独立开关（用户第 5 条把那个开关删掉了）。
+   *
+   * ★ 为什么可以推导：着色回答的是"用什么颜色编码这个标量场"，而**判据已经决定了
+   *   标量场是什么** —— 画 |ψ|² 时函数处处非负，本就没有正负可谈；画 ψ（或 Y）
+   *   时才谈得上符号。原先两者各是一个开关，于是制造出"看不见的选项决定可见画面"：
+   *   判据按钮只在等值面档显示，而电子云档的颜色照样由它决定。
+   *
+   *   判据**非平方** + **实数解** → 'phase'（按 sign 双色）
+   *   其余一切情况（任何复数解、判据为平方时） → 'orbital'（支壳层纯色）
+   *
+   * ★ 复数解永远纯色：复解的 arg ψ 是绕 z 轴**连续缠绕**的，不是两个值 ——
+   *   用"双色"去编码它只能编出两个值，是错的。（原先那圈"彩虹"随开关一并去掉。）
+   * ★ s 轨道**不特判**：1s 的 ψ 处处为正，按 sign 着色自然得到纯色；
+   *   而 2s/3s 有径向节点、ψ 确实变号，那时内外壳异色是**物理**（与 4p 三层壳同一个
+   *   现象），不该因为"它是 s 轨道"就压掉。
+   *
+   * @returns {'orbital'|'phase'} 供 render3d / math / charts 消费（它们的形参保持不变）
    */
-  let lastModeForColor = null;
-  function applyModeDefaultColor() {
-    const m = activeValue('#modeSeg', 'data-mode') || 'real';
-    if (m === lastModeForColor) return;
-    lastModeForColor = m;
-    setSeg('#colorSeg', 'data-mode', (m === 'real') ? 'phase' : 'orbital');
+  function deriveColorMode() {
+    const sph = (state.viewTarget === 'spherical');
+    const crit = sph ? state.angWhich : state.psiCrit;
+    const squared = sph ? (crit === 'Y2') : (crit === 'psi2');
+    return (!squared && state.mode === 'real') ? 'phase' : 'orbital';
   }
 
   /**
@@ -198,9 +210,39 @@
     // ★ 只留**必要且两档都成立**的一句：原先 l≥1 时写的是"两个相切的球面变成两个相切的椭球"，
     //   而那是**实数解**才有的形状（复数解画出来是绕 z 轴的旋转体，不是相切的蛋）。
     //   具体形状留给智能体按学生提问去讲，面板上不铺陈。
-    els.yCritHint.textContent = degenerate
-      ? 'l = 0 时 Y 是常数，两个判据画出来是同一个球面。'
+    // ★ 用 innerHTML：l 与 Y 是变量 / 函数名，要斜体（用户第 5 条）。
+    els.yCritHint.innerHTML = degenerate
+      ? '<i>l</i> = 0 时 <i>Y</i> 是常数，两个判据画出来是同一个球面。'
       : '判据换成平方后，节面位置不变，只是曲面整体收缩。';
+  }
+
+  /**
+   * 「等值面判据」两个按钮的**文案**随波函数形式变（第 4 条）。
+   *
+   *   实数解 → 「|ψ|²」「ψ」：实函数本身带符号，那个绝对值竖线是多余的 ——
+   *            而且竖线会误导（看起来像"模"这个只在复函数里才有的操作）。
+   *   复数解 → 「|ψ|²」「|ψ|」：复函数的非平方判据**就是模**，竖线是实质信息。
+   *
+   * ★ 同一组按钮在两个子档下叫法不同，不是笔误：它们指的本来就是两个量。
+   * ★ 用 innerHTML 改而不是 textContent：ψ 是函数名，按数学排版惯例要**斜体**
+   *   （用户第 5 条：判据按钮里的 ψ 与 Y 都没有斜体）。
+   * ★ 按钮上的字要跟着 mode 走，而 mode 有三条改动路径（界面点击、智能体动作、
+   *   restoreState 回退），在 updateViewer 里每次重算时同步一次最省事、也不会漏。
+   */
+  let lastPsiCritMode = null;
+  function syncPsiCritLabels() {
+    if (!els.psiSeg || state.mode === lastPsiCritMode) return;
+    lastPsiCritMode = state.mode;
+    const btns = els.psiSeg.querySelectorAll('.seg-btn');
+    if (btns.length < 2) return;
+    const cx = (state.mode === 'complex');
+    btns[0].innerHTML = '|<i>ψ</i>|²';
+    btns[0].title = '画 |ψ|² 的等值面。函数处处非负，没有正负可谈 —— 曲面为**纯色**。';
+    btns[1].innerHTML = cx ? '|<i>ψ</i>|' : '<i>ψ</i>';
+    btns[1].title = cx
+      ? '画 |ψ| 的等值面。复函数的非平方判据是**模**，取模后相位信息消失 —— 曲面为纯色。'
+      : '画 ψ 本身的等值面（有正负）。实解在此**双色**（按 ψ 的正负），'
+        + '径向与角度节点的符号翻转都会显示出来。';
   }
 
   /**
@@ -233,9 +275,19 @@
     state.viewTarget = activeValue('#targetSeg', 'data-target') || 'wave';
     state.mode = activeValue('#modeSeg', 'data-mode') || 'real';
     state.renderMode = activeValue('#renderSeg', 'data-mode') || 'surface';
-    state.colorMode = activeValue('#colorSeg', 'data-mode') || 'orbital';
     state.level = levelFromSlider(+els.levelSlider.value);
     state.psiCrit = activeValue('#psiSeg', 'data-mode') || 'psi2';
+    // ★ 第 2 条：**电子云只在判据取 |ψ|² 时有意义**（"电子云"就是按 |ψ|² 重要性采样出的
+    //   点云，它的概念依附于 |ψ|²）。判据取 ψ 时没有"电子云"可言 —— 拉回等值面，
+    //   并把控件也切过去，免得 DOM 显示"电子云"而画面画的是等值面。
+    //   ★ 只切控件、不回写判据；用户切回 |ψ|² 时按"默认等值面"呈现（那一组会重新出现）。
+    //   ⚠️ **必须放在 state.psiCrit 读进来之后**：放在 renderMode 那一行下面时，
+    //      state.psiCrit 还是上一轮的旧值，判据刚切到 ψ 的这一帧不会回落
+    //      （实测就是如此：判据已是 ψ，渲染方式仍停在 points）。
+    if (state.psiCrit === 'psi' && state.renderMode !== 'surface') {
+      state.renderMode = 'surface';
+      setSeg('#renderSeg', 'data-mode', 'surface');
+    }
     state.pointCount = +els.pointCountSlider.value;
     state.plane = activeValue('#planeSeg', 'data-p') || 'xz';
     state.sectionMode = activeValue('#phaseSeg', 'data-mode') || 'intensity';
@@ -265,25 +317,15 @@
     //   所以按钮的点击靠事件委托绑定，见 init 里的 psiHint 监听）。内容全是自产数字，
     //   无注入面。
     els.psiHint.innerHTML = ((state.psiCrit === 'psi2')
-      ? '阈值＝占 |ψ|² 峰值的比例（' + pct(f) + ' |ψ|² ⟺ ' + pct(Math.sqrt(f)) + ' |ψ|）'
-      : '阈值＝占 |ψ| 峰值的比例（' + pct(f) + ' |ψ| ⟺ ' + pct(f * f) + ' |ψ|²）')
+      ? '阈值＝占 |<i>ψ</i>|² 峰值的比例（' + pct(f) + ' |<i>ψ</i>|² ⟺ ' + pct(Math.sqrt(f)) + ' |<i>ψ</i>|）'
+      : '阈值＝占 |<i>ψ</i>| 峰值的比例（' + pct(f) + ' |<i>ψ</i>| ⟺ ' + pct(f * f) + ' |<i>ψ</i>|²）')
       + '　· 本轨道推荐 <b>' + pct(rec) + '</b>' + (atFloor ? '（已到下限）' : '')
       + '<button type="button" class="link-btn" id="levelRecBtn">采用</button>';
 
-    // ★ l = 0（s 轨道）时角度函数是常数、ψ 的符号在整块空间恒定，相位色会退化成一整块
-    //   同色（s 蓝变纯红），既无信息又容易让学生以为"红色有特殊含义"。故此时禁用相位色，
-    //   并把当前选择拉回支壳层色。★ state 与 DOM 必须**同时**改，否则下一帧
-    //   readFromControls 会从 DOM 读回 phase。
-    const phaseBtn = document.querySelector('#colorSeg .seg-btn[data-mode="phase"]');
-    if (phaseBtn) {
-      const noPhase = (state.l === 0);
-      phaseBtn.disabled = noPhase;
-      if (noPhase && state.colorMode === 'phase') {
-        state.colorMode = 'orbital';
-        const orbBtn = document.querySelector('#colorSeg .seg-btn[data-mode="orbital"]');
-        if (orbBtn) { orbBtn.classList.add('active'); phaseBtn.classList.remove('active'); }
-      }
-    }
+    // ★ 这里原先有一段"l = 0 时禁用相位色并把选择拉回支壳层色"。开关删除后这段
+    //   没有存在余地了：着色由 deriveColorMode 推导，判据非平方 + 实数解就是双色，
+    //   s 轨道也不例外 —— 1s 的 ψ 处处为正，按 sign 着色自然得到纯色；
+    //   2s/3s 有径向节点、确实变号，那时内外壳异色是物理，不该被压掉。
   }
 
   // ---- 等值面阈值：对数刻度 + 按轨道推荐值 --------------------------------
@@ -435,11 +477,12 @@
     //   'wave'      画 ψ 的等值面（标量场 + marching tetrahedra）或粒子云。
     //   所以这里用 if/else 而不是在渲染模式里再加一个维度。
     const sph = (state.viewTarget === 'spherical');
+    // 着色由判据推导（见 deriveColorMode），本函数内算一次传下去。
+    const cm = deriveColorMode();
     if (sph) {
       // 球谐曲面是**纯角度函数**，与 Z 无关 —— 所以这一档不传 Z，也不需要传。
-      // ★ 但着色要传（第 6 条）：这一档原先把配色写死（实数解必然双色、复数解必然彩虹），
-      //   于是"复数解默认纯色"在球谐档无从实现，学生也找不到切换入口。
-      Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich, state.colorMode);
+      // ★ 着色仍要传：实数解取 Y 判据时按 sign(Y) 双色，其余（含 |Y|²、含一切复数解）纯色。
+      Orbit3D.updateAngular(state.l, state.m, state.mode, state.angWhich, cm);
     } else if (state.renderMode === 'surface') {
       const key = currentFieldKey();
       if (key !== lastFieldKey) {
@@ -448,31 +491,48 @@
         const preview = !!window.__ORBIT_PREVIEW__;
         const gridRes = preview ? (isMobile ? 30 : 40) : (isMobile ? 46 : 68);
         Orbit3D.updateSurface(state.n, state.l, state.m, state.mode, gridRes, state.level,
-          state.colorMode, state.psiCrit, state.terms, state.relPhase, state.Z);
+          cm, state.psiCrit, state.terms, state.relPhase, state.Z);
         lastFieldKey = key;
       } else {
-        // 仅阈值/着色变化：复用已缓存的标量场与网格
-        Orbit3D.setSurfaceLevel(state.level, state.colorMode, state.psiCrit);
+        // 仅阈值/着色变化：复用已缓存的标量场与网格。
+        // ★ 判据变化会走上面那条重建路径（currentFieldKey 含 psiCrit），而判据一变
+        //   deriveColorMode 往往也跟着变 —— 两条路径都要把新色传下去，否则会出现
+        //   "判据改了、面重建了，颜色还是上一套"。
+        Orbit3D.setSurfaceLevel(state.level, cm, state.psiCrit);
       }
     } else {
       const cloud = (state.terms && state.terms.length)
-        ? OM.samplePointsSuperposition(state.terms, state.pointCount, state.colorMode,
+        ? OM.samplePointsSuperposition(state.terms, state.pointCount, cm,
             state.terms.map(function (t, i) { return i * state.relPhase; }), state.Z)
-        : OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, state.colorMode, state.Z);
+        : OM.samplePoints(state.n, state.l, state.m, state.mode, state.pointCount, cm, state.Z);
       Orbit3D.updateCloud(cloud);
     }
     Orbit3D.setVisibility(sph ? 'spherical' : state.renderMode);
     Orbit3D.setAutoRotate($('#autoRotate').checked);
     // 右栏参数组：按「档位 + 渲染模式」显示当下真正起作用的那一组，其余收起来。
-    // ★ 球谐档要收起「三维渲染」与「三维着色」两整组 —— 球谐是解析曲面，没有
-    //   粒子云/等值面之分，配色也由实/复函数决定。留着它们就会出现"点了没反应"。
     els.yCritSet.style.display       = sph ? '' : 'none';
-    document.getElementById('renderGroup').style.display = sph ? 'none' : '';
-    // ★ 「三维着色」**不再**在球谐档隐藏（第 6 条）：球谐曲面同样要选配色
-    //   （支壳层单色 / 实数解的正负双色 / 复数解的相位彩虹），复数解的默认也在这里生效。
-    //   原先整组收起，等于"复数解默认纯色"这条要求在这一档根本没有实现的地方。
-    // ★ 第 8 条那行「为什么这一档没有支壳层色」的说明（#sphColorHint）已按用户第 5 条删除：
-    //   两段解释在面板里占的篇幅与实际帮助不成比例，界面留白更好。
+    // ★ 第 2 条：「三维渲染」（电子云 / 等值面）只在判据取 |ψ|² 时出现。
+    //   电子云是**按 |ψ|² 重要性采样出的点云**，这个概念依附于 |ψ|² —— 判据取 ψ 时
+    //   留着它既没有对应的画面，也会和 readFromControls 里的强制回落打架。
+    document.getElementById('renderGroup').style.display =
+      (sph || state.psiCrit === 'psi') ? 'none' : '';
+    // 「等值面判据」整组只在波函数档出现（球谐档有自己的 #yCritSet，两者是同一个
+    // 概念的两个化身，值域不同）。
+    // ★ 它**不能**再挂在 #levelSet 里（原先如此）：#levelSet 只在"等值面"渲染模式下
+    //   显示，于是电子云档下判据按钮不可见 —— 而判据恰恰是电子云颜色的来源，
+    //   等于让一个看不见的选项决定可见画面。提到这一层后两档都能选。
+    els.psiCritSet.style.display     = sph ? 'none' : '';
+    // 截面卡只在波函数档出现（第 8 条）：它的采样源恒是**含径向的完整 ψ**，
+    // 而球谐档的三维画的是 Y —— 只改标签会变成"写着 Y、画的是 ψ"，收起更诚实。
+    // ★ 顺带把它的浮窗也关掉：浮窗是独立于卡片存在的一层，卡片藏了它却还开着，
+    //   就等于把那张"图文不符"的图留在屏幕上（正是这一条要避免的）。
+    if (els.sectionCard) els.sectionCard.style.display = sph ? 'none' : '';
+    if (sph && window.ChartOverlay && window.ChartOverlay.isOpen
+        && window.ChartOverlay.target() === 'section') {
+      window.ChartOverlay.close();
+    }
+    // 判据按钮的文案随实/复解变（第 4 条：实解不写绝对值符号）
+    syncPsiCritLabels();
     if (sph) syncYCritHint();
     els.levelSet.style.display = (!sph && state.renderMode === 'surface') ? '' : 'none';
     els.pointSet.style.display = (!sph && state.renderMode === 'points') ? '' : 'none';
@@ -550,11 +610,12 @@
     Charts.drawRadial(els.radialChart, rt.n, rt.l, state.radial, state.Z);
     // Θ/Φ 卡片画的是 Y 的**两个因子**（不随 |Y|/|Y|² 判据变 —— 判据改的是三维里
     // 那张曲面的轮廓，而"Y = Θ·Φ"这个分解关系与判据无关）。
-    // ★ 但它的**着色**要跟着 state.colorMode 走（第 7 条）：原先这张卡自作主张
-    //   "是复解就彩虹"，于是三维选了「支壳层色」而这里仍是彩虹，两处对不上。
-    Charts.drawThetaPhi(els.thetaPhiChart, rt.l, rt.m, rt.mode, state.colorMode);
+    // ★ 它的**着色**跟着判据派生（见 deriveColorMode），与三维视图同源：
+    //   原先这张卡自作主张"是复解就彩虹"，而三维可能选的是支壳层色，两处对不上。
+    Charts.drawThetaPhi(els.thetaPhiChart, rt.l, rt.m, rt.mode, deriveColorMode());
     Charts.drawSection(els.sectionChart, st.n, st.l, st.m, st.mode, state.plane, state.sectionMode, state.Z,
-      (st.kind === 'super') ? st.terms : null, state.relPhase);
+      (st.kind === 'super') ? st.terms : null, state.relPhase,
+      state.psiCrit, state.level);   // 后两个参数供「等值面对应的那条线」换算阈值
     // 换轨道 / 换平面都会改变"这一面是不是节面"，光标与触摸策略要跟着变（第 11 条）
     syncSectionUI();
   }
@@ -566,7 +627,8 @@
   function redrawSection() {
     const st = chartTermState(true);
     Charts.drawSection(els.sectionChart, st.n, st.l, st.m, st.mode, state.plane, state.sectionMode, state.Z,
-      (st.kind === 'super') ? st.terms : null, state.relPhase);
+      (st.kind === 'super') ? st.terms : null, state.relPhase,
+      state.psiCrit, state.level);   // 后两个参数供「等值面对应的那条线」换算阈值
     // ★ 节面上不显示「复位缩放」小控件 —— 那上面本来就没有可缩放的内容（第 11 条）
     const chip = $('#sectionResetChip');
     const s = Charts.sectionState();
@@ -695,7 +757,9 @@
   }
 
   // 公式高亮状态（由 agent 的 setFormulaHighlight 动作驱动）
-  // 'R' 径向 | 'Y' 角度 | 'L' 拉盖尔 | 'P' 勒让德 | 'N' 归一化常数 | null 无
+  // 'R' 径向 | 'F' 方位角 Φ | 'T' 极角 Θ | 'P' 勒让德多项式 | 'Y' 角度部分 | null 无
+  // ★ 原先还有 'L'（拉盖尔）与 'N'（归一化常数）—— 第 8 条把这两个量**直接代入**了
+  //   R 行，公式里不再有独立的 N_{n,l} 与 L_k 片段，这两个高亮部位随之取消。
   let formulaHighlight = null;
 
   function updateFormula() {
@@ -705,7 +769,7 @@
       ? Formula.buildSuperposition(state.terms) : null;
     const f = sup || Formula.buildPsi(state.n, state.l, state.m, state.mode, { highlight: formulaHighlight });
     els.formulaTitle.innerHTML = f.titleHtml || f.title;   // 用 HTML 版：实轨道名要真下标（第 2 条）
-    els.formulaNote.textContent = f.note;
+    els.formulaNote.innerHTML = f.note;   // ★ innerHTML：说明里的变量要斜体（见 buildNote）
     // trust:true 是 \htmlClass 生效的前提（用于按项高亮）
     katex.render(f.latex, els.formulaBox, { throwOnError: false, displayMode: true, trust: true });
     if (sup) {
@@ -716,25 +780,19 @@
       els.modeBadge.textContent = '叠加态';
       return;
     }
-    // 右上角轨道标签。
-    // ★ 实档**不写 m**：m 是复球谐 Y_l^m 的本征值指标，而实解由 ±m 组合而来、
-    //   不再是 L̂z 的本征函数 —— 把它贴在实解上等于用一个它已不拥有的量子数命名。
-    //   实档直接显示该实轨道的名字（3p_x 显示成 "3p" + 下标 x）；l≥4 没有惯用名，
-    //   显示直角坐标多项式。复档保留 m 下标（在那里 m 名副其实）。
-    const sub = OM.SUBSHELL[Math.min(state.l, OM.SUBSHELL.length - 1)];
-    if (state.mode === 'real') {
-      // 有惯用名时名字里已含支壳层字母（p_z、d_{xy}），前缀只写 n，得 3p_z；
-      // l≥4 的多项式不含字母，才需要 n + 支壳层字母，得 "6h 3xyz³−xyzr²"。
-      const named = !!Formula.realOrbitalName(state.l, state.m);
-      els.orbitTitle.innerHTML = state.n +
-        (named ? '' : sub + ' ') +
-        // poly 类只给 l≥4 的长多项式：那是"表达式"不是"名字"，用 .orbit-real 的 1em 会撑开顶栏
-        '<span class="orbit-real' + (named ? '' : ' poly') + '">' +
-        Formula.realOrbitalLabelHtml(state.l, state.m) + '</span>';
-    } else {
-      els.orbitTitle.innerHTML = state.n + sub + '<sub>' + f.mLabel + '</sub>';
-    }
-    els.modeBadge.textContent = f.modeName;
+    // 右上角：显示**当前正在看的那个数学对象的符号**，而不是轨道名。
+    // ★ 为什么必须分档：球谐档三维里画的是 Y（纯角度函数，与 n 无关），
+    //   波函数档画的才是 ψ。原先两档都写轨道名（`3d_z²` / `3p_{m=+2}`）——
+    //   名字没交代"看的是哪个量"，于是出现"三维里画的是 Y、顶栏却写 3p_z"的图文不符。
+    //   符号的唯一构造出口在 Formula.symbolHtml（由它决定 n 该不该出现、
+    //   多级下标怎么套、复解连写还是实解用轨道名）。
+    els.orbitTitle.innerHTML = Formula.symbolHtml(
+      state.n, state.l, state.m, state.mode, state.viewTarget);
+    // 徽标也跟着档位走：顶栏写着 Y 而徽标写"波函数实数解"是同一类图文不符。
+    // 「空间波函数」与面板上那个按钮**逐字一致**（第 3 条改的名）—— 同一件事两处叫法不同，
+    // 正是这一批要清掉的那类毛病。
+    els.modeBadge.textContent = (state.viewTarget === 'spherical' ? '球谐' : '空间波函数') +
+      (state.mode === 'real' ? '实数解' : '复数解');
   }
 
   // ---- 节流 ---------------------------------------------------------------
@@ -753,7 +811,7 @@
    *
    * ★ 两个实现细节：
    *   ① `toggle` 事件**不冒泡**，没法用事件委托，只能给每个折叠区各绑一次
-   *      （静态的 #colorZone 在这里绑，动态建的 #advZone 由 state-editor.js 建完后调本函数）；
+   *      （静态的在这里绑，动态建的 #advZone 由 state-editor.js 建完后调本函数）；
    *   ② 必须等下一帧再量尺寸 —— 展开动作本身要触发布局，当帧量到的还是展开前的旧高度。
    */
   function bindAdvScroll(d) {
@@ -780,10 +838,12 @@
   function syncZZoneSummary() {
     const sm = document.querySelector('#zZone summary');
     if (!sm) return;
-    const txt = '核电荷数 Z = ' + (state.Z || 1);
+    const z = (state.Z || 1);
+    const txt = '核电荷数 Z = ' + z;
     if (txt === lastZSummary) return;      // recompute 走得很频繁，值没变就别碰 DOM
     lastZSummary = txt;
-    sm.textContent = txt;
+    // ★ 变量 Z 用斜体（与面板上「核电荷数 Z」那个 label 同一口径）；数字不斜。
+    sm.innerHTML = '核电荷数 <i>Z</i> = ' + z;
   }
 
   // ---- 事件绑定 -----------------------------------------------------------
@@ -857,18 +917,12 @@
       });
     }
     // 单选分段
-    // 波函数形式：切换时要**顺带重置着色**为该档的默认（第 19 条），
-    // 所以不能走通用 bindSeg —— 那会在 readFromControls 之后才改控件，读到旧值。
-    $('#modeSeg').addEventListener('click', (e) => {
-      const btn = e.target.closest('.seg-btn');
-      if (!btn) return;
-      setActive(btn);
-      applyModeDefaultColor();          // 必须在 readFromControls 之前
-      readFromControls();
-      recompute();
-    });
+    // ★ 波函数形式（实/复解）现在走通用 bindSeg 就行：着色不再是独立开关，
+    //   而是由判据推导（见 deriveColorMode）—— 换了实/复解，recompute 里
+    //   updateViewer 自然会以新的派生色重画。原先这里要手工"重置为该档默认色"
+    //   并且必须抢在 readFromControls 之前，那套顺序约束随开关一起消失了。
+    bindSeg('#modeSeg', 'data-mode');
     bindSeg('#renderSeg', 'data-mode');
-    bindSeg('#colorSeg', 'data-mode');
     bindSeg('#psiSeg', 'data-mode');
     bindSeg('#phaseSeg', 'data-mode');
     bindSeg('#planeSeg', 'data-p');
@@ -1010,7 +1064,6 @@
 
       silentSeg('#modeSeg', 'data-mode', s.wavefunction);
       silentSeg('#renderSeg', 'data-mode', s.render);
-      silentSeg('#colorSeg', 'data-mode', s.color);
       silentSeg('#psiSeg', 'data-mode', s.psiCriterion);
       silentSeg('#planeSeg', 'data-p', s.plane);
       silentSeg('#phaseSeg', 'data-mode', s.sectionMode);
@@ -1069,20 +1122,8 @@
       setSlider(els.zSlider, v);
       return true;
     },
-    setWavefunctionMode(p) {
-      const ok = setSeg('#modeSeg', 'data-mode', p.mode);
-      // ★ 与界面点按钮同一条语义：换档就把着色重置为该档默认（第 19 条）。
-      //   若智能体随后还要指定着色，再调 setColorMode 即可 —— 它排在后、以后者为准。
-      if (ok) applyModeDefaultColor();
-      return ok;
-    },
+    setWavefunctionMode(p) { return setSeg('#modeSeg', 'data-mode', p.mode); },
     setRenderMode(p) { return setSeg('#renderSeg', 'data-mode', p.mode); },
-    setColorMode(p) {
-      // ★ l = 0（s 轨道）时角度函数是常数、ψ 的符号在整块空间恒定，相位色退化成
-      //   一整块同色（s 蓝变纯红）—— 无信息且易误解，故拒绝（界面上该按钮也置灰）
-      if (p.mode === 'phase' && state.l === 0) return false;
-      return setSeg('#colorSeg', 'data-mode', p.mode);
-    },
     setPsiCriterion(p) { return setSeg('#psiSeg', 'data-mode', p.criterion); },
     setIsosurfaceLevel(p) {
       // ★ 滑块现在是 0–1000 的**对数刻度**（见 levelFromSlider），必须换算 ——
@@ -1200,7 +1241,6 @@
         viewTarget: state.viewTarget,
         wavefunction: state.mode,
         render: state.renderMode,
-        color: state.colorMode,
         psiCriterion: state.psiCrit,
         levelFraction: state.level,
         pointCount: state.pointCount,
@@ -1256,7 +1296,14 @@
         return true;
       }
       if (target === 'section') {
-        Charts.drawSection(canvas, state.n, state.l, state.m, state.mode, state.plane, state.sectionMode, state.Z);
+        // ★ 必须与卡片路径（updateCharts）用**同一套参数**。原先这里直接传 state.n/l/m
+        //   且**漏掉了 terms 与 relPhase**，于是有叠加态时浮窗里画的是纯态、卡片上画的
+        //   是叠加态 —— 同一张图在两个地方长得不一样，而浮窗恰恰是"放大给学生看"的那份。
+        //   chartTermState 是"该画哪一份"的唯一出口，两条路径都走它，别再各写一套。
+        const st = chartTermState(true);
+        Charts.drawSection(canvas, st.n, st.l, st.m, st.mode, state.plane, state.sectionMode, state.Z,
+          (st.kind === 'super') ? st.terms : null, state.relPhase,
+      state.psiCrit, state.level);   // 后两个参数供「等值面对应的那条线」换算阈值
         return true;
       }
       // 球谐曲面不是图表（它是主三维视图本身）；下面那张 Θ/Φ 卡片倒是普通 2D canvas，
@@ -1296,13 +1343,10 @@
     Orbit3D.init(els.viewer);
     bindEvent();
     // 进阶折叠区：展开后把新内容滚进可视区（第 2 条）。
-    // ★ 这里管**静态**的那两个（核电荷数、三维着色）；「量子态」那个是 state-editor.js
-    //   动态建的，由它建完后自己调 OrbitApp.bindAdvScroll —— toggle 不冒泡，只能逐个绑。
-    bindAdvScroll(document.getElementById('colorZone'));
+    // ★ 这里管**静态**的那个（核电荷数）；「量子态」是 state-editor.js 动态建的，
+    //   由它建完后自己调 OrbitApp.bindAdvScroll —— toggle 不冒泡，只能逐个绑。
+    //   （原先还绑过一个「三维着色」折叠区，那个开关已按用户第 5 条删除。）
     bindAdvScroll(document.getElementById('zZone'));
-    // 记下初始档位 —— 这样 applyModeDefaultColor 只在**真的换档**时才重置着色，
-    // 不会在启动时把 HTML 里写好的初始选中项又改一遍。
-    lastModeForColor = activeValue('#modeSeg', 'data-mode') || 'real';
     // 初始尺寸需要等布局稳定（slider 在 style 之后写回，重新布局）
     requestAnimationFrame(() => {
       recompute();

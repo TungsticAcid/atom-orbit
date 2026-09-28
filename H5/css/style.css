@@ -58,25 +58,37 @@ html, body {
   font-family: Georgia, "Times New Roman", serif;
   font-size: 22px; font-weight: 700; color: var(--accent);
   min-width: 78px; text-align: right;
+  /* ★ 第 3 条「右上角数字太小」的**真因**不在字号，在字形：
+       Georgia 是这一串字体里唯一用**旧式数字**（old-style figures）的 ——
+       实测字形包围盒（unitsPerEm 2048）：数字 1/2/0 的 yMax=1105（0.54em，只有 x 高度），
+       3/4/5 还带 yMin=−365 沉到基线以下；而同字体的 d/f/h 上伸到 1548（0.76em）。
+       于是 "3d" 里数字只有字母的约 71%，"3 个分量"（旁边是汉字，几乎占满整个 em）
+       看起来更是只有一半高。CSS 里**没有任何规则**缩小过它。
+     Georgia 自带 lnum 特性（GSUB 里已确认存在），这一行就能把它切成全高数字。 */
+  font-variant-numeric: lining-nums;
 }
 /* m 下标（仅复解档的 m=+1）与实轨道名（p_x、d_xy…）
    ★ 第 3 条：实解档的轨道名要与前面的 n **同色同号**。
      复解档渲染成 `3p<sub>m=0</sub>` —— `3p` 同为 22px 强调色，只有下标小；而实解档
      把 `p_x` 单独缩到 0.72em 并改成正文色，于是"3"与"p_x"看着像两个不相干的词，
      而这恰恰是**实数解档唯一的名字**。现在 font-size:1em + color:inherit 之后，
-     实解档的 `3p` 与复解档的 `3p` 逐像素一致，`x` 由下面 .orbit-title sub 的 0.6em
-     统一管 —— 不再单写一条 .orbit-real sub 去覆盖它（那条正是两档下标大小不一的来源）。 */
-.orbit-title sub { font-size: 0.6em; font-weight: 400; }
+     实解档的 `3p` 与复解档的 `3p` 逐像素一致，`x` 由下面 .orbit-title sub 的 0.73em
+     统一管 —— 不再单写一条 .orbit-real sub 去覆盖它（那条正是两档下标大小不一的来源）。
+   ★ 0.73em 是配合**多级下标**定的：顶栏符号现在形如 ψ<sub>3d<sub>z²</sub></sub>，
+     sub 会逐层复合，0.73² ≈ 0.53 —— 22px → 16px → 12px，两级都还读得出来。
+     原先的 0.6em 是给"单级下标"定的，套两层会掉到 0.36em（8px），二级下标就糊了。 */
+.orbit-title sub { font-size: 0.73em; font-weight: 400; }
 .orbit-title .orbit-real {
   font-size: 1em; font-weight: 400; color: inherit;
-  /* ★ 不能再留 margin-left：复解档的 `3p` 是**同一个文本节点**、字形紧贴，
-     而实解档的 `p` 在这个 span 里 —— 加上 margin 就变成 `3 p_x`，两档一眼能看出不一样。
-     需要间隔的场合（"叠加态 3 个分量"、l≥4 的 "6h 多项式"）由调用方在文本里写空格。 */
+  /* ★ 不能再留 margin-left：`.orbit-real` 里的字与外面的字字形要紧贴，
+     加上 margin 就变成 `叠加态 3 个分量` 里多出一个空档。
+     需要间隔的场合由调用方在文本里写空格。 */
   white-space: nowrap;
 }
-/* l≥4 没有惯用名，名字退化成直角坐标多项式（6h 那一组，最长 30 字符）——
-   1em 会把顶栏撑开，故单独保持小号：它是个"表达式"而不是"名字"，小一号正合适。 */
-.orbit-title .orbit-real.poly { font-size: 0.72em; }
+/* ★ 原先这里还有一条 `.orbit-title .orbit-real.poly`（0.72em），给 l≥4 那种
+   "6h 3xyz³−xyzr²" 的长多项式用的。顶栏改成显示**符号**之后（ψ_{6,5,f(r)}），
+   那个多项式不再进顶栏，这条规则就没有消费者了 —— 删掉，
+   免得日后有人照着它去调一个已经不存在的元素。 */
 .badge {
   background: linear-gradient(135deg, #2b3d6b, #3b2f6b);
   border: 1px solid #4a5a96;
@@ -288,6 +300,10 @@ input[type="range"]::-moz-range-thumb {
 
 /* ---------- 分段控件（按钮组） ---------- */
 .seg { display: inline-flex; background: var(--active); border-radius: 10px; padding: 3px; gap: 3px; }
+/* ★ 第 1 条：面板上这几组「整行选一个」的按钮要**居中**（实轨道 / 视图对象 /
+   波函数形式 / 三维渲染）。它们是独占一行的，左对齐时右侧空出一大片，
+   视觉上像是没排完版。组内的分段按钮（判据、截面平面…）在 .row 里右对齐，不受影响。 */
+.seg.center { display: flex; width: fit-content; margin: 0 auto; }
 .seg.small .seg-btn { font-size: 12px; padding: 5px 10px; }
 /* 需要换行的分段组（实轨道选择器：l=5 时有 11 个选项，一行排不下） */
 .seg.wrap { display: flex; flex-wrap: wrap; }

@@ -1172,7 +1172,7 @@ window.Panel = (function () {
   const ACTION_LABEL = {
     setNuclearCharge: '设置核电荷数 Z', setQuantumNumbers: '切换轨道', sweepQuantumNumber: '连续扫描量子数',
     setWavefunctionMode: '切换波函数实数解 / 复数解', setRenderMode: '切换渲染方式',
-    setColorMode: '切换着色', setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
+    setPsiCriterion: '切换 |ψ| / |ψ|² 判据',
     setIsosurfaceLevel: '调整等值面阈值', animateIsosurfaceLevel: '扫描等值面阈值',
     showRadial: '切换径向曲线', highlightRadialFeature: '标注峰值 / 节点（可同时）',
     linkRadialTo3D: '画出参考球（把半径与三维对应）',

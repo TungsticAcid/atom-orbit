@@ -49,43 +49,71 @@ window.StateEditor = (function () {
     },
     // ★ sp³ 的 4 个等价杂化轨道：s 系数恒为 +½，三个 p 取正四面体的四个方向
     'sp3-1': {
-      label: 'sp³-1', terms: sp3(1, 1, 1),
+      label: 'sp³-1', terms: sp3(1, 1, 1), hybrid: true,
       note: '$\\psi = \\frac{1}{2}(s + p_x + p_y + p_z)$。四个 sp³ 完全等价，指向**正四面体**，两两夹角 109.5°。',
     },
     'sp3-2': {
-      label: 'sp³-2', terms: sp3(1, -1, -1),
+      label: 'sp³-2', terms: sp3(1, -1, -1), hybrid: true,
       note: '$\\psi = \\frac{1}{2}(s + p_x - p_y - p_z)$。与 sp³-1 等价且正交，指向另一个顶点。',
     },
     'sp3-3': {
-      label: 'sp³-3', terms: sp3(-1, 1, -1),
+      label: 'sp³-3', terms: sp3(-1, 1, -1), hybrid: true,
       note: '$\\psi = \\frac{1}{2}(s - p_x + p_y - p_z)$。与 sp³-1 等价且正交，指向第三个顶点。',
     },
     'sp3-4': {
-      label: 'sp³-4', terms: sp3(-1, -1, 1),
+      label: 'sp³-4', terms: sp3(-1, -1, 1), hybrid: true,
       note: '$\\psi = \\frac{1}{2}(s - p_x - p_y + p_z)$。与 sp³-1 等价且正交，指向第四个顶点。',
     },
     // sp²：三个轨道共面、两两 120°（只给一个看不出"共面"，故给全）
     'sp2-1': {
-      label: 'sp²-1', terms: sp2(0),
+      label: 'sp²-1', terms: sp2(0), hybrid: true,
       note: '$\\psi = \\frac{1}{\\sqrt{3}}\\,s + \\sqrt{\\frac{2}{3}}\\,p_x$。三个等价轨道之一，**120° 共面**。',
     },
     'sp2-2': {
-      label: 'sp²-2', terms: sp2(1),
+      label: 'sp²-2', terms: sp2(1), hybrid: true,
       note: '$\\psi = \\frac{1}{\\sqrt{3}}\\,s - \\frac{1}{\\sqrt{6}}\\,p_x + \\frac{1}{\\sqrt{2}}\\,p_y$。由 sp²-1 绕 $z$ 轴转 120° 得到。',
     },
     'sp2-3': {
-      label: 'sp²-3', terms: sp2(2),
+      label: 'sp²-3', terms: sp2(2), hybrid: true,
       note: '$\\psi = \\frac{1}{\\sqrt{3}}\\,s - \\frac{1}{\\sqrt{6}}\\,p_x - \\frac{1}{\\sqrt{2}}\\,p_y$。由 sp²-1 绕 $z$ 轴转 240° 得到。',
     },
     'sp-1': {
-      label: 'sp-1', terms: sp(1),
+      label: 'sp-1', terms: sp(1), hybrid: true,
       note: '$\\psi = \\frac{1}{\\sqrt{2}}(s + p_z)$。两个等价轨道之一，**180°** 直线型。',
     },
     'sp-2': {
-      label: 'sp-2', terms: sp(-1),
+      label: 'sp-2', terms: sp(-1), hybrid: true,
       note: '$\\psi = \\frac{1}{\\sqrt{2}}(s - p_z)$。另一个 sp 轨道，与 sp-1 正交、恰好反向。',
     },
   };
+
+  // ---------------------------------------------------------------------------
+  // 杂化轨道的**隐藏开关**（用户第 9 条："先隐藏掉杂化轨道功能，其中暂时有不少问题。
+  // 包括智能体，暂不提供该接口，之后再更新。"）
+  //
+  // ★ 做法是**标记 + 过滤**，不是物理删除：9 个杂化预设仍留在 PRESETS 里（连
+  //   sp3/sp2/sp 三个生成器一起），日后要恢复只需把过滤撤掉。
+  //
+  // ★ 过滤必须**三处同时**做，少一处就等于没藏住：
+  //   ① render()      —— 界面不列按钮
+  //   ② matchPreset() —— 免得残留的 state.preset 匹配到一个看不见的预设
+  //   ③ scene-bridge 的 listActions()（经 visibleKeys 取 availableKeys）——
+  //      这是最容易漏的一处：只藏界面的话，模型仍能从工具清单里读到 'sp-1'
+  //      并照着调 loadPreset，validate 也会放行。
+  // ---------------------------------------------------------------------------
+
+  /** 是否为杂化预设（sp / sp² / sp³ 共 9 个） */
+  function isHybrid(p) {
+    return !!(p && p.hybrid);
+  }
+
+  /**
+   * 内置预设里**当前可见**的键。界面按钮、预设匹配、智能体工具清单**都从这里取** ——
+   * 单一出口，避免"藏了界面、漏了接口"。
+   */
+  function visibleKeys() {
+    return Object.keys(PRESETS).filter(function (k) { return !isHybrid(PRESETS[k]); });
+  }
 
   /**
    * 生成一个 sp³ 杂化轨道：ψ = ½(s + sₓ·p_x + s_y·p_y + s_z·p_z)。
@@ -261,7 +289,8 @@ window.StateEditor = (function () {
 
     // 预设
     const row = el('div', { class: 'se-presets' });
-    Object.keys(PRESETS).forEach(function (k) {
+    // ★ visibleKeys()：杂化预设已隐藏（见文件上方"隐藏开关"的说明），不列按钮
+    visibleKeys().forEach(function (k) {
       const p = PRESETS[k];
       const wrap = el('span', { class: 'se-chipwrap' });
       const b = el('button', {
@@ -593,12 +622,24 @@ window.StateEditor = (function () {
     if (!on) d.open = false;                 // 收起，免得切回来时突然弹开
   }
 
+  /**
+   * 整个「进阶：量子态」板块**暂时隐藏**（用户第 4 条：与杂化轨道板块一起隐藏）。
+   *
+   * ★ 与杂化同一套做法 —— **只隐入口，代码全部保留**：预设表、叠加态编辑器的实现、
+   *   智能体侧的动作定义都原样留着，日后把这里改回 false 即可恢复
+   *   （智能体侧同时要清空 scene-bridge 的 HIDDEN_ACTIONS）。
+   * ★ 隐的是**挂载**而不是显示：根本不建这个 <details>，就不存在"展开后露出半截"、
+   *   "键盘还能 Tab 进去"这类漏网的操作路径 —— 而"设成 display:none"仍然留着它们。
+   */
+  const EDITOR_HIDDEN = true;
+
   function build() {
+    if (EDITOR_HIDDEN) return;   // 整块不挂载（见上）
     if (!document.getElementById('advZone')) {
       const panel = document.querySelector('.panel');
       if (!panel) return;
       const d = el('details', { class: 'adv-zone', id: 'advZone' });
-      d.appendChild(el('summary', { class: 'adv-summary', text: '进阶：量子态（叠加 / 杂化 / 力学量）' }));
+      d.appendChild(el('summary', { class: 'adv-summary', text: '进阶：量子态（叠加 / 力学量）' }));
       const body = el('div', { class: 'adv-body' });
       body.appendChild(el('div', { id: 'stateEditor' }));
       d.appendChild(body);
@@ -607,11 +648,10 @@ window.StateEditor = (function () {
       //   第二个 flex 子项时，这块**展开后会超出面板高度被裁掉**；挂进 .panel-body
       //   才与其它控件共用同一条滚动条。
       const pb = panel.querySelector('.panel-body') || panel;
-      // ★ 第 1 条：本折叠区要排在「进阶：三维着色」**之前**（也就是让三维着色在下方）。
-      //   那个是 index.html 里的静态 details，带 id="colorZone"；插到它前面即可。
-      //   找不到就退回追加到末尾 —— HTML 若改了名，宁可顺序不对也不该整块消失。
-      const colorZone = pb.querySelector('#colorZone');
-      if (colorZone) pb.insertBefore(d, colorZone); else pb.appendChild(d);
+      // ★ 追加到面板末尾。原先这里要 insertBefore 到静态的「进阶：三维着色」
+      //   （#colorZone）之前，好让量子态排在它上方 —— 那个折叠区已按用户第 5 条
+      //   整块删除，于是本折叠区就成了面板里唯一的「进阶」区，直接追加即可。
+      pb.appendChild(d);
       // ★ 第 2 条：展开后把新露出的内容滚进可视区。toggle 事件不冒泡，只能在建的时候绑。
       if (window.OrbitApp && window.OrbitApp.bindAdvScroll) window.OrbitApp.bindAdvScroll(d);
     }
@@ -633,7 +673,9 @@ window.StateEditor = (function () {
 
   /** 当前组合是否与某个预设完全一致（一致则保持该预设选中） */
   function matchPreset(terms) {
-    const keys = Object.keys(PRESETS);
+    // ★ visibleKeys()：被隐藏的预设不参与匹配 —— 否则 state.preset 可能落在一个
+    //   界面上根本不存在的键上，按钮高亮与实际状态对不上。
+    const keys = visibleKeys();
     for (let i = 0; i < keys.length; i++) {
       const p = PRESETS[keys[i]];
       if (p.terms.length !== terms.length) continue;
@@ -664,5 +706,7 @@ window.StateEditor = (function () {
   }
 
   return { init, applyPreset, clear, expand, setAvailable, PRESETS, PHASE_PRESETS,
+    /** 可见预设键（杂化已隐藏）—— 智能体的 listActions 也走这里，别再自己 Object.keys */
+    visibleKeys, isHybrid,
     addPreset, removePreset, isCustom, _state: state };
 })();

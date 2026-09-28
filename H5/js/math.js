@@ -603,6 +603,34 @@ window.OM = (function () {
   }
 
   /**
+   * 等值面阈值换算：把面板上的**读数**（占峰值的比例）换成**绝对阈值**（|ψ|² 的值）。
+   *
+   * ★ 这是全项目**唯一**的换算出口 —— 取景（网格范围）、标尺、三维里真正抽等值面的
+   *   那一行、以及面板上显示的百分比，四处都必须走它。
+   *   判据取 `|ψ|²` 时：阈值 = f · max|ψ|²；
+   *   判据取 `|ψ|` 时：读数是"占 **|ψ|** 峰值的比例"，故 |ψ|² 阈值 = (f·max|ψ|)² = f²·max|ψ|²。
+   *   于是「10% 的 |ψ|²」与「√0.10 ≈ 31.6% 的 |ψ|」给出**同一个绝对阈值 = 同一个面**。
+   *
+   * ★ 为什么强调"唯一"：这条口径分叉过一次 —— 抽等值面那一行写成了
+   *   `读数 × 场峰值`（纯线性、漏了平方），而其余三处都平方。后果是面板上明写着
+   *   `10.0% |ψ|² ⟺ 31.6% |ψ|`，两个读数画出来却是两个完全不同的面
+   *   （实测 52252 个顶点 vs 2736 个）。用户是从界面上看出这个矛盾的。
+   *
+   * ★ 叠加态用「无干涉参考峰值」Σ|cᵢ|²peakᵢ 而不是实际扫描峰值：干涉会让实际峰值
+   *   高出近 2 倍，按它取值曲面会远小于单一轨道并碎成几块（见其说明）。
+   *
+   * @param {string} psiCrit 'psi2' | 'psi'
+   * @param {number} fraction 面板读数（占峰值的比例）
+   * @returns {number} |ψ|² 的绝对阈值
+   */
+  function isoLevelAbs(n, l, m, mode, Z, terms, fraction, psiCrit) {
+    const peak = (terms && terms.length)
+      ? superpositionRefPeak(terms, Z)
+      : maxDensity(n, l, m, mode, Z);
+    return (psiCrit === 'psi') ? fraction * fraction * peak : fraction * peak;
+  }
+
+  /**
    * 给定阈值 level（|ψ|² 的绝对值，非比值）下，等值面的最外延半径。
    *
    * 原理：|ψ|² = R(r)²·|Y(θ,φ)|²，而 |Y| 在球面上的最大值为 Ymax，
@@ -1168,6 +1196,8 @@ window.OM = (function () {
     // （球谐曲面 / ΘΦ 卡片）。用哪个见各自上方的注释。
     psiPhase, angularPhase,
     orbitLabel, rExtent, isoRadius, maxDensity, cartToSpherical,
+    /** 读数 → 绝对阈值的**唯一**换算出口（取景 / 标尺 / 抽面 / 面板显示四处共用） */
+    isoLevelAbs,
     radialZeros, angularNodes, nodes, energy, degeneracy, radialPeaks, shapeDescribe,
     isoNeckHalf, shellGaps, shellPeakFractions,
     makeRadialLUT, makePsiDensityFast,

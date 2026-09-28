@@ -39,10 +39,11 @@ window.ProactiveRules = (function () {
         return {
           text: '发现你在反复调 m。在**实函数**模式下，m>0 与 m<0 分别是 cos(mφ) 与 sin(mφ) 两种取向——' +
                 '形状确实会变，但都是"两瓣"。要不要切成**复函数**看看？那时密度会变成绕 z 轴的环，' +
-                '而 m 的差别体现在**相位缠绕**上（arg = mφ）。',
+                '而 m 的差别体现在**相位缠绕**上（arg = mφ，截面的相位图能看到完整一圈）。',
           suggest: [
             { action: 'setWavefunctionMode', params: { mode: 'complex' } },
-            { action: 'setColorMode', params: { mode: 'phase' } },
+            { action: 'setSectionPlane', params: { plane: 'xy' } },
+            { action: 'setSectionMode', params: { mode: 'phase' } },
           ],
         };
       },
