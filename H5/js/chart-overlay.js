@@ -25,10 +25,13 @@ window.ChartOverlay = (function () {
   // ★ 球谐函数不在其中，而且**理由已经变了**：它原先是一个独立的 three.js 小场景
   //   （单例，没法"再画一份"），现已并入主三维视图 —— 也就是说它本身就占着主舞台，
   //   不需要再被"搬到三维旁边"（那正是浮窗存在的意义，见本文件开头）。
-  //   下面那张 Θ/Φ 卡片倒是普通 2D canvas，技术上能支持，留给后续。
+  //   下面那张 Θ/Φ 卡片也是普通 2D canvas，已按"讲 Y = Θ·Φ 两个因子时把它弹出来"接入。
   const TARGETS = {
     radial: { title: '径向分布' },
     section: { title: '截面密度' },
+    // ★ 标题照抄卡片上的原文（index.html 的 .card-title）—— 学生听到什么名字，
+    //   就得在界面上找得到那个名字。
+    thetaPhi: { title: '角度部分的两个因子' },
   };
 
   let overlay = null, box = null, titleEl = null, canvas = null;

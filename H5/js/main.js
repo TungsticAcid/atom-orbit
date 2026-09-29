@@ -11,7 +11,7 @@
   // ---- 状态 ----------------------------------------------------------------
   const state = {
     // ★ 核电荷数 Z（类氢）：Z=1 氢原子、2 氦离子 He⁺、3 锂离子 Li²⁺。
-    //   类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），角向部分与 Z 无关 ——
+    //   类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），角度部分与 Z 无关 ——
     //   所以引入 Z 没有改变任何公式的形状，只是把"这个原子带几份核电荷"接进来。
     Z: 1,
     n: 3, l: 1, m: 0,
@@ -138,13 +138,13 @@
         // ★ 用 HTML 版：l≥4 的标签是直角坐标多项式（含 x^{4} 这类记号），
         //   直接塞纯文本会原样显示成 "x^{4}"。
         return '<button class="seg-btn" data-m="' + mm + '"' +
-          (named ? '' : ' title="该支壳层没有公认的惯用名，这里用角向部分的直角坐标多项式标记"') +
+          (named ? '' : ' title="该支壳层没有公认的惯用名，这里用角度部分的直角坐标多项式标记"') +
           '>' + Formula.realOrbitalLabelHtml(l, mm) + '</button>';
       }).join('');
       // 没有惯用名的支壳层给一句说明，否则学生会以为程序忘了起名
       els.realOrbHint.textContent = (l >= 4)
         ? '这一支壳层没有公认的惯用名（高角动量轨道在文献里只按对称性分类），'
-          + '故用角向部分的直角坐标多项式标记。'
+          + '故用角度部分的直角坐标多项式标记。'
         : '';
     }
     const btns = els.realOrbSeg.querySelectorAll('.seg-btn');
@@ -673,6 +673,23 @@
     });
   }
 
+  /**
+   * 让图表**浮动窗**跟着上面的卡片一起刷新。
+   *
+   * ★ 为什么需要它：浮窗是 chart-overlay.js 自建的一层 canvas（不在 els.* 里），
+   *   它自己的重画事件源只有「打开 / resize / 拖动结束 / 最小化切换」——
+   *   **"状态变了"不在其中**。于是这里横切一刀：卡片换到新轨道了，浮窗却没人管，
+   *   停在旧帧上。用户实测的正是这个：演示《R(r) 与 D(r)》切了量子数，
+   *   弹出的径向浮窗纹丝不动，而底下的卡片已经换成新轨道了 ——
+   *   同一张图在两个地方长得不一样，比不画更误导。
+   *   （facade 的 drawChartInto 本来就是从 state 现读的，只要喊一声它就跟得上。）
+   * ★ 走 ChartOverlay.redraw（内部 rAF 合并）：一帧内喊多次只重画一次；
+   *   且 isOpen 为假时零开销，所以两条收口都可以无条件喊。
+   */
+  function syncChartOverlay() {
+    if (window.ChartOverlay && window.ChartOverlay.isOpen()) window.ChartOverlay.redraw();
+  }
+
   function updateCharts() {
     syncChartTermBars();
     const rt = chartTermState(false);        // 径向与 Θ/Φ：不支持叠加态，落到某个分量
@@ -688,6 +705,8 @@
       state.psiCrit, state.level);   // 后两个参数供「等值面对应的那条线」换算阈值
     // 换轨道 / 换平面都会改变"这一面是不是节面"，光标与触摸策略要跟着变（第 11 条）
     syncSectionUI();
+    // 浮窗与卡片同源（同一份 state），收口处统一喊一声，别让它各自漂移
+    syncChartOverlay();
   }
 
   /**
@@ -703,6 +722,10 @@
     const chip = $('#sectionResetChip');
     const s = Charts.sectionState();
     if (chip) chip.style.display = (!s.nodal && s.userAdjusted) ? '' : 'none';
+    // 这条收口也一样：缩放/平移/复位只重画截面，但浮窗若正开着截面图，它同样要跟。
+    // （attachChartInteractions 的 onChange 也传了一个 onRedraw，两者重复无害 ——
+    //   重画是 rAF 合并的，且这样写就不必依赖"谁记得传回调"这句口头约定。）
+    syncChartOverlay();
   }
 
   /**
@@ -1398,6 +1421,14 @@
       if (!canvas) return false;
       if (target === 'radial') {
         Charts.drawRadial(canvas, state.n, state.l, state.radial, state.Z);
+        return true;
+      }
+      if (target === 'thetaPhi') {
+        // ★ 与卡片路径（updateCharts）共用 chartTermState(false)：Θ/Φ 卡**画不了叠加态**
+        //   （Σcᵢψᵢ 只有在各分量 n 相同时才能因子化出角度部分），两条路径必须取同一份，
+        //   否则浮窗与卡片会显示两个不同的分量 —— 正是本文件开头警告的那种漂移。
+        const rt = chartTermState(false);
+        Charts.drawThetaPhi(canvas, rt.l, rt.m, rt.mode, deriveColorMode());
         return true;
       }
       if (target === 'section') {

@@ -469,6 +469,25 @@ window.ToolRegistry = (function () {
       if (e) return e;
       return window.MasteryModel.recommend(p && p.count);
     },
+    /** 出题（本地模板造题 + 本地判定，零幻觉）。
+     *  ★ 原先是"只在 TOOLS 里声明、EXEC 里没实现"——模型每次调用都收到"未知工具"，
+     *    只好用文字把题目写进讲解里，界面上既没有卡片也没有选项。TOOLS 与 EXEC 必须同源。 */
+    generateQuestion(a) {
+      const e = need('QuestionEngine', '出题引擎');
+      if (e) return e;
+      const kp = (a && a.knowledgePoint) || null;
+      if (!kp) return { error: 'knowledgePoint 必填（K1–K9）' };
+      const q = window.QuestionEngine.askQuestion(kp, a.difficulty, a.exclude);
+      if (!q || q.error) return { error: (q && q.error) || '出题失败' };
+      // 回灌题干/选项/答案/解析：模型要据此讲解。判定仍走本地的 answer()，不泄题。
+      return {
+        ok: true, id: q.id, kp: q.kp, difficulty: q.difficulty,
+        stem: q.stem, options: q.options,
+        answerIndex: q.answerIndex, answer: q.options[q.answerIndex],
+        explanation: q.explanation,
+        note: '题目卡已显示，别再复述题干与选项，也别报答案；学生答完后本地会给出判定与解析。',
+      };
+    },
     reviseDemo(a) {
       const e = need('SceneBridge', '演示队列');
       if (e) return e;

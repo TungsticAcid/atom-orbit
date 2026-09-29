@@ -609,9 +609,14 @@ window.QuestionEngine = (function () {
     return { ok: true, kp: kp };
   }
 
-  /** 出题并渲染题目卡（判定完全本地） */
-  function askQuestion() {
-    const q = generate(flow.kp || 'K5');
+  /**
+   * 出题并渲染题目卡（判定完全本地）。
+   * ★ 支持显式指定 知识点 / 难度 / 去重表：智能体的 generateQuestion 工具要用它 ——
+   *   模型要考的知识点不一定等于 flow.kp（"接住刚才那条线"指的是**上一题**那条线）。
+   *   无参调用时行为与从前完全一致（内部仍回落到 flow.kp）。
+   */
+  function askQuestion(kp, difficulty, exclude) {
+    const q = generate(kp || flow.kp || 'K5', difficulty, exclude);
     renderQuestion(q);
     return q;
   }

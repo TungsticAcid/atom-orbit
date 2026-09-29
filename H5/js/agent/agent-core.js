@@ -102,7 +102,7 @@ window.AgentCore = (function () {
       '【常用动作速查】（完整清单与参数说明可用 listSceneActions 拉取）',
       '原子    setNuclearCharge{Z:1–36}（类氢离子写作 X^(Z−1)+：1 氢 / 2 氦离子 He⁺ / '
         + '3 锂离子 Li²⁺ … 36 氪离子 Kr³⁵⁺。'
-        + '角向部分与 Z 无关，换 Z 只把径向与能级按 r→r/Z、E∝Z² 缩放；**不退出叠加态**）',
+        + '角度部分与 Z 无关，换 Z 只把径向与能级按 r→r/Z、E∝Z² 缩放；**不退出叠加态**）',
       '量子数  setQuantumNumbers{n,l,m}（会**自动退出叠加态**，回到纯态） ｜ sweepQuantumNumber{axis,from,to}',
       '模式    setWavefunctionMode{mode:real|complex}（real=波函数**实数解**，用实轨道名标记如 p_x；'
         + 'complex=**复数解**，用 m 标记）'
@@ -115,10 +115,12 @@ window.AgentCore = (function () {
       '          否则学生会把分量图当成叠加态本身。用 setChartTerm 切换它们画哪一份。',
       '等值面  setPsiCriterion{criterion:psi|psi2} ｜ setIsosurfaceLevel{fraction} ｜ animateIsosurfaceLevel{from,to}',
       '图表    showRadial{which:[R,R2,D]} ｜ highlightRadialFeature{target:R|D,feature:peak|zeros}',
-      '        setViewTarget{target:spherical|wave}（三维里看球谐曲面 Y，还是完整波函数 ψ）',
-      '        setAngularView{which:Y|Y2}（球谐曲面的判据；只在 spherical 档有效）',
+      '        setViewTarget{target:spherical|wave}（三维里看「球谐函数」（角度部分 Y 的曲面 r=|Y|），'
+        + '还是「空间波函数」（完整 ψ）—— 引号里是界面按钮文案，跟学生说话请照抄这两个名字）',
+      '        setAngularView{which:Y|Y2}（球谐档的判据 |Y| 还是 |Y|²；只在 spherical 档有效）',
       '        setSectionPlane{plane:xy|xz|yz} ｜ setSectionMode{mode:intensity|phase|contour}',
-      '        focusChart{target:radial|section|none}（把页面底部那两张图放大到浮窗里讲）',
+      '        focusChart{target:radial|section|thetaPhi|none}（把页面底部那三张图放大到浮窗里讲；'
+        + 'thetaPhi =「角度部分的两个因子」卡，讲 Y=Θ·Φ 分解时必须先把它弹出来）',
       '        setChartTerm{term:"super"|0|1|…}（有叠加态时 2D 图各自画哪一份：super=叠加态整体，'
         + '只有**截面密度**图支持；径向分布与 Θ/Φ 卡画不了叠加态、只能画某一个分量 —— '
         + '界面上写明了"叠加态本身请看三维视图"，你讲的时候也要交代）',
@@ -129,6 +131,9 @@ window.AgentCore = (function () {
       //   整个「进阶：量子态」板块与杂化一起隐藏了 —— 动作定义与实现都还在代码里
       //   （见 scene-bridge 的 HIDDEN_ACTIONS），但**不再列给模型**，也不出现在工具清单里。
       //   工具清单是模型唯一的动作真值源，这里删干净它才不会去调。
+      '',
+      '【说到就要做到】讲解里承诺的动作（"我切到…""标出来""出一道题"）必须真的发出工具调用：',
+      '  视图 → applySceneActions，出题 → generateQuestion。动作名/参数拿不准就先 listSceneActions 查。',
       '',
       '【演示的节奏：由学生掌握】',
       '· 每个动作就是"一屏"，学生看清后自己点「下一步」；也可以「上一步」退回去重看、',

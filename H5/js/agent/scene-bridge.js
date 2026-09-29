@@ -27,6 +27,12 @@ window.SceneBridge = (function () {
   const MIN_DWELL_MS = 350;
   const MAX_DWELL_MS = 6000;
   const AFTER_ANIMATED_MS = 450;       // 动画（扫描类）播完后的落点停顿（基准值，按节奏缩放）
+  // ★ auto（脚本批量播，见 applySequence 的 opts.auto）时，**批内**相邻动作之间只留这一点间隙。
+  //   理由：那一批动作是**同一句旁白**下的连续操作，学生要的是"连贯地看到它在变"。
+  //   以前它们各停一个 dwell（默认 2.4s）——《同一层里…》第 1 步有 5 个动作，实测从点击
+  //   到阈值真正落到 8% 花了约 12 秒，演示者和学生都以为卡住了。dwell 该由**步的边界**
+  //   承担（旁白是一整句，读完约 2.4s），不该摊到每个动作上、把同一句话的阅读时间重复五遍。
+  const AUTO_GAP_MS = 320;
   const MAX_QUEUE = 24;                // 播放队列上限（分几次下发时的累计步数）
 
   const DEFAULT_SWEEP_MS = 2000;
@@ -41,7 +47,7 @@ window.SceneBridge = (function () {
           + '4 铍离子 Be³⁺、6 碳离子 C⁵⁺ … 到 36 氪离子 Kr³⁵⁺。'
           + '类氢＝只含一个电子，故任意 Z 都适用（上限 36 是**物理**限制而非数学限制：'
           + '非相对论公式的相对论修正 ~(Zα)²，Z=36 时约 7%，再高只宜作定性示意）。'
-          + '类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），**角向部分与 Z 无关** —— '
+          + '类氢与氢只差一条标度关系（r → r/Z、E ∝ Z²），**角度部分与 Z 无关** —— '
           + '所以换 Z 会改变三维尺度、径向分布图横轴、截面视窗与能级，但球谐曲面纹丝不动。'
           + '★ 与量子数不同，换 Z **不会**退出叠加态（Z 是原子的属性，叠加态整体跟着缩放）。',
       params: { Z: 'int 1–36' },
@@ -111,9 +117,14 @@ window.SceneBridge = (function () {
     },
     setViewTarget: {
       group: '角度', concept: 'K4',
-      desc: '三维里看哪一层：spherical = 角度部分 Y 的球谐曲面；wave = 完整波函数 ψ 的'
-          + '等值面 / 粒子云。两者是**两套几何**（球谐是解析形状直接三角化，ψ 是标量场 + '
-          + '等值面提取），切档会换掉整个画面与取景尺度。想看"角度部分长什么样"就用 spherical。',
+      desc: '三维里看哪一层。界面上这一组叫「视图对象」，两个档位的**按钮文案**是'
+          + '「球谐函数」（spherical）与「空间波函数」（wave）。'
+          + 'spherical 画角度部分 Y 的极坐标曲面 r = |Y|；wave 画完整 ψ 的等值面 / 粒子云。'
+          + '★ 跟学生说话请**照抄按钮上的名字**——说「切到球谐函数」。'
+          + '"球谐曲面"指的是那张曲面本身（文档里的几何术语），界面上**没有**这个档位名，'
+          + '学生照着找不到按钮。'
+          + '两者是**两套几何**（球谐是解析形状直接三角化，ψ 是标量场 + 等值面提取），'
+          + '切档会换掉整个画面与取景尺度。想看"角度部分长什么样"就切到「球谐函数」。',
       params: { target: "'spherical'|'wave'" },
     },
     setAngularView: {
@@ -159,12 +170,16 @@ window.SceneBridge = (function () {
     },
     focusChart: {
       group: '图表', concept: '',
-      desc: '把某张图表放大到**浮动窗**里讲 —— 径向分布与截面密度在页面底部，讲三维视图时'
-        + '学生看不到它们。target="none" 关闭浮窗。'
-        + '★ **必须先开窗、再改图**：它要排在同批 showRadial / setSectionXxx 之类动作的'
-        + '**前面**（先让学生看到那张图，再让图发生变化）。程序会把排错位置的 focusChart'
+      desc: '把某张图表放大到**浮动窗**里讲 —— 三张图都在页面底部，讲三维视图时学生看不到它们。'
+        + '三个目标各有各的用场：radial 讲「R 与 D 的峰值 / 零点在哪」，'
+        + 'thetaPhi 讲「Y = Θ·Φ 的两个因子各自长什么样」，section 讲「内部结构与节面在哪」。'
+        + '★ 讲角度分解（setFormulaHighlight 依次点亮 F → T → Y）时，'
+        + '先用 thetaPhi 把那张卡弹出来——学生才看得到被点亮的究竟是哪条曲线。'
+        + 'target="none" 关闭浮窗。'
+        + '★ **必须先开窗、再改图**：它要排在同批 showRadial / setSectionXxx / setFormulaHighlight'
+        + '之类动作的**前面**（先让学生看到那张图，再让图发生变化）。程序会把排错位置的 focusChart'
         + '自动提到批首，但你自己排对更省事。',
-      params: { target: "'radial'|'section'|'none'" },
+      params: { target: "'radial'|'section'|'thetaPhi'|'none'" },
     },
     setChartTerm: {
       group: '图表', concept: '',
@@ -1027,8 +1042,8 @@ window.SceneBridge = (function () {
         if (['R', 'Y'].indexOf(p.which) < 0) return { err: 'which 应为 R 或 Y' };
         return { params: { which: p.which, open: p.open !== false } };
       case 'focusChart':
-        if (['radial', 'section', 'none'].indexOf(p.target) < 0) {
-          return { err: 'target 应为 radial / section / none' };
+        if (['radial', 'section', 'thetaPhi', 'none'].indexOf(p.target) < 0) {
+          return { err: 'target 应为 radial / section / thetaPhi / none' };
         }
         return { params: { target: p.target } };
       case 'setChartTerm': {
@@ -1337,7 +1352,7 @@ window.SceneBridge = (function () {
       noteSteps(okSteps, demoOrigin);
       bindPerAction(0, okSteps.length);
       try {
-        const r = await runQueue(gen, !opts.noPacing);
+        const r = await runQueue(gen, !opts.noPacing, false, 0, true);
         return Object.assign(r, {
           failed: failed.concat(r.failed || []), dropped: dropped,
           demoId: demoSeq, total: okSteps.length, perAction: perAction,
@@ -1411,7 +1426,7 @@ window.SceneBridge = (function () {
    * @param {number}  ffTo  快进到第几步（整改后"快进到改动点并停下"用，见 loadDemo）
    * @returns {Promise<{executed:Array, failed:Array, aborted:boolean}>}
    */
-  async function runQueue(gen, paced, parkImmediately, ffTo) {
+  async function runQueue(gen, paced, parkImmediately, ffTo, tight) {
     const executed = [];
     const failed = [];
     const dead = () => gen !== generation;
@@ -1488,8 +1503,10 @@ window.SceneBridge = (function () {
       if (ff) continue;                  // 快进段不留停留
 
       if (!manual && paced && qIndex < queue.length) {
-        // 自动连播：动画自带时长，播完只需落点停顿；瞬时动作按"看一眼"的时长停留
-        const hold = st.holdMs || (st.animated ? afterAnimMs() : dwellMs());
+        // 自动连播：动画自带时长，播完只需落点停顿；瞬时动作按"看一眼"的时长停留。
+        // ★ tight（= 脚本批量播，同一步里的一串子动作）时改用短间隙，理由见 AUTO_GAP_MS。
+        const hold = st.holdMs
+          || (st.animated ? afterAnimMs() : (tight ? AUTO_GAP_MS : dwellMs()));
         await wait(hold);
         if (dead()) return { executed, failed, aborted: true };
       }

@@ -814,7 +814,7 @@ window.Formula = (function () {
     // ★ 提出**公因式**（各单项式指数的最小值）。不提取的话 h 轨道的标签会是
     //   `27x^{2}yz^{2} - 9y^{3}z^{2} - 3x^{2}yr^{2} + y^{3}r^{2}` 这种一长串，
     //   按钮排出来没法看；提出 y 之后是 `y(27x²z²−9y²z²−3x²r²+y²r²)`，短了一半，
-    //   也更接近它作为"某个球谐的角向部分"的本来面目。
+    //   也更接近它作为"某个球谐的角度部分"的本来面目。
     const keys = [...ints.keys()];
     const pow = keys.map((k) => k.split(',').map(Number));
     const fac = [0, 1, 2, 3].map((d) => Math.min.apply(null, pow.map((p) => p[d])));
@@ -1078,13 +1078,13 @@ window.Formula = (function () {
         //   ① 多项式必须走 cartesianPlain：这里走的是 textContent（KaTeX 不解析），
         //      直接拼 realOrbitalCartesian 会把 `\left(`、`^{4}` 原样印给学生；
         //   ② 不再提"按教材 Y_{lf(r)} 的写法"——那是把某本书的记号当标准。
-        //      中性说法是"用角向部分的直角坐标多项式标记"，书上怎么写由参考书目去交代。
+        //      中性说法是"用角度部分的直角坐标多项式标记"，书上怎么写由参考书目去交代。
         //   ★ 多项式含加减项时**必须加括号**：`35z⁴ - 30z²r² + 3r⁴ / r⁴` 会被读成
         //     最后一项才除以 r⁴ —— 而 Y 是整个多项式除以 rˡ。单一项（z(x⁴-…)、xyz(…)）
         //     本身就是乘积，不能再套括号。
         const poly = cartesianPlain(l, m);
         naming = '（' + sub + ' 支壳层没有公认的通名 —— 高角动量轨道在文献里只按对称性分类。'
-          + '这里用角向部分的直角坐标多项式标记：' + V('Y') + ' = '
+          + '这里用角度部分的直角坐标多项式标记：' + V('Y') + ' = '
           + (topLevelSum(poly) ? '(' + varsIn(poly) + ')' : varsIn(poly))
           + ' / ' + V('r') + supUnicode('^' + l) + '。）';
       }
