@@ -208,6 +208,10 @@ window.Orbit3D = (function () {
   let scene = null, camera = null, renderer = null, viewCtl = null;
   let cloudObj = null;          // THREE.Points
   let surfaceObj = null;        // THREE.Mesh
+  //: 最近一次 setVisibility 收到的档位。存在的理由只有一个：**切片重建提交时要知道
+  //: "现在该显还是该隐"** —— 见 commitSurface 末尾。别拿它当"当前档位"的真值去读
+  //: （真值在 main.js 的 state.viewTarget）。
+  let lastVisMode = 'surface';
   let nucleusObj = null;
   let axesObj = null;
   let gridObj = null;
@@ -223,6 +227,11 @@ window.Orbit3D = (function () {
   // **径向渐变**（核附近密、往外稀）—— 单靠提高分辨率救不了细颈：
   // 缝隙 0.24a₀ 要在 5.66a₀ 半径的盒子里跨 4 个单元格，均匀网格需要 ~190³ ≈ 108MB。
   let gridXs = null;
+  // "当前发布的这一份场是什么"（见 commitField）。切片之前这个前提是自动成立的：
+  // 场要么刚被同步算完、要么根本没动。切片之后"准备"与"发布"之间隔着几十帧，
+  // 于是必须显式记下来，复用缓存场时才验得了"缓存的那份就是现在要的那份"。
+  let fieldKey = '';
+  let fieldDesc = null;
 
   /**
    * 生成一维节点坐标。
@@ -372,16 +381,44 @@ window.Orbit3D = (function () {
   // ---------------------------------------------------------------------------
   // 等值面
   // ---------------------------------------------------------------------------
+
   /**
-   * 计算 |ψ|² 标量场（缓存在模块级），供 buildSurface / setSurfaceLevel 复用。
-   * res 为每轴网格点数（立方）；level 为绝对值阈值，用于自适应网格范围。
-   *
-   * 网格范围 = 该阈值下等值面的实际外延（而非波函数渐近尾部）。这一步很关键：
-   * 例如 2p_z 按尾部取需 ±23.5，而阈值 8% 时等值面只在 ±8 内，同样 68³ 节点
-   * 的格距会相差 3 倍——格距过粗时，节面附近两瓣之间约 1 a₀ 的缝只有一两个格子宽，
-   * 行进算法无法分辨，会把两瓣连成一体并被切出"平底贴合"的丑陋形状。
+   * 由标量场算 ∇|ψ|²（取反 → 朝外法线）—— **一层 k**。
+   * ★ 分母用**实际坐标差**而不是 (i1−i0)·step：细网格用径向渐变，节点间距不等，
+   *   沿用均匀间距会让法线在各轴上的权重不一致（法线歪掉 → 光照看出条纹）。
    */
-  function computeField(n, l, m, mode, res, level, terms, relPhase, extentOverride, grading, Z) {
+  function gradientLayer(ctx, k) {
+    const n = ctx.nGrid;
+    const X = ctx.xs;
+    const F = ctx.field, gx = ctx.gradX, gy = ctx.gradY, gz = ctx.gradZ;
+    const id0 = k * n * n;
+    const k0 = Math.max(0, k - 1), k1 = Math.min(n - 1, k + 1);
+    const kLo = k0 * n * n, kHi = k1 * n * n;
+    const dz = X[k1] - X[k0];
+    for (let j = 0; j < n; j++) {
+      const j0 = Math.max(0, j - 1), j1 = Math.min(n - 1, j + 1);
+      const dy = X[j1] - X[j0];
+      const rowC = id0 + j * n, rowJ0 = id0 + j0 * n, rowJ1 = id0 + j1 * n;
+      for (let i = 0; i < n; i++) {
+        const i0 = Math.max(0, i - 1), i1 = Math.min(n - 1, i + 1);
+        const dx = X[i1] - X[i0];
+        // 取反：∇|ψ|² 指向密度增大方向（对成键轨道朝核内），法线应为朝外 → 负梯度
+        gx[rowC + i] = (F[rowC + i0] - F[rowC + i1]) / dx;
+        gy[rowC + i] = (F[rowJ0 + i] - F[rowJ1 + i]) / dy;
+        gz[rowC + i] = (F[kLo + j * n + i] - F[kHi + j * n + i]) / dz;
+      }
+    }
+  }
+
+  /**
+   * 场计算（|ψ|² + 梯度）的**准备**阶段：决策盒子大小、分配数组、建径向查表，
+   * 把结果写回那些模块级场量（沿用原有约定，读取方不必改）。
+   *
+   * ★ 拆成"准备 + 逐层推进"是为了让 `Sched` 能把这场计算摊到多帧里跑完 ——
+   *   68³ 的场填充加梯度原本是一次 ~150ms 的同步块，界面会整段卡住。
+   *   推进的粒度是**一层 k**（68 层、每层 ~0.2ms），交给 Sched 按预算批。
+   */
+  function prepareField(n, l, m, mode, res, level, terms, relPhase, extentOverride, grading, Z) {
     const zc = (Z > 0) ? Z : 1;
     const iso = (level > 0) ? level : 0;
     // 叠加态：范围取各分量外延的最大值；否则按单一本征态
@@ -395,74 +432,106 @@ window.Orbit3D = (function () {
           //    （阈值越低面越大；少了这一项，低阈值下曲面会被盒子切出平边）
           1.5)
         : Math.max(OM.isoRadius(n, l, m, mode, iso, zc) * 1.12, 1.2));
-    nGrid = res;
-    gridExtent = extent;
-    const NN = nGrid * nGrid * nGrid;      // 节点总数
-    field = new Float32Array(NN);
-    gradX = new Float32Array(NN); gradY = new Float32Array(NN); gradZ = new Float32Array(NN);
-
-    let maxVal = 0;
-
+    // ★ 这里**只分配、不发布**。发布（把这几组数组挂成模块级状态）推迟到填场完成的
+    //   那一刻，见 commitField —— 切片之后"准备"与"填完"之间隔着几十帧，中途被新的
+    //   重建取消时，模块里就会留下一个**半填的场**；而"只改阈值"那条复用路径
+    //   （fieldSpec 为 null）会径直拿模块级的 field 去抽等值面，抽出一团乱东西。
+    const nG = res;
+    const NN = nG * nG * nG;               // 节点总数
+    const fld = new Float32Array(NN);
+    const gx = new Float32Array(NN), gy = new Float32Array(NN), gz = new Float32Array(NN);
     // ★ 性能：|ψ|² 的主力开销是径向部分（pow + exp + 拉盖尔递推）。
     //   固定 (n,l) 下用 R² 查表替代，并把坐标预计算、用 sqrt 替代较慢的 hypot。
-    //   实测单次重建由 ~1200ms 降到 ~250ms 量级，滑块与扫参动画因此才跟得上手。
     const psi2Fast = useSuper
       ? (function () {
           const phases = terms.map((t, i) => i * (relPhase || 0));
           return function (r, theta, phi) { return OM.densitySuperposition(terms, r, theta, phi, phases, zc); };
         })()
       : OM.makePsiDensityFast(n, l, m, mode, extent * 1.8, zc);
-    const xs = makeAxisCoords(nGrid, extent, grading || 0);
-    gridXs = xs;
+    const xs = makeAxisCoords(nG, extent, grading || 0);
+    const desc = {
+      n: n, l: l, m: m, mode: mode, res: nG, Z: zc,
+      // level 只进 desc（供排障读出"这份场是按哪个阈值定盒子算的"），不进指纹 —— 见 keyOf
+      level: level, extent: extent,
+      terms: termsSig(terms), relPhase: useSuper ? (relPhase || 0) : 0, grading: grading || 0,
+    };
+    return {
+      nGrid: nG, extent, field: fld, gradX: gx, gradY: gy, gradZ: gz, xs, psi2Fast,
+      k: 0, maxVal: 0, phase: 0,          // phase 0 = 填场，1 = 算梯度
+      desc: desc, key: fieldKeyOf(desc),
+    };
+  }
 
-    for (let k = 0; k < nGrid; k++) {
-      const z = xs[k];
-      const zz = z * z;
-      const kBase = k * nGrid * nGrid;
-      for (let j = 0; j < nGrid; j++) {
-        const y = xs[j];
+  /** 叠加态的指纹：系数与量子数都要进 —— 只比个数会让"换了系数"被当成同一份场 */
+  function termsSig(terms) {
+    if (!terms || !terms.length) return '-';
+    return terms.map((t) => t.n + ',' + t.l + ',' + t.m + ',' + (t.mode || '') + ',' +
+      t.c.re.toFixed(9) + ',' + t.c.im.toFixed(9)).join(';');
+  }
+
+  /**
+   * 标量场的**参数指纹**：描述"这份场是对哪个函数、在哪套配置下采出来的"。
+   * ★ 刻意**不含阈值**。阈值只决定采样盒的大小，而"盒子还装不装得下新阈值对应的面"
+   *   由调用方按 gridExtent 判断（见 setSurfaceLevel 的 needGrow / needShrink）——
+   *   那正是"拖阈值时复用缓存场、不重算"这条流畅度优化成立的地方。把阈值放进指纹
+   *   等于每动一下滑块就重算一次场，把优化废掉。
+   */
+  function fieldKeyOf(d) {
+    return [d.n, d.l, d.m, d.mode, d.res, d.Z, d.terms,
+      +(+d.relPhase).toPrecision(12), d.grading].join('|');
+  }
+
+  /**
+   * 把一次算好的场"发布"成模块级的当前场。
+   *
+   * ★ 发布点必须定在**填场完成的那一刻**，而不是 prepareField 里。原因是切片引入了
+   *   原同步版本不存在的中间态：prepareField 之后、填完之前，这个场是不可用的。
+   *   若在 prepare 时就挂上去，一次被取消的重建会把模块级的 field / gridExtent /
+   *   nGrid 留在"新盒子 + 半填内容"的状态上，而后续"复用缓存场"的抽取（只改阈值、
+   *   只改着色）读的正是这几个模块级量 —— 结果是一团没有意义的曲面，而且不报错。
+   *   梯度数组此时已分配好（还没算），抽取阶段在梯度算完之后才开始读它，故一并发布。
+   * ★ 同时发布"这一份场是什么"（fieldKey / fieldDesc）。只发布数组本身是不够的：
+   *   复用缓存场的那条路必须先确认**缓存的那一份就是现在要的那一份**。
+   *   切片之后这个前提不再自动成立 —— 一次正在进行、尚未发布的重建会让模块里留着
+   *   上一套配置的场，而调用方以为它是最新的。
+   */
+  function commitField(ctx, mx) {
+    nGrid = ctx.nGrid; gridExtent = ctx.extent; gridXs = ctx.xs;
+    field = ctx.field; gradX = ctx.gradX; gradY = ctx.gradY; gradZ = ctx.gradZ;
+    fieldMax = mx;
+    fieldKey = ctx.key; fieldDesc = ctx.desc;
+  }
+
+  /** 推进一层：phase 0 填场、phase 1 算梯度。返回 false 表示整场（含梯度）已就绪。 */
+  function stepField(ctx) {
+    const n = ctx.nGrid;
+    if (ctx.phase === 0) {
+      const k = ctx.k;
+      const z = ctx.xs[k], zz = z * z;
+      const kBase = k * n * n;
+      let mx = ctx.maxVal;
+      for (let j = 0; j < n; j++) {
+        const y = ctx.xs[j];
         const yy = y * y + zz;
-        const jBase = kBase + j * nGrid;
-        for (let i = 0; i < nGrid; i++) {
-          const x = xs[i];
+        const jBase = kBase + j * n;
+        for (let i = 0; i < n; i++) {
+          const x = ctx.xs[i];
           const r = Math.sqrt(x * x + yy);
           const theta = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
           const phi = Math.atan2(y, x);
-          const v = psi2Fast(r, theta, phi);
-          field[jBase + i] = v;
-          if (v > maxVal) maxVal = v;
+          const v = ctx.psi2Fast(r, theta, phi);
+          ctx.field[jBase + i] = v;
+          if (v > mx) mx = v;
         }
       }
+      ctx.maxVal = mx;
+      // 整场填完 → **此刻才发布**（见 commitField）并转去算梯度
+      if (++ctx.k >= n) { ctx.phase = 1; ctx.k = 0; commitField(ctx, mx); }
+      return true;
     }
-    fieldMax = maxVal;
-    computeGradient();
-    return { maxVal: maxVal, extent: extent };
-  }
-
-  // 节点梯度：中心差由 field 数组读取（无需额外 psi 计算）
-  /**
-   * 由标量场算 ∇|ψ|²（取反 → 朝外法线）。
-   * ★ 分母用**实际坐标差**而不是 (i1−i0)·step：细网格用径向渐变，节点间距不等，
-   *   沿用均匀间距会让法线在各轴上的权重不一致（法线歪掉 → 光照看出条纹）。
-   */
-  function computeGradient() {
-    const n = nGrid;
-    const X = gridXs;
-    const idx = (i, j, k) => k * n * n + j * n + i;
-    for (let k = 0; k < n; k++) {
-      for (let j = 0; j < n; j++) {
-        for (let i = 0; i < n; i++) {
-          const id = idx(i, j, k);
-          const i0 = Math.max(0, i - 1), i1 = Math.min(n - 1, i + 1);
-          const j0 = Math.max(0, j - 1), j1 = Math.min(n - 1, j + 1);
-          const k0 = Math.max(0, k - 1), k1 = Math.min(n - 1, k + 1);
-          // 取反：∇|ψ|² 指向密度增大方向（对成键轨道朝核内），法线应为朝外 → 负梯度
-          gradX[id] = (field[idx(i0, j, k)] - field[idx(i1, j, k)]) / (X[i1] - X[i0]);
-          gradY[id] = (field[idx(i, j0, k)] - field[idx(i, j1, k)]) / (X[j1] - X[j0]);
-          gradZ[id] = (field[idx(i, j, k0)] - field[idx(i, j, k1)]) / (X[k1] - X[k0]);
-        }
-      }
-    }
+    gradientLayer(ctx, ctx.k);
+    if (++ctx.k >= n) return false;      // 梯度也走完 → 整场就绪
+    return true;
   }
 
   // 提取等值面，返回 BufferGeometry
@@ -486,7 +555,7 @@ window.Orbit3D = (function () {
    *   把跨界单元整格推给粗网格 → 重叠；改用"单元中心"只保证了"中心落在内侧"的
    *   那一半，另一半跨界单元仍漏给粗网格（实测 |ψ| 判据 1% 下碎成 572 片）。
    */
-  function extractSurface(iso, maskR, keepInside) {
+  function prepareExtract(iso, maskR, keepInside) {
     const n = nGrid;
     const n2 = n * n;
     const X = gridXs;                  // 节点坐标（均匀或径向渐变）
@@ -502,10 +571,9 @@ window.Orbit3D = (function () {
       }
     }
 
-    // ★ 性能关键：本函数在 68³ 网格上要处理约 1.8M 个四面体。
-    //   原实现每个四面体都在 map / filter / findIndex 里分配数组，
-    //   造成巨大 GC 压力——实测占等值面重建总耗时的约 78%（~600ms）。
-    //   现改为零分配：角点 id 直接算、交点直接写入输出数组、绕向判定用局部变量。
+    // ★ 性能关键：本函数在 68³ 网格上要扫约 30 万个单元、输出上百万个顶点。
+    //   原实现每个单元都在 map / filter / findIndex 里分配数组，GC 压力巨大。
+    //   现在是**零分配**：角点 id 直接算、交点直接写入输出数组、绕向判定用局部变量。
     const positions = [];
     const normals = [];
     const indices = [];
@@ -545,82 +613,94 @@ window.Orbit3D = (function () {
       else indices.push(i0, i2, i1);
     };
 
-    const cIds = new Int32Array(8);
-    const in4 = new Uint8Array(4);
-    const tIds = new Int32Array(4);
+    // ★ 拆成"准备 + 逐层推进"是为了让 Sched 把抽取摊到多帧里跑完（原来是一次 ~150ms 的同步块）。
+    //   推进粒度是**一层 k**（67 层 × 每层约 4500 个单元）；单元之间没有任何依赖
+    //   （每个单元独立 emitVertex、pushTri 只读本单元刚写的顶点），所以各层按 k 升序拼接
+    //   得到的顶点/索引顺序**与不切片时逐位一致**。
+    return {
+      n, n2, X, iso, useMask, maskR2, cArr, keepInside,
+      positions, normals, indices, emitVertex, pushTri,
+      cIds: new Int32Array(8), in4: new Uint8Array(4), tIds: new Int32Array(4),
+      cross, k: 0,
+    };
+  }
 
-    for (let k = 0; k < n - 1; k++) {
-      const kBase = k * n2;
-      const kz2 = useMask ? cArr[k] : 0;
-      for (let j = 0; j < n - 1; j++) {
-        const jBase = kBase + j * n;
-        const jy2 = useMask ? kz2 + cArr[j] : 0;
-        for (let i = 0; i < n - 1; i++) {
-          if (useMask) {
-            // 最近角在球内 ⟺ 该单元有一部分在球内 → 归细网格；否则整格在球外 → 归粗网格
-            const inside = (jy2 + cArr[i]) <= maskR2;
-            if (inside !== !!keepInside) continue;
+  /** 推进一层 k。返回 false 表示所有单元都已扫完。 */
+  function stepExtract(ctx) {
+    const n = ctx.n, n2 = ctx.n2, X = ctx.X, useMask = ctx.useMask;
+    const field_ = field;
+    const k = ctx.k;
+    const kBase = k * n2;
+    const kz2 = useMask ? ctx.cArr[k] : 0;
+    const cIds = ctx.cIds, in4 = ctx.in4, tIds = ctx.tIds, cross = ctx.cross;
+    const emitVertex = ctx.emitVertex, pushTri = ctx.pushTri;
+    for (let j = 0; j < n - 1; j++) {
+      const jBase = kBase + j * n;
+      const jy2 = useMask ? kz2 + ctx.cArr[j] : 0;
+      for (let i = 0; i < n - 1; i++) {
+        if (useMask) {
+          // 最近角在球内 ⟺ 该单元有一部分在球内 → 归细网格；否则整格在球外 → 归粗网格
+          const inside = (jy2 + ctx.cArr[i]) <= ctx.maskR2;
+          if (inside !== !!ctx.keepInside) continue;
+        }
+        const p = jBase + i;
+        // 8 个角点的全局 id：直接算，不再每格 map 一次
+        cIds[0] = p;              cIds[1] = p + 1;
+        cIds[2] = p + 1 + n;      cIds[3] = p + n;
+        cIds[4] = p + n2;         cIds[5] = p + 1 + n2;
+        cIds[6] = p + 1 + n + n2; cIds[7] = p + n + n2;
+
+        for (let t = 0; t < 6; t++) {
+          const T = TETS[t];
+          let cnt = 0;
+          for (let e = 0; e < 4; e++) {
+            const id = cIds[T[e]];
+            tIds[e] = id;
+            const ins = field_[id] >= ctx.iso ? 1 : 0;
+            in4[e] = ins;
+            cnt += ins;
           }
-          const p = jBase + i;
-          // 8 个角点的全局 id：直接算，不再每格 map 一次
-          cIds[0] = p;              cIds[1] = p + 1;
-          cIds[2] = p + 1 + n;      cIds[3] = p + n;
-          cIds[4] = p + n2;         cIds[5] = p + 1 + n2;
-          cIds[6] = p + 1 + n + n2; cIds[7] = p + n + n2;
+          if (cnt === 0 || cnt === 4) continue;
 
-          for (let t = 0; t < 6; t++) {
-            const T = TETS[t];
-            let cnt = 0;
+          if (cnt === 1 || cnt === 3) {
+            // 唯一的"异类"顶点：cnt=1 时是内部点，cnt=3 时是外部点
+            let odd = 0;
             for (let e = 0; e < 4; e++) {
-              const id = cIds[T[e]];
-              tIds[e] = id;
-              const ins = field[id] >= iso ? 1 : 0;
-              in4[e] = ins;
-              cnt += ins;
+              if ((cnt === 1) === (in4[e] === 1)) { odd = e; break; }
             }
-            if (cnt === 0 || cnt === 4) continue;
-
-            if (cnt === 1 || cnt === 3) {
-              // 唯一的"异类"顶点：cnt=1 时是内部点，cnt=3 时是外部点
-              let odd = 0;
-              for (let e = 0; e < 4; e++) {
-                if ((cnt === 1) === (in4[e] === 1)) { odd = e; break; }
-              }
-              let m = 0;
-              for (let e = 0; e < 4; e++) if (e !== odd) cross[m++] = emitVertex(tIds[odd], tIds[e]);
-              pushTri(cross[0], cross[1], cross[2]);
-            } else {
-              let i0 = -1, i1 = -1, o0 = -1, o1 = -1;
-              for (let e = 0; e < 4; e++) {
-                if (in4[e]) { if (i0 < 0) i0 = e; else i1 = e; }
-                else { if (o0 < 0) o0 = e; else o1 = e; }
-              }
-              const pac = emitVertex(tIds[i0], tIds[o0]);
-              const pad = emitVertex(tIds[i0], tIds[o1]);
-              const pbc = emitVertex(tIds[i1], tIds[o0]);
-              const pbd = emitVertex(tIds[i1], tIds[o1]);
-              pushTri(pac, pbc, pbd);
-              pushTri(pac, pbd, pad);
+            let m = 0;
+            for (let e = 0; e < 4; e++) if (e !== odd) cross[m++] = emitVertex(tIds[odd], tIds[e]);
+            pushTri(cross[0], cross[1], cross[2]);
+          } else {
+            let i0 = -1, i1 = -1, o0 = -1, o1 = -1;
+            for (let e = 0; e < 4; e++) {
+              if (in4[e]) { if (i0 < 0) i0 = e; else i1 = e; }
+              else { if (o0 < 0) o0 = e; else o1 = e; }
             }
+            const pac = emitVertex(tIds[i0], tIds[o0]);
+            const pad = emitVertex(tIds[i0], tIds[o1]);
+            const pbc = emitVertex(tIds[i1], tIds[o0]);
+            const pbd = emitVertex(tIds[i1], tIds[o1]);
+            pushTri(pac, pbc, pbd);
+            pushTri(pac, pbd, pad);
           }
         }
       }
     }
+    ctx.k++;
+    return ctx.k < n - 1;
+  }
 
-    // 构建几何（法线来自梯度、方向朝外；绕向已在 pushTri 中强制一致）
+  /** 全部单元扫完后建几何（法线来自梯度、方向朝外；绕向已在 pushTri 中强制一致）。 */
+  function extractBuildGeometry(ctx) {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geo.setIndex(indices);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(ctx.positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(ctx.normals, 3));
+    geo.setIndex(ctx.indices);
     geo.computeBoundingSphere();
     return geo;
   }
 
-  /**
-   * 仅调整等值面阈值或着色方式：
-   *   · 阈值变了 → 需重新提取网格
-   *   · 只有着色变了 → 复用已有网格，仅重涂顶点色（快得多）
-   */
   /**
    * 把"占峰值的比例"换算成 |ψ|² 的绝对阈值。
    *
@@ -664,17 +744,30 @@ window.Orbit3D = (function () {
       //   避免阈值来回拖时盒子跟着抖。
       const needGrow = expectedExtent > gridExtent;
       const needShrink = expectedExtent < gridExtent * 0.88;
-      if (!surfaceObj || critChanged || needGrow || needShrink) {
-        // ★ terms / relPhase 必须一起传下去。漏了它们，computeField 会把叠加态当成
-        //   单一本征态重算 —— 盒子按单轨道定尺寸（可塌到 1.2 的下限）、内容也不是叠加态。
-        //   叠加态"一调阈值体积就变 0"正是这么来的。
-        computeField(P.n, P.l, P.m, P.mode, lastRes, levelAbs, P.terms, P.relPhase, 0, 0, P.Z);
-      }
-      rebuildSurface(false);   // 仅阈值/着色变化：相机原则上不动
-      // ★ 但阈值低到曲面胀出当前取景时就必须拉远，否则曲面被裁。
-      //   fitViewIfNeeded 只在"尺度真的变了"时才动相机，故常见阈值区间
-      //   （≥30% 参考水平）仍是相机纹丝不动，只有往低调时才逐步拉远。
-      fitViewIfNeeded(currentFrameExtent(), lastDecorExtent);
+      // ★ 还要核对"缓存的那份场是不是现在要的那份"。
+      //   切片之前这个前提自动成立；切片之后"准备"与"发布"之间隔着几十帧，
+      //   若上一次重建还没发布就被新的调用打断，模块里留着的是**上一套配置**的场
+      //   （例如刚从 3p_z 切到 3d_z²，场却还是 3p_z 的），此时复用等于拿错函数抽面。
+      //   实测就是这样：3d_z² 的盒子 16.69 与 |ψ|² 峰值 7.68e-4 都在，但发布出去的
+      //   是 3p_z 的场（峰值 1.67e-3、盒子 13.46）—— 抽出的面看起来"还是那个轨道"，
+      //   尺寸却对不上，且不报任何错。
+      const sameField = (fieldKey === fieldKeyOf({
+        n: P.n, l: P.l, m: P.m, mode: P.mode, res: lastRes,
+        Z: (P.Z > 0) ? P.Z : 1, terms: termsSig(P.terms),
+        relPhase: (P.terms && P.terms.length) ? (P.relPhase || 0) : 0, grading: 0,
+      }));
+      // ★ 需要重算场时，把参数**交给流水线**去做第一段，而不是在这里同步算掉 ——
+      //   这一算原来是 ~100ms 的硬阻塞，正是"拖阈值卡一下"的主要来源。
+      //   terms / relPhase 必须一起传下去：漏了它们，重算会把叠加态当成单一本征态
+      //   （盒子按单轨道定尺寸、可塌到 1.2 的下限，内容也不是叠加态），
+      //   "叠加态一调阈值体积就变 0"就是这么来的。
+      const fieldSpec = (!surfaceObj || critChanged || needGrow || needShrink || !sameField)
+        ? [P.n, P.l, P.m, P.mode, lastRes, levelAbs, P.terms, P.relPhase, 0, 0, P.Z]
+        : null;
+      // ★ 取景交给流水线收尾时做（'decor'）：阈值低到曲面胀出当前取景时必须拉远，
+      //   否则曲面被裁。fitViewIfNeeded 只在"尺度真的变了"时才动相机，故常见阈值
+      //   区间（≥30% 参考水平）仍是相机纹丝不动，只有往低调时才逐步拉远。
+      rebuildSurface(false, fieldSpec, 'decor');
     } else if (colorChanged && surfaceGeoRef) {
       paintSurfaceColors(surfaceGeoRef);
       // ★ 局部精细化的补片是**另一块网格**，必须一起重涂。
@@ -684,10 +777,17 @@ window.Orbit3D = (function () {
     }
   }
 
-  function buildSurface(levelFraction, refit) {
-    if (!field) return;
+  /**
+   * @param {number} levelFraction 阈值（占参考峰值的比例）
+   * @param {boolean} refit 是否重新取景
+   * @param {Array} [fieldSpec] 需要重算标量场时给出的参数数组（见 rebuildSurface）
+   */
+  function buildSurface(levelFraction, refit, fieldSpec) {
+    // ★ 守卫要放行"这一次会现算场"的情形：切片之后 field 是在流水线里才产生的，
+    //   首次调用时它还是 null —— 用老写法 `if (!field) return` 会第一次就不建面。
+    if (!field && !fieldSpec) return;
     surfaceLevelFraction = levelFraction;
-    rebuildSurface(!!refit);
+    rebuildSurface(!!refit, fieldSpec || null);
   }
 
   /**
@@ -726,73 +826,174 @@ window.Orbit3D = (function () {
     if (geo.getAttribute('normal')) geo.getAttribute('normal').needsUpdate = true;
   }
 
+  // 单次 step() 里最多处理多少个元素。
+  //
+  // ★ 这个数字是**切片粒度的真正所在**：Sched 的契约是"step() 返回 true 就立刻再调
+  //   一次，直到本帧预算用完"，所以"切得细不细"取决于单次 step 干多少活，而不在于
+  //   写了多少个 phase。若某个阶段一口气扫完整个数组（哪怕它挂在切片框架里），
+  //   那它依然是一个上百毫秒的阻塞块 —— 等于没切。
+  // ★ 取值只影响"什么时候算"，不影响"算什么"：这些阶段全是按固定顺序的纯写入，
+  //   一批处理 4096 个还是 400 万个，结果逐位相同。
+  const CHUNK_V = 4096;        // 顶点数（平滑 / 焊接）
+  const CHUNK_TRI = 2048;      // 三角形数（度数统计 / 邻接填充）
+
   // 顶点平滑（Taubin λ-μ 迭代）：松弛行进四面体产生的离散凹凸，使表面光滑且体积基本不变
-  function smoothVertices(positions, indices, iterations) {
+  /**
+   * 顶点平滑（Taubin λ-μ 迭代）的准备阶段。
+   *
+   * ★ 拆成"准备 + 逐段推进"是为了让 Sched 摊到多帧里跑完（原本是一次 10–100ms 的同步块）。
+   *   三段各有自己的切片边界：
+   *     phase 0 统计各顶点度数 —— 按三角形区间推进；
+   *     phase 1 建邻接表     —— 先一次前缀和（单步、很快），再按三角形区间填充；
+   *     phase 2+ 逐轮平滑    —— 每轮内按顶点区间推进，**轮与轮之间是硬屏障**
+   *                             （positions 被原地覆盖，下一轮读的是上一轮的结果）。
+   *   邻接填充按三角形**升序**处理、与不切片时同序，故结果逐位一致。
+   */
+  function prepareSmooth(positions, indices, iterations) {
     const nv = positions.length / 3;
-    // 用邻接数组（比 Set 更省内存）
-    const deg = new Uint32Array(nv);
-    // 先统计度
-    for (let i = 0; i < indices.length; i += 3) {
-      deg[indices[i]]++; deg[indices[i + 1]]++; deg[indices[i + 2]]++;
-    }
-    const off = new Int32Array(nv + 1);
-    for (let v = 0; v < nv; v++) off[v + 1] = off[v] + deg[v];
-    const adj = new Int32Array(off[nv]);          // 按总度数分配，绝不越界
-    for (let v = 0; v < nv; v++) deg[v] = 0;      // 复用为写入游标
-    for (let i = 0; i < indices.length; i += 3) {
-      const a = indices[i], b = indices[i + 1], c = indices[i + 2];
-      const put = (u, w) => { let ok = true; for (let k = off[u]; k < off[u] + deg[u]; k++) if (adj[k] === w) { ok = false; break; } if (ok) adj[off[u] + deg[u]++] = w; };
-      put(a, b); put(a, c); put(b, a); put(b, c); put(c, a); put(c, b);
-    }
-    const tmp = new Float32Array(positions.length);
-    for (let it = 0; it < iterations; it++) {
-      const lambda = (it % 2 === 0) ? 0.5 : -0.53;    // Taubin: 交替正负
-      for (let v = 0; v < nv; v++) {
-        const d = deg[v] || 1;
-        let cx = 0, cy = 0, cz = 0;
-        for (let k = off[v]; k < off[v] + deg[v]; k++) {
-          const u = adj[k];
-          cx += positions[3 * u]; cy += positions[3 * u + 1]; cz += positions[3 * u + 2];
-        }
-        tmp[3 * v] = positions[3 * v] + lambda * (cx / d - positions[3 * v]);
-        tmp[3 * v + 1] = positions[3 * v + 1] + lambda * (cy / d - positions[3 * v + 1]);
-        tmp[3 * v + 2] = positions[3 * v + 2] + lambda * (cz / d - positions[3 * v + 2]);
-      }
-      positions.set(tmp);
-    }
+    return {
+      positions, indices, nv, iterations,
+      deg: new Uint32Array(nv), off: null, adj: null, tmp: null,
+      i: 0, it: 0, phase: 0,
+    };
   }
 
-  // 焊接行进输出的"三角形汤"为真正的索引网格（合并重复顶点，法线取平均并归一化）
-  function weldTriangleSoup(positions, normals, indices) {
-    const npos = positions.length / 3;
-    const map = new Map();
-    const wp = [], wn = [], wmap = new Array(npos);
-    const PREC = 1e4;
-    for (let i = 0; i < npos; i++) {
-      const key = Math.round(positions[3 * i] * PREC) + '_' +
-                  Math.round(positions[3 * i + 1] * PREC) + '_' +
-                  Math.round(positions[3 * i + 2] * PREC);
-      let id = map.get(key);
-      if (id === undefined) {
-        id = wp.length / 3;
-        map.set(key, id);
-        wp.push(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
-        wn.push(normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]);
-      } else {
-        wn[3 * id] += normals[3 * i];
-        wn[3 * id + 1] += normals[3 * i + 1];
-        wn[3 * id + 2] += normals[3 * i + 2];
+  /** 推进一段。返回 false 表示平滑全部做完（positions 已就地更新）。 */
+  function stepSmooth(ctx) {
+    const { positions, indices, nv } = ctx;
+    if (ctx.phase === 0) {
+      const end = Math.min(ctx.i + CHUNK_TRI * 3, indices.length);
+      for (let i = ctx.i; i < end; i += 3) {
+        ctx.deg[indices[i]]++; ctx.deg[indices[i + 1]]++; ctx.deg[indices[i + 2]]++;
       }
-      wmap[i] = id;
+      ctx.i = end;
+      if (end < indices.length) return true;        // 这一批扫完，下一批接着扫
+      ctx.i = 0; ctx.phase = 1;
+      return true;
     }
-    const win = new Uint32Array(indices.length);
-    for (let i = 0; i < indices.length; i++) win[i] = wmap[indices[i]];
+    if (ctx.phase === 1) {
+      if (!ctx.off) {
+        // 前缀和 + 把 deg 复用为写入游标 —— 单步完成（O(nv)，很快）
+        const off = new Int32Array(nv + 1);
+        for (let v = 0; v < nv; v++) off[v + 1] = off[v] + ctx.deg[v];
+        ctx.off = off;
+        ctx.adj = new Int32Array(off[nv]);          // 按总度数分配，绝不越界
+        for (let v = 0; v < nv; v++) ctx.deg[v] = 0;
+        ctx.tmp = new Float32Array(positions.length);
+        ctx.i = 0;
+        return true;
+      }
+      const off = ctx.off, deg = ctx.deg, adj = ctx.adj;
+      const put = (u, w) => { let ok = true; for (let k = off[u]; k < off[u] + deg[u]; k++) if (adj[k] === w) { ok = false; break; } if (ok) adj[off[u] + deg[u]++] = w; };
+      const end = Math.min(ctx.i + CHUNK_TRI * 3, indices.length);
+      for (let i = ctx.i; i < end; i += 3) {
+        const a = indices[i], b = indices[i + 1], c = indices[i + 2];
+        put(a, b); put(a, c); put(b, a); put(b, c); put(c, a); put(c, b);
+      }
+      ctx.i = end;
+      if (end < indices.length) return true;
+      ctx.i = 0; ctx.phase = 2;
+      return true;
+    }
+    // phase 2..：第 (phase-2) 轮平滑
+    const it = ctx.phase - 2;
+    const lambda = (it % 2 === 0) ? 0.5 : -0.53;    // Taubin: 交替正负
+    const deg = ctx.deg, off = ctx.off, adj = ctx.adj, tmp = ctx.tmp;
+    const end = Math.min(ctx.i + CHUNK_V, nv);
+    for (let v = ctx.i; v < end; v++) {
+      const d = deg[v] || 1;
+      let cx = 0, cy = 0, cz = 0;
+      for (let k = off[v]; k < off[v] + deg[v]; k++) {
+        const u = adj[k];
+        cx += positions[3 * u]; cy += positions[3 * u + 1]; cz += positions[3 * u + 2];
+      }
+      tmp[3 * v] = positions[3 * v] + lambda * (cx / d - positions[3 * v]);
+      tmp[3 * v + 1] = positions[3 * v + 1] + lambda * (cy / d - positions[3 * v + 1]);
+      tmp[3 * v + 2] = positions[3 * v + 2] + lambda * (cz / d - positions[3 * v + 2]);
+    }
+    ctx.i = end;
+    if (end < nv) return true;                       // 本轮没走完，下一批接着走
+    positions.set(tmp);                              // 本轮结束才写回 —— 轮间硬屏障
+    ctx.i = 0; ctx.phase++;
+    return ctx.phase - 2 < ctx.iterations;
+  }
+
+  /**
+   * 焊接"三角形汤"为真正的索引网格的准备阶段（合并重复顶点、法线取平均后归一化）。
+   *
+   * ★ 拆段的理由同其它重活：原本一次 10–100ms 的同步块。
+   *   三段：phase 0 去重（按顶点区间）、phase 1 索引重映射（按索引区间）、
+   *   phase 2 法线归一化（按焊接后顶点区间）。
+   *   ★ 去重**必须按升序、共用同一个 Map** —— 顶点 id 是按"首次出现顺序"分配的，
+   *     分成几片各建一个 Map 会让接缝处的重复顶点不被合并（法线不平均），结果就变了。
+   *     切片只省"单次阻塞时长"，不省工作量。
+   */
+  function prepareWeld(positions, normals, indices) {
+    const npos = positions.length / 3;
+    return {
+      positions, normals, indices, npos,
+      map: new Map(), wp: [], wn: [], wmap: new Array(npos), win: null,
+      i: 0, phase: 0, PREC: 1e4,
+    };
+  }
+
+  /** 推进一段。返回 false 表示焊接完成，可用 weldResult(ctx) 取结果。 */
+  function stepWeld(ctx) {
+    const { positions, normals, indices, map, wp, wn, wmap } = ctx;
+    if (ctx.phase === 0) {
+      const P = ctx.PREC;
+      const end = Math.min(ctx.i + CHUNK_V, ctx.npos);
+      for (let i = ctx.i; i < end; i++) {
+        const key = Math.round(positions[3 * i] * P) + '_' +
+                    Math.round(positions[3 * i + 1] * P) + '_' +
+                    Math.round(positions[3 * i + 2] * P);
+        let id = map.get(key);
+        if (id === undefined) {
+          id = wp.length / 3;
+          map.set(key, id);
+          wp.push(positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]);
+          wn.push(normals[3 * i], normals[3 * i + 1], normals[3 * i + 2]);
+        } else {
+          wn[3 * id] += normals[3 * i];
+          wn[3 * id + 1] += normals[3 * i + 1];
+          wn[3 * id + 2] += normals[3 * i + 2];
+        }
+        wmap[i] = id;
+      }
+      ctx.i = end;
+      if (end < ctx.npos) return true;               // 这一批去重完，下一批接着来
+      // ★ Map 是跨批共享的，且必须按**升序**处理 —— 顶点 id 按"首次出现顺序"分配，
+      //   分批各建一个 Map 会让接缝处的重复顶点合不上（法线不平均），结果就变了。
+      //   分批只省"单次阻塞时长"，不省工作量。
+      ctx.i = 0; ctx.phase = 1;
+      return true;
+    }
+    if (ctx.phase === 1) {
+      if (!ctx.win) { ctx.win = new Uint32Array(indices.length); return true; }
+      const end = Math.min(ctx.i + CHUNK_V * 3, indices.length);
+      for (let i = ctx.i; i < end; i++) ctx.win[i] = wmap[indices[i]];
+      ctx.i = end;
+      if (end < indices.length) return true;
+      ctx.i = 0; ctx.phase = 2;
+      return true;
+    }
     const nv = wp.length / 3;
-    for (let v = 0; v < nv; v++) {
+    const end = Math.min(ctx.i + CHUNK_V, nv);
+    for (let v = ctx.i; v < end; v++) {
       const len = Math.hypot(wn[3 * v], wn[3 * v + 1], wn[3 * v + 2]) || 1;
       wn[3 * v] /= len; wn[3 * v + 1] /= len; wn[3 * v + 2] /= len;
     }
-    return { positions: new Float32Array(wp), normals: new Float32Array(wn), indices: win };
+    ctx.i = end;
+    if (end < nv) return true;
+    return false;
+  }
+
+  function weldResult(ctx) {
+    return {
+      positions: new Float32Array(ctx.wp),
+      normals: new Float32Array(ctx.wn),
+      indices: ctx.win,
+    };
   }
 
   /** 焊接平滑后的顶点 → 可渲染网格（着色 + 材质）。粗网格与精细化补片共用这一段，
@@ -825,7 +1026,16 @@ window.Orbit3D = (function () {
   //     （这就是不采用"只在切点附近挖个小盒"的原因：小盒边界会横穿曲面，
   //       粗细两套网格在边界处不共形，会露出细缝。）
   // ---------------------------------------------------------------------------
-  const FINE_RES_MAX = 112;      // 细网格分辨率上限（112³ ≈ 1.1M 节点 ≈ 18MB）
+  // 细网格分辨率上限。窄屏（同 main.js 的 isMobile 口径）下调一档。
+  // ★ 112 不是随手取的：它同时是"外侧壳间空档能不能过关卡①"的分水岭。
+  //   实测 5d_{x²−y²} 在 0.784% 下，外侧空档（r=24.2、缝 0.67）需要 res≈122 才能
+  //   把细网格单元的外伸限制在空档内，上限 112 时它被拒、补片只能退到内侧空档
+  //   （r=10.9），r>10.9 的中间层与外壳就全留给粗网格（格距 1.75 a₀，比细颈还宽）。
+  //   而把上限提到 128 让外侧空档过关后，**并没有更好**：几何只小幅改善（中间层内缘
+  //   从 0.38 格/缝提到 1.43 格/缝），却把补片推到可见区、在交界处引入新的接缝
+  //   （实测：内部色阶突跳 +21%，且集中在一条窄竖带上——那是接缝而非纹理），
+  //   同时多付 50% 的内存与时间。故保持 112。
+  const FINE_RES_MAX = window.matchMedia('(max-width: 768px)').matches ? 96 : 112;
   const FINE_SETTLE_MS = 450;    // 距上次重建小于此值视为"用户还在连续调整"
   let fineObj = null;            // 精细化补出来的那块曲面
   let lastRebuildAt = 0;
@@ -835,12 +1045,15 @@ window.Orbit3D = (function () {
    * 拖阈值时每一步都会重建，细网格要多花约 0.7 秒，连续拖动会明显发卡。
    * 所以：**连续调整期间先跳过精细化，停下来后自动补一次**。
    * 关键是"补一次"——否则跳过之后就再也没人触发重建，细网格永远不出现。
+   * ★ 这次重试必须走一个**显式的"我是补精细化来的"入口**（forceFine）：否则它自己会
+   *   把"刚重建过"的时间戳刷新，planFinePatch 于是又判定"用户还在调整"、又排一次重试，
+   *   无限推迟、细颈永远不出现。实测踩过 —— 8 个用例的细颈补片一夜之间全部消失。
    */
   function scheduleFineRetry() {
     if (fineRetryTimer) return;
     fineRetryTimer = setTimeout(function () {
       fineRetryTimer = null;
-      rebuildSurface(false);
+      rebuildSurface(false, null, null, true);      // true = 补精细化重试，跳过"还在调整"判据
     }, FINE_SETTLE_MS + 70);
   }
 
@@ -859,10 +1072,11 @@ window.Orbit3D = (function () {
    *   ② l ≥ 1 且有径向节点——细颈由**角度节面**造成，径向节点提供无接缝的分界面
    *   ③ 细颈比粗网格单元格还窄——粗网格已经分得开就不必精细化
    */
-  function planFinePatch(iso) {
+  function planFinePatch(iso, force) {
     if (window.__ORBIT_PREVIEW__) return null;                 // 拖动中不付这份开销
-    // 连续调整期间跳过（见 scheduleFineRetry）：先保证拖动跟手，停下来再补精细化
-    if (performance.now() - lastRebuildAt < FINE_SETTLE_MS) { scheduleFineRetry(); return null; }
+    // 连续调整期间跳过（见 scheduleFineRetry）：先保证拖动跟手，停下来再补精细化。
+    // ★ force 是"这次就是那次补精细化"—— 重试若也受这条判据管，就会自己把自己挡住。
+    if (!force && performance.now() - lastRebuildAt < FINE_SETTLE_MS) { scheduleFineRetry(); return null; }
     const P = surfaceParams;
     if (!P || (P.terms && P.terms.length)) return null;
     if (P.l < 1 || P.n - P.l - 1 < 1) return null;
@@ -901,9 +1115,27 @@ window.Orbit3D = (function () {
     if (!isFinite(half) || !(half > 0)) return null;
     const gap = 2 * half;
     if (gap > 2.5 * cellCoarse) return null;                   // 粗网格分得开，不必精细化
-    // 让缝隙跨约 2.5 个细单元格：盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap
-    let res = Math.ceil((5 * radius) / gap);
-    res = Math.min(Math.max(res, nGrid), FINE_RES_MAX);
+    // 起点：让缝隙跨约 2.5 个细单元格（盒边长 2·radius，故 res ≈ 2·radius/(gap/2.5) = 5·radius/gap）
+    const res0 = Math.max(Math.ceil((5 * radius) / gap), nGrid);
+    // ★ 然后**往上试**到两道关都过为止，而不是拿估值直接过闸。
+    //   理由：上面那个估值只保证**核附近**的格距够细（渐变网格的核最密），
+    //   而关卡①管的是盒子**最外层**的格距 —— 外疏内密，两者能差好几倍。
+    //   拿核的估值去过外层的闸，低阈值下必然越界，表现就是"阈值一低就不精细化了"：
+    //   实测 5f 在 3% 有精细化、降到 1% 就没了，而它只需把 res 从 68 提到 88 就能过。
+    //   搜索是单调向上、上限 FINE_RES_MAX，故代价有界（最多几十次纯算术比较）。
+    for (let res = Math.min(res0, FINE_RES_MAX); res <= FINE_RES_MAX; res++) {
+      const plan = fineAtRes(radius, width, gap, cellCoarse, res);
+      if (plan) return plan;
+    }
+    return null;
+  }
+
+  /**
+   * 在指定分辨率下算细网格参数；两道关任一不过就返回 null，由调用方提高分辨率再试。
+   *   ① 不越界 —— 细网格单元不得伸进外层壳（否则两套网格在接缝处各画一遍 / 露出裂缝）
+   *   ② 分辨率够 —— 钳位之后核附近的**实际**格距仍要让细颈缝隙跨得开
+   */
+  function fineAtRes(radius, width, gap, cellCoarse, res) {
     // ★ 细网格用**径向渐变**坐标。缝隙要跨 ~4 个单元格才不会被焊在一起：
     //   均匀网格在半径 radius 的盒子里做到这点需要 res ≈ 4·2·radius/gap ≈ 190³（≈108MB）；
     //   渐变后同样的节点数足以把核附近的单元格压到 gap/4。
@@ -925,80 +1157,293 @@ window.Orbit3D = (function () {
     return { radius: radius, res: res, gap: gap, cellCoarse: cellCoarse, grade: grade };
   }
 
-  /** 在节点球内用更细的网格重算并抽取那块曲面（需在粗网格建好之后调用） */
-  function buildFinePatch(iso, plan) {
-    if (!plan) return null;
-    const P = surfaceParams;
-    // computeField / extractSurface 都读写模块级的那几个场量，这里先存后还原，
-    // 免得为了"再算一张网格"去把整条管线改成传参式（改动大、风险高）。
-    const saved = { field: field, gx: gradX, gy: gradY, gz: gradZ,
-      n: nGrid, ext: gridExtent, mx: fieldMax, xs: gridXs };
-    let soup = null;
-    try {
-      computeField(P.n, P.l, P.m, P.mode, plan.res, iso, null, 0, plan.radius, plan.grade, P.Z);
-      soup = extractSurface(iso, plan.radius, true);           // 只取中心在球内的单元
-    } finally {
-      field = saved.field; gradX = saved.gx; gradY = saved.gy; gradZ = saved.gz;
-      nGrid = saved.n; gridExtent = saved.ext; fieldMax = saved.mx;
-      // ★ gridXs 也必须还原：粗网格后续的抽取（如换阈值时复用缓存场）仍要用它。
-      //   漏了这一步，粗网格会用细网格的渐变坐标去解释自己的场 → 形状整体错乱。
-      gridXs = saved.xs;
-    }
-    if (!soup || !soup.getAttribute('position').count) return null;
-    const welded = weldTriangleSoup(
-      soup.getAttribute('position').array,
-      soup.getAttribute('normal').array,
-      soup.getIndex().array
-    );
-    const nv = welded.positions.length / 3;
-    // ★ 这里**刻意不做 Taubin 平滑**（粗网格那一步要做）。
-    //   平滑的作用尺度正比于网格间距：粗网格 0.82a₀ 间距下 2 轮只抹掉行进四面体的
-    //   锯齿（正是设计意图），但细网格是 0.11a₀ 间距，同样 2 轮会抹平 0.2a₀ 尺度的
-    //   东西 —— 那恰好就是细颈的尺寸，于是真实的喇叭口被抹成弯月面（"像有表面张力"、
-    //   曲率符号翻转）。而细网格的锯齿在正常缩放下不到 1 像素，本来也不需要平滑。
-    fineObj = meshFromWelded(welded);
-    scene.add(fineObj);
-    return { verts: nv, res: plan.res, radius: plan.radius, gap: plan.gap, grade: plan.grade };
+  /** 细颈阶段要临时顶替的模块级场量 —— 存 / 还原（见 rebuildSurface 的分帧说明） */
+  function fineSave() {
+    return { field: field, gx: gradX, gy: gradY, gz: gradZ,
+             n: nGrid, ext: gridExtent, mx: fieldMax, xs: gridXs,
+             key: fieldKey, desc: fieldDesc };
+  }
+  function fineRestore(s) {
+    field = s.field; gradX = s.gx; gradY = s.gy; gradZ = s.gz;
+    nGrid = s.n; gridExtent = s.ext; fieldMax = s.mx;
+    // ★ gridXs 也必须还原：粗网格后续的抽取（如换阈值时复用缓存场）仍要用它。
+    //   漏了这一步，粗网格会用细网格的渐变坐标去解释自己的场 → 形状整体错乱。
+    gridXs = s.xs;
+    // ★ "这一份场是什么"也要还原 —— 它和数组是一体的：发布了数组却留着细网格的
+    //   指纹，下一次复用判断就会把粗网格的场误认成细网格的场（或反之）。
+    fieldKey = s.key; fieldDesc = s.desc;
   }
 
-  function rebuildSurface(refit) {
+  let rebuildHandle = null;      // 在飞的重建任务
+  let pendingRebuild = null;     // 拖动中后来的请求：排队覆盖（见 rebuildSurface 的说明）
+
+  /**
+   * 等值面重建的**分帧管线**。这是本次"渲染不卡顿"改动的核心。
+   *
+   * 原本这是一条同步流水：dispose 旧面 → 抽面 → 焊接 → 平滑 → 建 mesh → 细颈，
+   * 一次 200–700ms 全部占住主线程（自动旋转停住、按钮点不动、拖滑块不跟手）。
+   * 现在每个阶段都拆成"一次推进一层 k / 一段区间"，交给 `Sched` 按每帧预算批，
+   * 结果分帧长出来 —— 相机阻尼与输入全程不被打断。
+   *
+   * ★ 三条不变量：
+   *   ① **新的几何全部就绪后才替换旧的**。原实现是先 dispose 再慢慢算，
+   *      切片后这个空窗会持续十几帧、画面会空掉。现在粗面一算完就换上去，
+   *      细颈随后分帧补 —— 用户先看到略糙的完整形状，再看到它变精细。
+   *   ② **新的重建取消在飞的那一次**（离散变更：状态变了，旧结果已经没人要）。
+   *      唯一的例外是**拖动中**——那时改为"排队覆盖"，理由见下面的注释。
+   *   ③ 细颈阶段半改过的模块级场量，在 abort 时**同步还原**（见 abortRebuild）。
+   *
+   * @param {boolean} refit 是否重新取景（换轨道/复位时为真）
+   * @param {Array|null} fieldSpec 需要重算标量场时给出的 computeField 参数数组；为 null 表示复用缓存场
+   * @param {string} [fitMode] 收尾时怎么取景：'frame' = 按本档尺度重取景（换轨道）；
+   *        'decor' = 只按辅助几何（节面球）兜底（降阈值把曲面拖出画面时拉远）；
+   *        省略时跟随 refit（refit 为真则 'frame'，否则不取景）。
+   *        ★ 取景**必须在流水线收尾时做**，不能在调用方紧接着做：现在调用方一返回，
+   *          场还没算，gridExtent / fieldMax 都还是上一轮的，取景会晚一拍。
+   * @param {boolean} [fineRetry] 这一次是"补精细化"的重试（见 scheduleFineRetry）。
+   *        它必须绕开"用户还在连续调整"那条判据，否则会自己把自己无限挡住。
+   */
+  function rebuildSurface(refit, fieldSpec, fitMode, fineRetry) {
     // 本次已在重建，作废排队中的那次"补精细化"重试
     if (fineRetryTimer) { clearTimeout(fineRetryTimer); fineRetryTimer = null; }
+    // ★ 拖动中**不取消**在飞的那一次，改为"排队并覆盖"。
+    //   理由：拖动中每个 input 都来一次请求，若每次都取消，一次重建（宽约 100ms）
+    //   永远跑不完 —— 用户在整个拖动过程中一次都看不到新面（实测正是如此：分辨率
+    //   采样全程恒为拖动前的值，帧率倒是漂亮，因为根本没在算）。
+    //   排队覆盖保证"总有一次能跑完并换上去"，画面于是以重建自身的节奏连续更新。
+    //   非拖动时仍照旧取消：那是一次离散变更，旧结果确实没人要，等它跑完只是白等。
+    if (rebuildHandle) {
+      if (window.__ORBIT_PREVIEW__ && !rebuildHandle.isDone()) {
+        pendingRebuild = { refit: refit, fieldSpec: fieldSpec, fitMode: fitMode, fineRetry: fineRetry };
+        return;
+      }
+      rebuildHandle.cancel(); rebuildHandle = null;
+    }
+    if (!surfaceParams) return;
+    // ★ "距今最近的一次重建"要连**开始**时刻一起记（收尾时还会再记一次，见 finishRebuild）。
+    //   理由：planFinePatch 用"距上次重建多久"判断"用户是不是还在连续调整"，而切片之后
+    //   一次重建从开始到结束要跨几百毫秒 —— 只记结束时刻的话，一个**正在跑**的重建会被
+    //   当成"太久没动了"，于是紧接着到来的下一次重建会去规划细颈，正好在最忙的时候加活。
+    //   ★ 补精细化的重试**不记** —— 它自己就是"停下来之后的那一次"，记了就把自己也挡住。
+    if (!fineRetry) lastRebuildAt = performance.now();
+    const st = {
+      refit: !!refit,
+      fitMode: fitMode || (refit ? 'frame' : null),
+      fineRetry: !!fineRetry,
+      t0: performance.now(), tExtract: 0, tWeld: 0, tMesh: 0, tSwap: 0,
+      iso: 0, finePlan: null, fld: null, ext: null, weld: null, sm: null, geo: null,
+      welded: null, coarseMesh: null, fineInfo: null, saved: null, empty: false,
+      phase: fieldSpec ? 'fieldPrep' : 'extractPrep',
+      fieldSpec: fieldSpec || null,
+    };
+    rebuildHandle = window.Sched.run({
+      label: 'rebuildSurface',
+      step: function () { return rebuildStep(st); },
+      done: function () {
+        rebuildHandle = null;
+        finishRebuild(st);
+        // 拖动中攒下的那次请求：上一次刚跑完，立刻接着跑（排队覆盖，绝不会堆叠）
+        if (pendingRebuild) {
+          const p = pendingRebuild; pendingRebuild = null;
+          rebuildSurface(p.refit, p.fieldSpec, p.fitMode, p.fineRetry);
+        }
+      },
+      abort: function () { rebuildHandle = null; abortRebuild(st); },
+    });
+  }
+
+  /** 推进一个阶段。返回 false 表示整条流水走完（含细颈）。 */
+  function rebuildStep(st) {
+    switch (st.phase) {
+      case 'fieldPrep':
+        st.fld = prepareField(st.fieldSpec[0], st.fieldSpec[1], st.fieldSpec[2], st.fieldSpec[3],
+                              st.fieldSpec[4], st.fieldSpec[5], st.fieldSpec[6], st.fieldSpec[7],
+                              st.fieldSpec[8], st.fieldSpec[9], st.fieldSpec[10]);
+        st.phase = 'field';
+        return true;
+      case 'field':
+        if (stepField(st.fld)) return true;
+        st.fld = null;
+        st.phase = 'extractPrep';
+        return true;
+
+      case 'extractPrep': {
+        // ★ 阈值换算必须走 levelAbsFor 这唯一一个出口（取景/标尺/面板显示都用它）。
+        st.iso = Math.max(1e-9, levelAbsFor(surfaceParams, surfaceLevelFraction, surfaceParams.psiCrit));
+        // 先决定要不要精细化：粗网格抽取时就要跳过节点球内的单元
+        st.finePlan = planFinePatch(st.iso, st.fineRetry);
+        st.ext = prepareExtract(st.iso, st.finePlan ? st.finePlan.radius : 0, false);
+        st.phase = 'extract';
+        return true;
+      }
+      case 'extract':
+        if (stepExtract(st.ext)) return true;
+        st.tExtract = performance.now();
+        // ★ 必须先落成 Float32 的几何再焊接：焊接的顶点键是 `round(coor × 1e4)`，
+        //   是个**量化边界** —— 喂 float64 数组与喂 float32 数组，在极少数贴着
+        //   0.00005 的值上会落进不同的格子，顶点数就差几个。这不是洁癖：
+        //   "与改动前逐位一致"正是本轮切片的头号验收判据，而 float64 → float32
+        //   这一步本来就属于原流水线（原来也是从 BufferGeometry 里取 array）。
+        st.geo = extractBuildGeometry(st.ext);
+        st.ext = null;
+        if (!st.geo.getAttribute('position').count) {
+          st.geo = null; st.empty = true; st.phase = 'finish';
+          return true;
+        }
+        st.weld = prepareWeld(st.geo.getAttribute('position').array,
+                              st.geo.getAttribute('normal').array,
+                              st.geo.getIndex().array);
+        st.geo = null;
+        st.phase = 'weld';
+        return true;
+
+      case 'weld':
+        if (stepWeld(st.weld)) return true;
+        st.welded = weldResult(st.weld);
+        st.weld = null;
+        st.tWeld = performance.now();
+        { const nv0 = st.welded.positions.length / 3;
+          if (nv0 > 800 && nv0 < 300000) {
+            st.sm = prepareSmooth(st.welded.positions, st.welded.indices, 2);
+            st.phase = 'smooth';
+            return true;
+          } }
+        st.phase = 'mesh';
+        return true;
+      case 'smooth':
+        if (stepSmooth(st.sm)) return true;
+        st.sm = null;
+        st.phase = 'mesh';
+        return true;
+
+      case 'mesh':
+        // ★ 这里**只建、不上屏**。有细颈补片时，粗面本身是**不完整**的：抽取时按 maskR
+        //   把节点球内的单元挖掉了，那一块是留给细网格补的。若在此就换上屏，从这一帧到
+        //   细颈算完（切片后可以长达一秒）画面上就是一个**洞** —— 同步版不会露这个洞，
+        //   因为两步在同一帧里完成。所以粗面与补片必须**一起**就绪才上屏（见 commitSurface）。
+        st.coarseMesh = meshFromWelded(st.welded);
+        st.welded = null;
+        st.tMesh = performance.now();      // 粗面已建好（尚未上屏，等细颈一起）
+        st.phase = 'finePrep';
+        return true;
+
+      case 'finePrep':
+        // 这次不需要补片（含拖动中主动跳过）→ 粗面本身就是完整的，直接上屏
+        if (!st.finePlan) { commitSurface(st, null); st.phase = 'finish'; return true; }
+        st.saved = fineSave();
+        { const P = surfaceParams;
+          st.fld = prepareField(P.n, P.l, P.m, P.mode, st.finePlan.res, st.iso, null, 0,
+                                st.finePlan.radius, st.finePlan.grade, P.Z); }
+        st.phase = 'fineField';
+        return true;
+      case 'fineField':
+        if (stepField(st.fld)) return true;
+        st.fld = null;
+        st.ext = prepareExtract(st.iso, st.finePlan.radius, true);   // 只取中心在球内的单元
+        st.phase = 'fineExtract';
+        return true;
+      case 'fineExtract':
+        if (stepExtract(st.ext)) return true;
+        st.geo = extractBuildGeometry(st.ext);
+        st.ext = null;
+        if (!st.geo.getAttribute('position').count) {
+          fineRestore(st.saved); st.saved = null;
+          st.geo = null;
+          commitSurface(st, null);            // 细网格没抽出东西 → 只能拿粗面顶上（会有洞，但不空屏）
+          st.phase = 'finish';
+          return true;
+        }
+        st.weld = prepareWeld(st.geo.getAttribute('position').array,
+                              st.geo.getAttribute('normal').array,
+                              st.geo.getIndex().array);
+        st.geo = null;
+        st.phase = 'fineWeld';
+        return true;
+      case 'fineWeld':
+        if (stepWeld(st.weld)) return true;
+        { const welded = weldResult(st.weld);
+          st.weld = null;
+          fineRestore(st.saved); st.saved = null;      // 先把场量还回去，再建网格
+          // ★ 这里**刻意不做 Taubin 平滑**（粗网格那一步要做）。
+          //   平滑的作用尺度正比于网格间距：粗网格 0.82a₀ 间距下 2 轮只抹掉行进四面体的
+          //   锯齿（正是设计意图），但细网格是 0.11a₀ 间距，同样 2 轮会抹平 0.2a₀ 尺度的
+          //   东西 —— 那恰好就是细颈的尺寸，于是真实的喇叭口被抹成弯月面（"像有表面张力"）。
+          //   而细网格的锯齿在正常缩放下不到 1 像素，本来也不需要平滑。
+          const nv = welded.positions.length / 3;
+          st.fineInfo = { verts: nv, res: st.finePlan.res, radius: st.finePlan.radius,
+                          gap: st.finePlan.gap, grade: st.finePlan.grade };
+          commitSurface(st, meshFromWelded(welded));   // 粗面与补片一起上屏
+        }
+        st.phase = 'finish';
+        return true;
+
+      default:      // 'finish'
+        return false;
+    }
+  }
+
+  /**
+   * 换掉当前等值面：**先把新的挂上去，再拆旧的**，中间不会出现"场景里没有曲面"的帧。
+   * 传 null 表示"这次没抽出曲面"（阈值高到只剩空集）—— 那时旧的那张必须收掉，
+   * 否则画面上会一直留着一张上一轮阈值的面，读数与画面完全对不上。
+   */
+  function swapSurfaceMesh(mesh) {
+    if (mesh) scene.add(mesh);
     if (surfaceObj) {
       scene.remove(surfaceObj);
       surfaceObj.geometry.dispose();
       surfaceObj.material.dispose();
-      surfaceObj = null;
     }
+    surfaceObj = mesh || null;
+    surfaceGeoRef = mesh ? mesh.geometry : null;
+    // 细颈补片属于旧的那一片：先收掉，等新的一次细颈算完再挂
     disposeFine();
-    surfaceGeoRef = null;
-    const __t0 = performance.now();
-    // ★ 阈值换算**必须走 levelAbsFor 这唯一一个出口**。这里原先是
-    //   `surfaceLevelFraction * fieldMax`（纯线性），于是判据取 |ψ| 时**少平方了一次** ——
-    //   取景、标尺、面板上的百分比换算全都按 levelAbsFor（|ψ| 档要平方），
-    //   只有真正抽等值面的这一行没跟上：同一个读数下 |ψ| 档的阈值比 |ψ|² 档小一个量级，
-    //   曲面胀出好几倍。
-    //   实测（3p_z）：|ψ|² 档取 10% 与 |ψ| 档取 31.6% 本应是**同一个面**（绝对阈值都是
-    //   1.674e-4、期望外半径都是 12.018），却分别抽出 52252 与 2736 个顶点 ——
-    //   面板上明写着"⟺"，画出来却根本不是一个面。这是用户从界面上看出来的。
-    //   ★ 顺带修好一处**休眠**的错：叠加态按 fieldMax（实际扫描峰值）取值时，干涉会把
-    //   峰值抬高近 2 倍，曲面会碎成几块 —— levelAbsFor 用"无干涉参考峰值"正是为避免它
-    //   （见该函数的说明）。量子态下架后这条暂时无人触发，但换算只该有一处。
-    const iso = Math.max(1e-9, surfaceParams
-      ? levelAbsFor(surfaceParams, surfaceLevelFraction, surfaceParams.psiCrit)
-      : surfaceLevelFraction * fieldMax);
-    // 先决定要不要精细化：粗网格抽取时就要跳过节点球内的单元
-    const finePlan = planFinePatch(iso);
-    const geo = extractSurface(iso, finePlan ? finePlan.radius : 0, false);
-    if (!geo.getAttribute('position').count) {
+  }
+
+  /**
+   * 把这一次算出来的曲面**一次性**换上屏：粗面 + 细颈补片是一个整体，必须一起到位。
+   *
+   * ★ 为什么不能分两次上屏：粗面抽取时按 maskR **挖掉了节点球内的单元**（那一块留给
+   *   细网格补）。只换粗面等于在画面上留一个洞。同步版两步在同一帧里完成，看不出这个
+   *   中间态；切片后细颈要跨几十帧（实测 1.2 秒），洞就会一直挂在屏幕上 ——
+   *   用户看到的"渲染的时候部分等值面会消失"就是这个洞。
+   */
+  function commitSurface(st, fineMesh) {
+    st.tSwap = performance.now();        // 真正上屏的时刻
+    swapSurfaceMesh(st.coarseMesh);      // 加新粗面、拆旧粗面与旧补片
+    st.coarseMesh = null;
+    if (fineMesh) { fineObj = fineMesh; scene.add(fineObj); }
+    // ★ 提交后**必须按当前档位重新同步一次显隐**（不是可选的美化）。
+    //   重建是切片跑的、可能跨几十帧才提交；若用户在提交之前切到了球谐档，
+    //   那次 setVisibility 关掉的是**旧**那一张，而这两张新网格是 THREE 新建的、
+    //   默认 visible = true —— 没人再关它们，于是球谐曲面与空间波函数**同时显示**。
+    //   用户实测路径：复解 l=2 把 m 走一个来回（留下一个在飞的重建）再切球谐。
+    setVisibility(lastVisMode);
+  }
+
+  /** 流水走完后的收尾（取景 + 探针 + lastRebuildAt） */
+  function finishRebuild(st) {
+    // ★ 'decor' 取景要**在空面判断之前**做，这是为了与原实现严格对齐：
+    //   原来这条取景写在调用方 setSurfaceLevel 里，而 rebuildSurface 抽到空面时只是
+    //   `return`，并不影响调用方接着取景 —— 即"空面也照取不误"。反过来，'frame'
+    //   那条原来在 rebuildSurface 内部、位于空面 return 之后，所以空面时**不取景**。
+    if (st.fitMode === 'decor') fitViewIfNeeded(currentFrameExtent(), lastDecorExtent);
+    // 兜底：正常路径在 'finePrep' / 'fineWeld' 里就把面换上屏了，这里只防"某个阶段
+    // 提前返回、曲面却一直没上屏"——那样会永远停在旧面上，比闪一下难查得多。
+    if (st.coarseMesh) commitSurface(st, null);
+    if (st.empty) {
+      // ★ 空面要**显式清场**：切片版"算完才换面"的策略（为了不闪屏）意味着旧曲面
+      //   会一直留在场上 —— 阈值高到抽不出面时必须把它收掉，否则画面上还挂着上一轮
+      //   阈值的面，读数与画面完全对不上。原同步实现是开头就 dispose，天然没有这个问题。
+      swapSurfaceMesh(null);
       // ★ 抽出空面时也要留下现场：否则"体积为 0"这类问题连 fieldMax 是多少、
-      //   阈值相对基准高出多少都看不到（下面那个探针在 return 之后，够不着）。
+      //   阈值相对基准高出多少都看不到。
       if (window.__ORBIT_DEBUG__) {
         window.__SURF_TIMING__ = {
-          empty: true, verts: 0, total: Math.round(performance.now() - __t0),
+          empty: true, verts: 0, total: Math.round(performance.now() - st.t0),
           nGrid: nGrid, gridExtent: +gridExtent.toFixed(4),
           fieldMax: +fieldMax.toFixed(8), fraction: +surfaceLevelFraction.toFixed(4),
-          isoAbs: +iso.toFixed(8),
+          isoAbs: +st.iso.toFixed(8),
           refPeak: surfaceParams ? +levelAbsFor(surfaceParams, 1, surfaceParams.psiCrit).toFixed(8) : null,
           terms: surfaceParams && surfaceParams.terms ? surfaceParams.terms.length : 0,
         };
@@ -1006,41 +1451,22 @@ window.Orbit3D = (function () {
       lastRebuildAt = performance.now();
       return;
     }
-    const __tExtract = performance.now();
-    // 焊接 → 平滑（消除行进四面体的离散凹凸，轮廓更光滑）
-    const welded = weldTriangleSoup(
-      geo.getAttribute('position').array,
-      geo.getAttribute('normal').array,
-      geo.getIndex().array
-    );
-    const nv = welded.positions.length / 3;
-    if (nv > 800 && nv < 300000) smoothVertices(welded.positions, welded.indices, 2);
-    const __tWeld = performance.now();
-
-    surfaceObj = meshFromWelded(welded);
-    const geo2 = surfaceObj.geometry;
-    surfaceGeoRef = geo2;
-
-    // ★ 局部精细化：节点球内那一块改用更细的网格（粗网格已跳过球内单元）
-    const fineInfo = buildFinePatch(iso, finePlan);
-    // 诊断探针：仅在 window.__ORBIT_DEBUG__ 为真时记录（默认关闭，不产生开销）。
-    // 除耗时外还记下"这一次抽面用的是哪个场、什么阈值"——排查"曲面为空 / 尺寸异常
-    // / 换了预设却没变"这类问题时，没有这些数字就只能靠猜。
-    if (window.__ORBIT_DEBUG__) {
+    if (window.__ORBIT_DEBUG__ && surfaceObj) {
+      const geo2 = surfaceObj.geometry;
       window.__SURF_TIMING__ = {
-        extract: Math.round(__tExtract - __t0),
-        weldSmooth: Math.round(__tWeld - __tExtract),
-        build: Math.round(performance.now() - __tWeld),
-        total: Math.round(performance.now() - __t0),
+        extract: Math.round(st.tExtract - st.t0),
+        weldSmooth: Math.round(st.tWeld - st.tExtract),
+        // 粗面建完到上屏；细分与细颈分开报 —— 两者的优化手段完全不同
+        // （粗面靠切片与降档，细颈靠"停下再补"），混在一个数里看不出该动哪边。
+        build: Math.round((st.tMesh || st.tWeld) - st.tWeld),
+        fineMs: st.tMesh ? Math.round((st.tSwap || performance.now()) - st.tMesh) : 0,
+        total: Math.round(performance.now() - st.t0),
         verts: geo2.getAttribute('position').count,
-        // ---- 场与阈值的状态 ----
         nGrid: nGrid,
         gridExtent: +gridExtent.toFixed(4),
         fieldMax: +fieldMax.toFixed(8),
         fraction: +surfaceLevelFraction.toFixed(4),
-        isoAbs: +(surfaceLevelFraction * fieldMax).toFixed(8),
-        // 阈值"应该"取的基准（无干涉参考峰值 Σ|cᵢ|²·peakᵢ）——与 isoAbs 对照即可看出
-        // 两者是否用了同一个基准
+        isoAbs: +st.iso.toFixed(8),
         refPeak: surfaceParams ? +levelAbsFor(surfaceParams, 1, surfaceParams.psiCrit).toFixed(8) : null,
         terms: surfaceParams && surfaceParams.terms ? surfaceParams.terms.length : 0,
         // 曲面最外顶点占网格盒子的比例。盒子按"恰好装下"设计，故接近 1 是正常的；
@@ -1055,19 +1481,40 @@ window.Orbit3D = (function () {
           }
           return +(Math.max(mx, my, mz) / gridExtent).toFixed(3);
         })(),
-        // ---- 局部精细化 ----
-        fine: fineInfo
-          ? { 触发: true, 细网格: fineInfo.res + '³', 渐变系数: fineInfo.grade,
-              节点球半径: +fineInfo.radius.toFixed(3),
-              细颈缝隙: +fineInfo.gap.toFixed(3), 细网格顶点: fineInfo.verts }
+        fine: st.fineInfo
+          ? { 触发: true, 细网格: st.fineInfo.res + '³', 渐变系数: st.fineInfo.grade,
+              节点球半径: +st.fineInfo.radius.toFixed(3),
+              细颈缝隙: +st.fineInfo.gap.toFixed(3), 细网格顶点: st.fineInfo.verts }
           : { 触发: false, 粗网格单元格: +((2 * gridExtent) / (nGrid - 1)).toFixed(3) },
       };
     }
-    scene.add(surfaceObj);
     lastRebuildAt = performance.now();     // 供"是否还在连续调整"判断
-    // ★ 只在"换轨道 / 复位"时重新取景；切换判据、阈值、渲染方式时相机保持不动
-    if (refit) fitViewIfNeeded(currentFrameExtent(), frameExtentFor(surfaceParams));
+    // ★ 取景的三种情形，与原实现一一对应：
+    //   'frame' —— 换轨道 / 复位 / 切档：本档尺度变了，重新取景；
+    //   'decor' —— 只动了阈值：常见区间内相机**纹丝不动**，只有阈值低到曲面胀出
+    //              当前取景时才逐步拉远（fitViewIfNeeded 自己判断"尺度是否真变了"）；
+    //              （已在函数开头处理，见那里的说明）
+    //   null    —— 单纯补精细化：相机完全不动。
+    if (st.fitMode === 'frame') {
+      fitViewIfNeeded(currentFrameExtent(), frameExtentFor(surfaceParams));
+    }
   }
+
+  /** 被新的重建取消时的收尾：把细颈阶段半改过的模块级场量**同步还原** */
+  function abortRebuild(st) {
+    if (st.saved) { fineRestore(st.saved); st.saved = null; }
+    // ★ 已经建好但**还没上屏**的粗面要 dispose 掉：它从未进过场景，没人会替它收尸，
+    //   否则每被取消一次就漏一份几何与材质（GPU 显存）。
+    if (st.coarseMesh) {
+      if (st.coarseMesh.geometry) st.coarseMesh.geometry.dispose();
+      if (st.coarseMesh.material) st.coarseMesh.material.dispose();
+      st.coarseMesh = null;
+    }
+    st.fld = null; st.ext = null; st.weld = null; st.sm = null; st.geo = null; st.welded = null;
+    // 取消是外部的强制动作（如 Sched.cancelAll / 清空场景），排队中的请求一并作废
+    pendingRebuild = null;
+  }
+
 
   /**
    * 取景尺度没变就不动相机。
@@ -1170,7 +1617,10 @@ window.Orbit3D = (function () {
     currentColorMode = colorMode || 'phase';
     lastRes = res;
     surfaceParams = {
-      n: n, l: l, m: m, mode: mode, psiCrit: psiCrit || 'psi2',
+      // 兜底值取 'psi'，与 index.html 上带 active 的判据按钮一致（那儿才是默认的真源）。
+      // ★ 这个字段决定三件事：阈值换算（math.js 的 isoLevelAbs）、网格盒与取景、
+      //   以及着色（main.js 的 deriveColorMode）。传错值不会报错，只会静默画出别的面。
+      n: n, l: l, m: m, mode: mode, psiCrit: psiCrit || 'psi',
       // ★ Z 进 surfaceParams —— 它是"只改着色/阈值"那条复用分支重算时的唯一来源，
       //   不进的话切 Z 后走复用分支、用旧的 Z 重算，画面就错了。
       Z: (Z > 0) ? Z : 1,
@@ -1179,8 +1629,11 @@ window.Orbit3D = (function () {
     };
     // 叠加态时阈值按各分量峰值的加权和为基准；单一态时按解析峰值
     const levelAbs = levelAbsFor(surfaceParams, levelFraction, surfaceParams.psiCrit);
-    computeField(n, l, m, mode, res, levelAbs, surfaceParams.terms, surfaceParams.relPhase, 0, 0, surfaceParams.Z);
-    buildSurface(levelFraction, true);   // 换轨道 → 尺度变了，重新取景
+    // ★ 标量场不再在这里同步算（原来是 ~100ms 的硬阻塞），而是作为切片流水线的
+    //   第一段交给 Sched —— 见 rebuildSurface 的说明。
+    //   换轨道 → 尺度变了，故 refit = true，取景在流水线收尾时做。
+    buildSurface(levelFraction, true,
+      [n, l, m, mode, res, levelAbs, surfaceParams.terms, surfaceParams.relPhase, 0, 0, surfaceParams.Z]);
   }
 
   // ---------------------------------------------------------------------------
@@ -1193,6 +1646,7 @@ window.Orbit3D = (function () {
    *   粒子云 / 等值面互斥。
    */
   function setVisibility(mode) {
+    lastVisMode = mode;                  // 供切片重建提交时复用（见 commitSurface）
     const sph = (mode === 'spherical');
     if (angGroup) angGroup.visible = sph;
     if (cloudObj) cloudObj.visible = (mode === 'points');
@@ -1296,6 +1750,7 @@ window.Orbit3D = (function () {
   }
   function disposeGrid() {           // 释放等值面缓存的标量场
     field = null; gradX = gradY = gradZ = null; nGrid = 0;
+    fieldKey = ''; fieldDesc = null;  // ★ 场没了，指纹必须一起清 —— 否则下次复用判断会认下一份不存在的场
     disposeFine();                   // 精细化补片同样依赖这个场，一并清掉
   }
 
@@ -1835,8 +2290,19 @@ window.Orbit3D = (function () {
             .applyQuaternion(o.getWorldQuaternion(new THREE.Quaternion()));
           nrm = [+n.x.toFixed(3), +n.y.toFixed(3), +n.z.toFixed(3)];
         }
+        // ★ 同时报两种"可见"，它们**不等价**：
+        //   · vis   —— 物体**自身的** visible 标志（原字段，语义保持不变，别处有脚本在读）
+        //   · shown —— **实际会不会被渲染**（自身与所有祖先都 visible）
+        //   只报 vis 会把人带沟里：球谐曲面 angMesh 自身的 visible 恒为 true，它该不该显示
+        //   是由父组 angGroup 控制的 —— 只看 vis 会得出"切回波函数档后球谐仍在显示"的
+        //   错误结论（本轮据此误判过一次，白查了一轮）。
+        let shown = o.visible;
+        for (let a = o.parent; a && shown; a = a.parent) shown = a.visible;
         out.push({
-          type: o.type, vis: o.visible, scale: +s.x.toFixed(3),
+          type: o.type, vis: o.visible, shown: shown, scale: +s.x.toFixed(3),
+          // ★ 再报一层"挂在哪个组下、那个组可见吗"：定位"物体自身 visible=true 却被父组
+          //   关掉"（或反过来）这类问题时，没有这一项就只能靠猜父链。
+          grp: (o.parent ? ((o.parent.name || o.parent.type) + (o.parent.visible ? '+vis' : '-hid')) : '-'),
           // ★ 报出**几何类型**：判断"某个东西到底画成了什么形状"最直接的依据。
           //   例如角度节面是锥面还是平面、有没有被填充（Mesh）还是只是一圈线（Line），
           //   靠截图猜容易看错（透视下一个半透明锥与一个三角形很像）。
@@ -1888,8 +2354,52 @@ window.Orbit3D = (function () {
         spotlightNodes(a.spotlight.types, true);
       }
     },
-    /** 相机状态查询（供测试与"预设视角"复用） */
-    getCameraState: () => (camera ? {
+    /**
+     * 当前等值面的**几何摘要**：顶点数 / 三角形数 + 位置与法线的定点校验和。
+     *
+     * ★ 供离线验证用。本轮把重建切成多帧执行之后，最难证、也最该证的一条是
+     *   "结果与切片前逐位一致" —— 而只比顶点数是能被凑巧蒙混过去的（顶点数相同、
+     *   位置整体偏了一点点）。
+     * ★ 这里刻意用**逐元素滚动哈希**而不是"各分量求和"：本项目的曲面几乎都是中心
+     *   对称的（正负坐标成对出现），求和会大幅抵消，实测 6 个用例里有 4 个回到 0 ——
+     *   一个恒等于 0 的判据看起来"全过"，实际上什么都没验。哈希不会抵消。
+     *   量化到 1e6 后按 int32 混合：任何一处浮点差异都会改变最终的 32 位数。
+     * 粗曲面与细颈补片分别给出 —— 两者是**两块独立的网格**，只对其中一块下结论会漏。
+     */
+    meshDigest: () => {
+      const hash6 = (arr) => {
+        let h = 0x811c9dc5;
+        for (let i = 0; i < arr.length; i++) {
+          h ^= (Math.round(arr[i] * 1e6) | 0);
+          h = Math.imul(h, 0x01000193);
+        }
+        return h >>> 0;
+      };
+      const pack = (o) => {
+        if (!o || !o.geometry) return null;
+        const g = o.geometry;
+        const pos = g.getAttribute('position');
+        if (!pos) return null;
+        const nor = g.getAttribute('normal');
+        const idx = g.getIndex();
+        return {
+          verts: pos.count,
+          tris: idx ? idx.count / 3 : 0,
+          posHash: hash6(pos.array),
+          norHash: nor ? hash6(nor.array) : null,
+        };
+      };
+      // ★ 附带报出**当前生效的着色**。它由判据派生（见 main.js 的 deriveColorMode），
+      //   刻意不进 getState —— 那是"状态"，着色是"推论"。但调试面里必须有它：
+      //   posHash / norHash **只覆盖几何**，判据变了而阈值换算正确时它们是**逐位不变**的，
+      //   于是"着色到底有没有跟着变"就只剩截图一条路 —— 而截图正是最容易看错的那种证据。
+      return {
+        field: fieldDesc, fieldKey: fieldKey,
+        coarse: pack(surfaceObj), fine: pack(fineObj),
+        colorMode: currentColorMode,
+      };
+    },
+    /** 相机状态查询（供测试与"预设视角"复用） */    getCameraState: () => (camera ? {
       pos: camera.position.toArray().map((v) => +v.toFixed(3)),
       orient: camera.quaternion.toArray().map((v) => +v.toFixed(4)),
       dist: viewCtl ? +viewCtl.getDistance().toFixed(3) : null,

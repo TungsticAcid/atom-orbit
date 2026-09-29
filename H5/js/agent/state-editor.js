@@ -446,7 +446,7 @@ window.StateEditor = (function () {
       class: 'se-phase', type: 'range', min: '0', max: '2', step: '0.02',
       value: String(state.relPhase / Math.PI),
     });
-    slider.addEventListener('pointerdown', function () { dragging = true; window.__ORBIT_PREVIEW__ = true; });
+    slider.addEventListener('pointerdown', function () { dragging = true; previewOn(); });
     slider.addEventListener('input', function () {
       state.relPhase = Number(slider.value) * Math.PI;
       phNum.value = (state.relPhase / Math.PI).toFixed(2);
@@ -455,7 +455,7 @@ window.StateEditor = (function () {
     const endDrag = function () {
       if (!dragging) return;
       dragging = false;
-      window.__ORBIT_PREVIEW__ = false;
+      previewOff();
       push(false);                                  // 松手 → 全分辨率重建一次
     };
     slider.addEventListener('pointerup', endDrag);
@@ -500,10 +500,27 @@ window.StateEditor = (function () {
   // 推送到主应用
   // ---------------------------------------------------------------------------
   let rafPending = false;
+
+  /**
+   * ★ 降档标记**只从主应用这一个出口**进出（OrbitApp.armPreview / disarmPreview）。
+   *   原先这里直接写 window.__ORBIT_PREVIEW__，等于这个标志有两个所有者；而它现在
+   *   还决定三维的网格分辨率（见 main.js 的 currentGridRes），两处各写各的，任何
+   *   一条路径漏掉"清除"就会把画面永久留在粗档上。下面两个包装里连兜底解档
+   *   （400ms 无事件自动回全档）也一并继承了。
+   */
+  function previewOn() {
+    if (window.OrbitApp && window.OrbitApp.armPreview) window.OrbitApp.armPreview();
+    else window.__ORBIT_PREVIEW__ = true;
+  }
+  function previewOff() {
+    if (window.OrbitApp && window.OrbitApp.disarmPreview) window.OrbitApp.disarmPreview(false);
+    else window.__ORBIT_PREVIEW__ = false;
+  }
+
   function push(preview) {
     if (preview) {
       // 拖动中：用 rAF 节流，且标记预览态（主应用据此降低网格分辨率）
-      window.__ORBIT_PREVIEW__ = true;
+      previewOn();
       if (rafPending) return;
       rafPending = true;
       requestAnimationFrame(function () {
@@ -512,7 +529,7 @@ window.StateEditor = (function () {
       });
       return;
     }
-    window.__ORBIT_PREVIEW__ = false;
+    previewOff();
     doPush();
   }
 

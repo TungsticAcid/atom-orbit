@@ -83,6 +83,9 @@ window.QuestionEngine = (function () {
         `径向节点数 = n − l − 1 = ${n} − ${l} − 1 = **${nd.radial}**。\n` +
         `（同一 ${n} 层的角度节面数是 ${nd.angular}，总节点数是 ${nd.total}——三者容易混。）`,
         { kp: 'K5', difficulty: 'core', diagnosticHint: 'radial-nodes',
+          // ★ level 一律按 **|ψ|² 语义**写（0.08 = 占 |ψ|² 峰值的 8%）。
+          //   gotoStructure 会在下发前按当前判据换算，所以这里**不要**跟着默认判据去改 ——
+          //   改了反而会被再平方一次。新增 presetView 也照此口径。
           presetView: { n: n, l: l, m: 0, radial: ['D'], render: 'surface', level: 0.08 } });
     },
 
@@ -684,7 +687,16 @@ window.QuestionEngine = (function () {
     if (p.m != null) qn.m = p.m;
     if (Object.keys(qn).length) actions.push({ action: 'setQuantumNumbers', params: qn });
     if (p.render) actions.push({ action: 'setRenderMode', params: { mode: p.render } });
-    if (p.level) actions.push({ action: 'setIsosurfaceLevel', params: { fraction: p.level } });
+    // ★ presetView.level 是按 **|ψ|² 语义**手调的（见题库里那个 0.08 的标注）。而同一个读数
+    //   在 ψ 判据下对应的绝对阈值是它的**平方**（|ψ|=f ⟹ |ψ|²=f²），差一个量级 ——
+    //   直接下发会让"一键溯源"落到一张比预期大得多的面上。故按当前判据换算一次，
+    //   保持**同一张面**；判据本身不动（免得顺带把颜色也换了）。
+    if (p.level) {
+      const crit = (window.OrbitApp && OrbitApp.getState)
+        ? (OrbitApp.getState().psiCriterion || 'psi2') : 'psi2';
+      const fr = (crit === 'psi') ? Math.sqrt(p.level) : p.level;
+      actions.push({ action: 'setIsosurfaceLevel', params: { fraction: fr } });
+    }
     if (p.radial) actions.push({ action: 'showRadial', params: { which: p.radial } });
     if (p.sectionMode) actions.push({ action: 'setSectionMode', params: { mode: p.sectionMode } });
     window.SceneBridge.applySequence(actions);

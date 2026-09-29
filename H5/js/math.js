@@ -896,16 +896,45 @@ window.OM = (function () {
     return peaks;
   }
 
-  /** 轨道形状描述（全部由 (l,m,mode) 规则判定，不靠模型想象） */
+  /**
+   * 轨道形状描述（全部由 (l,m,mode) 规则判定，不靠模型想象）。
+   *
+   * ★ 瓣数有闭式。角向部分是 P_l^|m|(cosθ) 乘 cos/sin(|m|φ)：
+   *   · φ 方向：|m| > 0 时 cos(|m|φ) 把一圈分成 **2|m|** 个正负交替的扇区；|m| = 0 时无 φ 依赖（算 1 份）
+   *   · θ 方向：P_l^|m| 在 (0,π) 内有 **l−|m|** 个零点 ⇒ **l−|m|+1** 段正负交替
+   *   相乘即实解瓣数 = (|m| > 0 ? 2|m| : 1) × (l−|m|+1)（m = 0 时按惯例只报"主瓣"，不含同轴的环）。
+   *   复解的密度与 φ 无关，只剩 θ 方向的 l−|m|+1 段 —— 表现为**同轴的几个环**
+   *   （|m| = l 时是 1 个，即在赤道上那个"轮胎"）。
+   *
+   * ★ 原先实解一律写 2|m|，**只对 |m| = l 成立**：于是 d_xz / d_yz（实为 4 瓣）被报成 2 瓣，
+   *   与同一个返回里的 shape = '四叶草形' 自相矛盾。而返回值经 tool-registry 的 queryOrbital
+   *   直接进模型上下文、会被念给学生听 —— 属"数值型事实"错误，必须修。
+   *   （对照：知识库 index.js 一直写着"d：四叶草形。m=0 是 dz²（沿 z 的双瓣 + 赤道环）"，
+   *     即知识库本来就比这个函数准确。）
+   */
   function shapeDescribe(l, m, mode) {
     const am = Math.abs(m);
-    const lobes = (l === 0) ? 1 : (am === 0 ? 2 : (2 * am >= 2 * l ? 2 : 2 * am));
-    const names = ['球形', '哑铃形（双瓣）', '四叶草形', '六瓣形', '八瓣形'];
-    let shape = l === 0 ? '球形' : (l === 1 ? '哑铃形（双瓣）' : (l === 2 ? '四叶草形' : names[Math.min(l, names.length - 1)]));
+    if (l === 0) {
+      return { shape: '球形', lobes: 1, axis: '各向同性（密度与 θ、φ 都无关）' };
+    }
     const axis = mode === 'complex'
       ? '绕 z 轴旋转对称（密度与 φ 无关）'
       : (am === 0 ? '沿 z 轴' : '在 xy 平面内定向（' + (m > 0 ? 'cos' : 'sin') + am + 'φ 型）');
-    return { shape, lobes: l === 0 ? 1 : (mode === 'complex' ? 2 : (am === 0 ? 2 : 2 * am)), axis };
+    if (mode === 'complex') {
+      const rings = l - am + 1;
+      return {
+        shape: rings === 1 ? '环形（赤道环）' : (rings + ' 个同轴环（由锥形节面隔开）'),
+        lobes: rings, axis,
+      };
+    }
+    // 实解：m = 0 按惯例只数主瓣（d_z² 是"两瓣 + 赤道环"，不把环算成一瓣）
+    const lobes = (am === 0) ? 2 : (2 * am) * (l - am + 1);
+    const names = { 2: '哑铃形（双瓣）', 3: '三瓣形', 4: '四叶草形', 6: '六瓣形', 8: '八瓣形' };
+    let shape = names[lobes] || (lobes + ' 瓣形');
+    // m = 0 且 l ≥ 2 的轨道，按 l 一律叫"四叶草形"会与画面不符（它另有同轴的环）
+    if (am === 0 && l === 2) shape = '哑铃形（双瓣）+ 赤道环';
+    else if (am === 0 && l === 3) shape = '哑铃形（双瓣）+ 两个同轴环';
+    return { shape, lobes, axis };
   }
 
   /**

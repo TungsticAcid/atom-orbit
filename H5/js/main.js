@@ -25,12 +25,15 @@
     // ★ 这里原先有 colorMode 字段（「三维着色」开关）。用户第 5 条把那个开关删了 ——
     //   着色不是独立选项，而是**判据的推论**（画 |ψ|² 就没有正负可谈）。
     //   现在由 deriveColorMode() 现算，不进 state、不进任何快照。
-    level: 0.10,             // 等值面阈值（占峰值的比值）
-    // ★ 默认 10% 而不是 30%：径向节点会把等值面切成多层壳，而**外层壳的峰值
-    //   往往很低**（3p 的外层壳只有全局峰值的 11.9%）——按 30% 取阈值时外层壳
-    //   整体落到阈值以下、直接消失，看起来"3p 只有两瓣"。取 10% 才能把多层壳
-    //   都显示出来。注意取景已相应改为"同时装得下当前阈值"，否则低阈值会胀出画面。
-    psiCrit: 'psi2',         // 等值面判据：'psi2' 按 |ψ|² 计 | 'psi' 按 |ψ| 计
+    // ★ 下面两个都是**首帧就被覆盖的初值**，不是"默认值"的来源 —— 别在这里找默认：
+    //   · level —— 首帧 recompute() 里 readFromControls() 先从 #levelSlider 读进来，
+    //     紧接着 applyRecommendedLevel() 又按**当前轨道的推荐阈值**改写（见该函数）。
+    //     所以首屏真正显示的阈值是"3p 在当前判据下的推荐值"，不是这个字面量。
+    //     （推荐算法为什么取"最弱壳峰值的 40%"见 recommendedLevelRaw 的说明。）
+    //   · psiCrit —— 首帧由 #psiSeg 上带 active 的那个按钮决定。
+    //   结论：**改默认要改 index.html 的 DOM**。这里写的只是"DOM 读不到"时的兜底。
+    level: 0.21787703073446649,   // 等值面阈值（占峰值的比值）＝ 3p 在 ψ 判据下的推荐值
+    psiCrit: 'psi',               // 等值面判据：'psi' 按 |ψ| 计 | 'psi2' 按 |ψ|² 计
     pointCount: 50000,
     plane: 'xz',             // 截面平面
     sectionMode: 'intensity',// 'intensity' | 'phase' | 'contour'
@@ -276,7 +279,8 @@
     state.mode = activeValue('#modeSeg', 'data-mode') || 'real';
     state.renderMode = activeValue('#renderSeg', 'data-mode') || 'surface';
     state.level = levelFromSlider(+els.levelSlider.value);
-    state.psiCrit = activeValue('#psiSeg', 'data-mode') || 'psi2';
+    //   兜底值要与 index.html 上带 active 的按钮一致（那是默认的真源，见 state 的说明）
+    state.psiCrit = activeValue('#psiSeg', 'data-mode') || 'psi';
     // ★ 第 2 条：**电子云只在判据取 |ψ|² 时有意义**（"电子云"就是按 |ψ|² 重要性采样出的
     //   点云，它的概念依附于 |ψ|²）。判据取 ψ 时没有"电子云"可言 —— 拉回等值面，
     //   并把控件也切过去，免得 DOM 显示"电子云"而画面画的是等值面。
@@ -369,13 +373,18 @@
    * 得出所有壳，只是不让推荐值无限逼近滑块下限。
    */
   function recommendedLevelRaw(n, l, psiCrit) {
-    if (!window.OM || !OM.shellPeakFractions) return 0.10;
+    // ★ 判据换算必须先于**每一条**返回路径 —— 包括下面几条兜底。
+    //   原先只有最后一行做了 Math.sqrt，于是"单壳轨道"（n−l−1 = 0：1s / 2p / 3d / 4f…）
+    //   走 `fr.length <= 1` 那条提前返回时**绕过了换算**：读数恒为 10%，
+    //   而 10% 的 |ψ| 与 10% 的 |ψ|² 是**两张相差约 5 倍的面**。
+    //   症状：切判据时推荐值不跟着变、画面却变了（用户实测 3d_z² 发现）。
+    const toCrit = (f) => ((psiCrit === 'psi') ? Math.sqrt(f) : f);
+    if (!window.OM || !OM.shellPeakFractions) return toCrit(0.10);
     let fr;
-    try { fr = OM.shellPeakFractions(n, l, state.Z); } catch (e) { return 0.10; }
-    if (!fr || fr.length <= 1) return 0.10;             // 单壳：无约束
+    try { fr = OM.shellPeakFractions(n, l, state.Z); } catch (e) { return toCrit(0.10); }
+    if (!fr || fr.length <= 1) return toCrit(0.10);     // 单壳：没有"看全所有壳"的约束
     const rec = Math.max(0.0004, Math.min(0.8, 0.4 * Math.min.apply(null, fr)));
-    // 判据换算：同一读数下 |ψ| 判据对应 f² 倍峰值（见 render3d.js 的 levelAbsFor）
-    return (psiCrit === 'psi') ? Math.sqrt(rec) : rec;
+    return toCrit(rec);
   }
 
   /**
@@ -450,16 +459,31 @@
     syncZZoneSummary();          // 折叠区标题上的 Z 跟着走（见该函数的说明）
     // ★ 换轨道时套用该轨道的推荐阈值（用户/智能体明确指定过就不动，见 levelUserAdjusted）。
     //   必须放在 readFromControls 之后：那时 n/l/m 已是新值，而 level 刚被滑块覆盖成旧值，
-    //   正需要在这里改掉。轨道标识不含 psiCrit —— 切判据按既有设计保持读数不变。
-    const orbKey = state.n + ',' + state.l + ',' + state.m + ',' + state.mode;
+    //   正需要在这里改掉。
+    // ★ 轨道标识**含 psiCrit**：判据变了、而阈值还处在"推荐值"状态时，也要跟着切到
+    //   新判据下的推荐值 —— 于是**同一张面保留下来**，只有读数与着色变
+    //   （|ψ| = √f ⟺ |ψ|² = f，见 math.js 的 isoLevelAbs）。
+    //   若用户手动调过（levelUserAdjusted 为真），则保持读数不变 —— 那时"同一读数、
+    //   两张不同大小的面"本身就是有教学意义的对照，正是 setPsiCriterion 要演示的东西。
+    const orbKey = state.n + ',' + state.l + ',' + state.m + ',' + state.mode + ',' + state.psiCrit;
     if (orbKey !== lastOrbKeyForLevel) {
       lastOrbKeyForLevel = orbKey;
       if (!levelUserAdjusted) applyRecommendedLevel();
     }
     updateOutputs();
     updateViewer();
-    updateCharts();
-    updateFormula();
+    // ★ 拖动中**不重画 2D 图与公式**。它们是同步的一整块（三张 Canvas + KaTeX），
+    //   而拖动时用户盯的是三维视图 —— 留着它们，等于让"拖动中的每一次重算"都背上
+    //   这一坨固定开销，帧间隔会从 17ms 掉到 30ms 以上，三维的流畅正是被这几张图拖垮的。
+    //   松手（disarmPreview）会立刻以全档重算一次，那时一并补齐 —— 图上不会有残留的
+    //   旧读数，因为它们在拖动期间本来也来不及跟上 100ms 一次的刷新。
+    if (!window.__ORBIT_PREVIEW__) { updateCharts(); updateFormula(); }
+  }
+
+  /** 当前该用哪个网格分辨率：拖动中走粗档（见 armPreview），其余走全档 */
+  function currentGridRes() {
+    const preview = !!window.__ORBIT_PREVIEW__;
+    return preview ? (isMobile ? 30 : 40) : (isMobile ? 46 : 68);
   }
 
   function currentFieldKey() {
@@ -467,8 +491,55 @@
       return t.n + ',' + t.l + ',' + t.m + ',' + t.c.re.toFixed(3) + ',' + t.c.im.toFixed(3);
     }).join('|');
     // ★ Z 必须进 key —— 不进就会"换了 Z 画面不变"（走缓存复用分支）
-    return 'Z' + state.Z + '-' + state.n + '-' + state.l + '-' + state.m + '-' + state.mode + '-' + state.psiCrit +
-      (sig ? '-S:' + sig + '@' + state.relPhase : '');
+    // ★ **分辨率也必须进 key**：拖动中与松手后是两张不同粗细的网格，键里不带分辨率，
+    //   松手后就会命中缓存、把那张 40³ 的粗场赖在画面上不走（与当初"Z 漏出缓存键"
+    //   是同一个错，只是这次漏的是网格）。
+    return 'Z' + state.Z + '-R' + currentGridRes() + '-' + state.n + '-' + state.l + '-' + state.m
+      + '-' + state.mode + '-' + state.psiCrit
+      + (sig ? '-S:' + sig + '@' + state.relPhase : '');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 拖动中的粗渲染
+  //
+  // ★ 为什么需要：一次全分辨率重建即使切成小片，也要跨十几帧才长出来。拖着阈值/量子数
+  //   滑块时，画面因此一直落在"上一帧的旧面"上，跟手感差。拖动中改用 40³ 且不做局部
+  //   精细化（单元数约为全档的 1/5），松手后再以 68³ 补一次。
+  //
+  // ★ **只认真人事件**（e.isTrusted）。程序化写 value 同样会派发 input，而它不会再触发
+  //   change —— 不分青红皂白地置位，标志就会一直挂着，细颈补片从此不再出现（踩过）。
+  //
+  // ★ 再加一条**兜底解档**：置位时重置一个 400ms 定时器，超时即解档并补一次全分辨率。
+  //   这样即使 change 没来（键盘方向键、触摸被系统吞掉、程序化写入），也能自愈 ——
+  //   不至于把画面永久留在粗档上。
+  // ---------------------------------------------------------------------------
+  const PREVIEW_TIMEOUT_MS = 400;
+  const PREVIEW_THROTTLE_MS = 100;   // 拖动中重算的最小间隔（见 scheduleUpdate）
+  let previewTimer = null;
+  let previewThrottleId = null;
+
+  function armPreview(e) {
+    // ★ 只认真人事件：程序化写 value 同样会派发 input，而它不会再触发 change，
+    //   认了它标志就会一直挂着。
+    // ★ **不带事件对象时放行** —— 那是内部代码（如量子态编辑器的相位滑块）显式要求降档，
+    //   此时由它自己在松手时调 disarmPreview。
+    if (e && !e.isTrusted) return;
+    window.__ORBIT_PREVIEW__ = true;
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(disarmPreview, PREVIEW_TIMEOUT_MS);
+  }
+
+  /**
+   * 解档并补一次全分辨率重建。
+   * @param {boolean} [refresh] 是否顺带触发一次刷新；传 false 由调用方自己刷。
+   */
+  function disarmPreview(refresh) {
+    if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+    if (!window.__ORBIT_PREVIEW__) return;
+    window.__ORBIT_PREVIEW__ = false;
+    // 缓存键里含分辨率，故这一次刷新会走重建分支、以全档重算一遍
+    // （同时取消掉在飞的粗档重建 —— 见 render3d.js 的 rebuildSurface）。
+    if (refresh !== false) scheduleUpdate();
   }
 
   function updateViewer() {
@@ -486,11 +557,10 @@
     } else if (state.renderMode === 'surface') {
       const key = currentFieldKey();
       if (key !== lastFieldKey) {
-        // 拖动相位滑块时用较低分辨率预览（每帧重建等值面，高分辨率会卡）；
-        // 松手后 __ORBIT_PREVIEW__ 复位，会以全分辨率重建一次
-        const preview = !!window.__ORBIT_PREVIEW__;
-        const gridRes = preview ? (isMobile ? 30 : 40) : (isMobile ? 46 : 68);
-        Orbit3D.updateSurface(state.n, state.l, state.m, state.mode, gridRes, state.level,
+        // 拖动滑块时用较低分辨率预览（一帧要重建一次等值面，全分辨率会跟不动），
+        // 松手后 __ORBIT_PREVIEW__ 复位、缓存键随之变化，会以全分辨率重建一次
+        // 并补上局部精细化（见下面的 armPreview / disarmPreview）。
+        Orbit3D.updateSurface(state.n, state.l, state.m, state.mode, currentGridRes(), state.level,
           cm, state.psiCrit, state.terms, state.relPhase, state.Z);
         lastFieldKey = key;
       } else {
@@ -797,7 +867,26 @@
 
   // ---- 节流 ---------------------------------------------------------------
   let debounceId = null;
+  /**
+   * 排一次重算。
+   *
+   * ★ 拖动中必须用**节流**，不能用下面那条防抖。防抖的语义是"等输入停下来再说"，
+   *   而拖动时每 16–45ms 就有一次 input，定时器被一再推后、**一次都不会触发** ——
+   *   整个拖动过程中画面纹丝不动（实测：拖动期间帧率漂亮得可疑，一查根本没在算，
+   *   分辨率采样全程停在拖动前的值）。节流保证每 PREVIEW_THROTTLE_MS 至少算一次，
+   *   这才是用户要的"拖动时粗渲染、看得见在动"。
+   *   2D 图与 KaTeX 的重算也跟着这一次走 —— 所以节流间隔不能取太小，
+   *   它是"拖动时的刷新率"与"每帧留给渲染的余量"之间的取舍。
+   */
   function scheduleUpdate(ms) {
+    if (ms == null && window.__ORBIT_PREVIEW__) {
+      if (previewThrottleId) return;                 // 还在节流窗口内：并到那一次
+      previewThrottleId = setTimeout(function () {
+        previewThrottleId = null;
+        recompute();
+      }, PREVIEW_THROTTLE_MS);
+      return;
+    }
     clearTimeout(debounceId);
     debounceId = setTimeout(recompute, ms == null ? 120 : ms);
   }
@@ -889,6 +978,18 @@
     //   智能体演示里明确设的阈值。（setSlider 也会派发 input，故数字框那条路径一并覆盖）
     els.levelSlider.addEventListener('input', () => { levelUserAdjusted = true; scheduleUpdate(); });
     els.pointCountSlider.addEventListener('input', () => scheduleUpdate());
+
+    // ★ 拖动中降档粗渲染（见 armPreview 的说明）。绑在会触发**等值面重建**的五个滑块上：
+    //   量子数四个 + 阈值。粒子数滑块不绑 —— 它只重采样点云，不建等值面，没有可降的档。
+    //   change 是范围控件"松手"最可靠的信号；pointerup 让画面更早回到全档；
+    //   真按不出来时还有 armPreview 里的 400ms 兜底定时器。
+    [els.zSlider, els.nSlider, els.lSlider, els.mSlider, els.levelSlider].forEach((el) => {
+      if (!el) return;
+      el.addEventListener('input', armPreview);
+      el.addEventListener('change', disarmPreview);
+      el.addEventListener('pointerup', disarmPreview);
+      el.addEventListener('pointercancel', disarmPreview);
+    });
     // 「采用推荐值」是提示行里的内联按钮；用**事件委托**，因为 hint 每次重算都会重建
     // （直接给按钮绑 onclick 会在第一次重建后失效）。
     if (els.psiHint) {
@@ -980,6 +1081,10 @@
   //   自动旋转失效，而首帧看起来完全正常，是个很难发现的形态。）
   function animate() {
     Orbit3D.render();
+    // ★ 长任务的小片在这里推进（见 sched.js）—— 放在 render **之后**，
+    //   所以相机阻尼与自动旋转永远先走完，重建再慢也不会让画面停住。
+    //   每片自带预算，超了就让出，下一帧接着算。
+    if (window.Sched) window.Sched.tick();
     requestAnimationFrame(animate);
   }
 
@@ -1328,6 +1433,12 @@
      * ★ 必须导出：「量子态」那个折叠区是 state-editor.js 动态建的，它建完要调这里。
      */
     bindAdvScroll: bindAdvScroll,
+    // ★ 拖动中"降档粗渲染"标记的**唯一所有者**（见 armPreview / disarmPreview）。
+    //   量子态编辑器的相位滑块也要降档，让它走这两个出口而不是直接写
+    //   window.__ORBIT_PREVIEW__ —— 那个标志现在还决定网格分辨率，一旦卡在 true，
+    //   画面会永久停在粗档上（谁写的谁负责清，是这类标志唯一站得住的做法）。
+    armPreview: armPreview,
+    disarmPreview: disarmPreview,
 
     /** 导出当前视图为 PNG（教师备课用） */
     exportViewPNG() {

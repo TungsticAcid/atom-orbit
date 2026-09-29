@@ -1,13 +1,20 @@
 /**
  * proactive-rules.js — 主动服务规则引擎（本地，零 token）
  *
- * ★ 两级过滤：本地规则先筛（每秒检查、不花 token），**只有命中才唤起 LLM**。
- *   因此"主动服务"在未命中时完全不产生成本。
+ * ★ **提示文案是本地写死的，全程不调用模型**：`build()` 返回字面量字符串，
+ *   `deliver()` 把它拼成一张 DOM 卡片。所以主动提示既不花 token，也不进对话存储
+ *   （因此不会推高后续每一轮的上下文）。会花 token 的只有卡片上那个「出题检验」按钮
+ *   —— 它走 `QuestionEngine.startFlow()` → `launch()` → `Panel.runAgent(...)`，先讲一遍
+ *   知识点再出题；而那已经是**用户主动点击**了。
+ *   （原文案曾写"只有命中才唤起 LLM"，与实现不符，已改正。）
+ *
+ * ★ 检查周期 TICK_MS = 2.5s，纯本地计算。
  *
  * ★ 依据的是**行为数据**而非对话内容——这正是"自主感知"的体现：
  *   模型从对话文本里得不到"用户反复拖了 8 次 m"这类信息。
  *
- * 冷却机制：同一规则 N 分钟内不重复触发；用户可在设置里全局关闭。
+ * ★ 触发策略：**边沿触发 + 冷却**，两者缺一不可（见 armed 的说明）。
+ *   用户可在设置里全局关闭。
  */
 window.ProactiveRules = (function () {
   'use strict';
@@ -21,6 +28,19 @@ window.ProactiveRules = (function () {
   let lastAnyFire = 0;
   const sessionStart = Date.now();
   let firedCount = 0;
+
+  /**
+   * 每条规则是否"已就绪"（可以触发）。false = 这一段困惑已经提示过。
+   *
+   * ★ 必须**边沿触发**，不能只靠冷却。规则条件读的是 Perception 的交互计数，
+   *   而那些计数（`toggleCounts`）**只增不减、也没有衰减** —— 于是
+   *   "拖了 6 次 m 却没切过实/复"这类条件一旦成立就**永远成立**。只靠冷却的话，
+   *   同一条提示会在 COOLDOWN_MS 到点后再弹一次、再等一轮再弹一次，直到关掉页面，
+   *   这正是"同一个主动提示连续触发"。
+   *   改为：条件**为假**时重新就绪；为真且就绪时才触发。于是同一段困惑只提示一次，
+   *   而用户真的换了做法（例如切到复函数、打开径向图）之后再来一遍，还能再提示。
+   */
+  const armed = Object.create(null);
 
   // ---------------------------------------------------------------------------
   // 规则表
@@ -111,9 +131,13 @@ window.ProactiveRules = (function () {
     for (const r of RULES) {
       let hit = false;
       try { hit = r.check(tr, st); } catch (e) { hit = false; }
-      if (!hit) continue;
+      // ★ 条件不再成立 → 重新就绪（"这一段困惑过去了"）。
+      //   必须先于下面所有判断执行：否则一条一直为真的规则永远得不到复位。
+      if (!hit) { armed[r.id] = true; continue; }
+      if (armed[r.id] === false) continue;    // 这一段困惑已经提示过，不再打扰
       if (!canFire(r.id)) continue;
 
+      armed[r.id] = false;
       lastFired[r.id] = Date.now();
       lastAnyFire = Date.now();
       firedCount++;
@@ -164,7 +188,12 @@ window.ProactiveRules = (function () {
     setTimeout(function () { timer = setInterval(tick, TICK_MS); }, 20000);
   }
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
-  function reset() { Object.keys(lastFired).forEach((k) => delete lastFired[k]); lastAnyFire = 0; firedCount = 0; }
+  function reset() {
+    Object.keys(lastFired).forEach((k) => delete lastFired[k]);
+    Object.keys(armed).forEach((k) => delete armed[k]);   // 连同"就绪"状态一起复位
+    lastAnyFire = 0;
+    firedCount = 0;
+  }
 
   return { start, stop, reset, tick, RULES: RULES.map((r) => r.id) };
 })();

@@ -665,19 +665,19 @@ window.Charts = (function () {
     ctx.fillStyle = 'rgba(220,228,245,0.92)';
     ctx.font = '12px system-ui, sans-serif';
     fillMath(ctx, PLANES[plane], 8, 18);
-    // 轴名固定贴在画布边缘：它说明的是"横/纵轴各是什么"，与视窗位置无关
+    // 轴名固定贴在**绘图区边缘**：它说明的是"横/纵轴各是什么"，与视窗位置无关
     const lab = plane === 'xy' ? ['x', 'y'] : plane === 'xz' ? ['x', 'z'] : ['y', 'z'];
     fillMath(ctx, '*' + lab[0] + '*', w - 14, h / 2 - 6);
     fillMath(ctx, '*' + lab[1] + '*', w / 2 + 6, 16);
   }
 
-  // 2D 行进方块：网格 vals(G×G) 上提取 level 等高线线段（像素坐标）
-  function marchSquareSegments(vals, G, level, w, h) {
+  // 2D 行进方块：网格 vals(Gx×Gy) 上提取 level 等高线线段（像素坐标）
+  function marchSquareSegments(vals, Gx, Gy, level, w, h) {
     const segs = [];
-    const at = (i, j) => vals[j * G + i];
-    const dx = w / (G - 1), dy = h / (G - 1);
-    for (let j = 0; j < G - 1; j++) {
-      for (let i = 0; i < G - 1; i++) {
+    const at = (i, j) => vals[j * Gx + i];
+    const dx = w / (Gx - 1), dy = h / (Gy - 1);
+    for (let j = 0; j < Gy - 1; j++) {
+      for (let i = 0; i < Gx - 1; i++) {
         const v00 = at(i, j), v10 = at(i + 1, j), v11 = at(i + 1, j + 1), v01 = at(i, j + 1);
         let bits = 0;
         bits |= (v00 >= level ? 1 : 0);
@@ -710,7 +710,7 @@ window.Charts = (function () {
   }
 
   // 无填色等高线 + 节面(白线) + 数值标注
-  function drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z, sup, supPhases) {
+  function drawContour(ctx, vals, Gx, Gy, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z, sup, supPhases) {
     ctx.fillStyle = '#0a0f1f';                 // 暗底，突出线条
     ctx.fillRect(0, 0, w, h);
     if (nodalPlane) {                          // 整面为节面
@@ -728,7 +728,7 @@ window.Charts = (function () {
       const frac = Math.pow(10, Math.log10(lf0) + (Math.log10(lf1) - Math.log10(lf0)) * i / (NLEV - 1));
       const L = frac * maxV;
       const col = CONT_COLORS[i % CONT_COLORS.length];
-      const segs = marchSquareSegments(vals, G, L, w, h);
+      const segs = marchSquareSegments(vals, Gx, Gy, L, w, h);
       levelCols.push({ L: L, col: col, segs: segs });
       ctx.strokeStyle = 'rgb(' + col.join(',') + ')';
       ctx.lineWidth = 1.5;
@@ -742,35 +742,35 @@ window.Charts = (function () {
       // 叠加态的节面：Σcᵢψᵢ 的**实部**过零处（各分量的径向与角度符号都算进去了）。
       // 不能沿用下面那条 (n,l,m) 的单分量路径 —— 那样画的是某个分量的节面，
       // 与这张图真正画着的叠加态不是一回事。
-      const sg = new Float32Array(G * G);
-      for (let j = 0; j < G; j++) {
-        for (let i = 0; i < G; i++) {
-          const u = win.u0 + (2 * win.hu * i) / (G - 1);
-          const v = win.v0 + (2 * win.hv * j) / (G - 1);
+      const sg = new Float32Array(Gx * Gy);
+      for (let j = 0; j < Gy; j++) {
+        for (let i = 0; i < Gx; i++) {
+          const u = win.u0 + (2 * win.hu * i) / (Gx - 1);
+          const v = win.v0 + (2 * win.hv * j) / (Gy - 1);
           const [x, y, z] = uv2xyz(u, v);
           const r = Math.hypot(x, y, z);
           const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
           const ph = Math.atan2(y, x);
-          sg[j * G + i] = OM.psiSuperposition(sup, r, th, ph, supPhases, Z).re;
+          sg[j * Gx + i] = OM.psiSuperposition(sup, r, th, ph, supPhases, Z).re;
         }
       }
-      nodeSegs = marchSquareSegments(sg, G, 0, w, h);
+      nodeSegs = marchSquareSegments(sg, Gx, Gy, 0, w, h);
     } else if (mode === 'real') {
-      const sg = new Float32Array(G * G);
-      for (let j = 0; j < G; j++) {
-        for (let i = 0; i < G; i++) {
-          const u = win.u0 + (2 * win.hu * i) / (G - 1);
-          const v = win.v0 + (2 * win.hv * j) / (G - 1);
+      const sg = new Float32Array(Gx * Gy);
+      for (let j = 0; j < Gy; j++) {
+        for (let i = 0; i < Gx; i++) {
+          const u = win.u0 + (2 * win.hu * i) / (Gx - 1);
+          const v = win.v0 + (2 * win.hv * j) / (Gy - 1);
           const [x, y, z] = uv2xyz(u, v);
           const r = Math.hypot(x, y, z);
           const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
           const ph = Math.atan2(y, x);
-          sg[j * G + i] = OM.psiComplex(n, l, m, r, th, ph, 'real', Z).re;   // 含径向+角度符号
+          sg[j * Gx + i] = OM.psiComplex(n, l, m, r, th, ph, 'real', Z).re;   // 含径向+角度符号
         }
       }
-      nodeSegs = marchSquareSegments(sg, G, 0, w, h);
+      nodeSegs = marchSquareSegments(sg, Gx, Gy, 0, w, h);
     } else {
-      nodeSegs = marchSquareSegments(vals, G, maxV * 1e-4, w, h);
+      nodeSegs = marchSquareSegments(vals, Gx, Gy, maxV * 1e-4, w, h);
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.95)';
     ctx.lineWidth = 2.2;
@@ -823,16 +823,23 @@ window.Charts = (function () {
     //   Σcᵢψᵢ 只有在各分量 n 相同时才能因子化出角度部分，一般做不到。
     const sup = (terms && terms.length) ? terms : null;
     const supPhases = sup ? sup.map(function (t, i) { return i * (relPhase || 0); }) : null;
-    // ★ 计算分辨率随缩放提高：视窗缩到 1/4 后仍用 160² 拉大到画布就是插值糊，
-    //   "放大"等于没做。上限 512²（约 26 万次 psiDensity，仍是可接受的开销）。
-    const G = Math.max(160, Math.min(512, Math.round(160 * sectionView.scale)));
-    // 视窗（半宽 + 中心）；scale = 1 时即原来的 [-E, E]。
+    // ★ 视窗**纵横比与画布一致** ⇒ 两轴的"像素/玻尔"相等，圆就是圆。
+    //   纵向按轨道所需的全范围（E），横向随之放大到 E·w/h —— 画布被铺满，
+    //   多出来的只是左右两侧的**空白范围**（轨道伸不出 E，w ≥ h 时不会被裁）。
+    //   观感尺寸（像素/玻尔 = h/(2E)）只由**高度**决定，所以抽屉开合不改比例、不改形状，
+    //   只改左右两侧空白的多少。
     // ★ 叠加态要按**叠加态自己的尺度**取景：它可能含有 n 比滑块大的分量（如 ψ_1s+ψ_3s），
     //   沿用 rExtent(n,l) 会把外层分量裁掉。
-    const hu = sup
+    const E = sup
       ? (OM.superpositionExtent(sup, Z) * 1.05) / sectionView.scale
       : sectionHalfWidth(n, l, Z);
-    const win = { u0: sectionView.cu - hu, v0: sectionView.cv - hu, hu: hu, hv: hu };
+    const vh = E, vw = E * (w / h);
+    const win = { u0: sectionView.cu - vw, v0: sectionView.cv - vh, hu: vw, hv: vh };
+    // ★ 采样网格也要**与视窗同比**（Gx/Gy = w/h）：否则横向样本被摊薄 2.6 倍，
+    //   等高线与等值面虚线会明显变糙、且横向比纵向糊。采样总面积封顶（约 30 万次）。
+    //   计算分辨率随缩放提高：视窗缩到 1/4 后仍用 160 拉大就是插值糊，"放大"等于没做。
+    const Gy = Math.max(160, Math.min(512, Math.round(160 * sectionView.scale)));
+    const Gx = Math.max(Gy, Math.min(Math.round(Gy * (w / h)), Math.round(300000 / Gy)));
     // 平面内坐标 (u,v) → 空间 (x,y,z)
     const uv2xyz = (u, v) => {
       if (plane === 'xy') return [u, v, 0];
@@ -841,13 +848,13 @@ window.Charts = (function () {
     };
 
     // 采样 |ψ|²（相位模式下再采相位）
-    const vals = new Float32Array(G * G);
-    const phases = new Float32Array(G * G);
+    const vals = new Float32Array(Gx * Gy);
+    const phases = new Float32Array(Gx * Gy);
     let maxV = 0;
-    for (let j = 0; j < G; j++) {
-      for (let i = 0; i < G; i++) {
-        const u = win.u0 + (2 * win.hu * i) / (G - 1);
-        const v = win.v0 + (2 * win.hv * j) / (G - 1);
+    for (let j = 0; j < Gy; j++) {
+      for (let i = 0; i < Gx; i++) {
+        const u = win.u0 + (2 * win.hu * i) / (Gx - 1);
+        const v = win.v0 + (2 * win.hv * j) / (Gy - 1);
         const [x, y, z] = uv2xyz(u, v);
         const r = Math.hypot(x, y, z);
         const th = r > 1e-9 ? Math.acos(Math.max(-1, Math.min(1, z / r))) : 0;
@@ -855,13 +862,13 @@ window.Charts = (function () {
         const dd = sup
           ? OM.densitySuperposition(sup, r, th, ph, supPhases, Z)
           : OM.psiDensity(n, l, m, r, th, ph, mode, Z);
-        vals[j * G + i] = dd;
+        vals[j * Gx + i] = dd;
         if (dd > maxV) maxV = dd;
         if (sectionMode === 'phase') {
           // 与三维等值面**共用同一个判据**（OM.psiPhase）。原先这里独立写了一遍，
           // 且复函数分支同样写成 arg(Y)、漏掉 R(r) —— 与三维错得一模一样，所以
           // 两张图"看起来很一致"、也就没人发现它们一起错了。
-          phases[j * G + i] = sup
+          phases[j * Gx + i] = sup
             ? OM.psiSuperposition(sup, r, th, ph, supPhases, Z).arg()
             : OM.psiPhase(mode, n, l, m, r, th, ph, null, null);
         }
@@ -874,22 +881,22 @@ window.Charts = (function () {
     if (sectionMode === 'contour') {
       // ★ maxV 是**视窗内**的峰值：放大后颜色映射与 8 层等高线会整体重标定（越放大越亮）。
       //   这是有意选择 —— 放大看暗部（外层壳、概率尾巴）正是这个功能的目的。
-      drawContour(ctx, vals, G, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z, sup, supPhases);
+      drawContour(ctx, vals, Gx, Gy, w, h, maxV, n, l, m, mode, plane, uv2xyz, win, nodalPlane, Z, sup, supPhases);
       drawSectionFrame(ctx, w, h, plane, win);
       return;
     }
 
     // 密度 / 相位：填色热力图
     const tmp = document.createElement('canvas');
-    tmp.width = G; tmp.height = G;
+    tmp.width = Gx; tmp.height = Gy;
     const tctx = tmp.getContext('2d');
-    const img = tctx.createImageData(G, G);
+    const img = tctx.createImageData(Gx, Gy);
     const data = img.data;
     // ★ 整面为节面时**必须给一个统一色**：此时 vals 处处 ≈ 0，而 phases 是"数值零"
     //   的辐角 —— 纯噪声。相位档会把噪声映射成一整片随机色，看着像有结构，实际什么都没有。
     //   （用户第 4 条：3p_y 的 xz 截面显示为节面，图像却不是纯色。）
     const flat = nodalPlane ? colorScale(0) : null;
-    for (let p = 0; p < G * G; p++) {
+    for (let p = 0; p < Gx * Gy; p++) {
       const o = p * 4;
       if (flat) {
         data[o] = flat[0]; data[o + 1] = flat[1]; data[o + 2] = flat[2]; data[o + 3] = 255;
@@ -905,6 +912,7 @@ window.Charts = (function () {
       data[o] = rgb[0]; data[o + 1] = rgb[1]; data[o + 2] = rgb[2]; data[o + 3] = 255;
     }
     tctx.putImageData(img, 0, 0);
+    // ★ 视窗纵横比已与画布一致（见 win 的说明），所以这里是 1:1 贴合，不是拉伸
     ctx.drawImage(tmp, 0, 0, w, h);
 
     drawSectionFrame(ctx, w, h, plane, win);
@@ -912,10 +920,11 @@ window.Charts = (function () {
     // ★ 第 6 条：把**当前等值面对应的那条线**画出来。
     //   三维里那个面，在截面上就是这一条 —— 有了它，"阈值调到多少、三维就缩到哪里"
     //   才能在两张图之间对上号。阈值换算走 OM.isoLevelAbs（与三维同一个出口）。
+    //   兜底值取 'psi'，与 index.html 上带 active 的判据按钮一致（那儿才是默认的真源）。
     if (!nodalPlane && levelFraction > 0) {
-      const thr = OM.isoLevelAbs(n, l, m, mode, Z, sup, levelFraction, psiCrit || 'psi2');
+      const thr = OM.isoLevelAbs(n, l, m, mode, Z, sup, levelFraction, psiCrit || 'psi');
       if (thr > 0 && thr < maxV) {
-        const segs = marchSquareSegments(vals, G, thr, w, h);
+        const segs = marchSquareSegments(vals, Gx, Gy, thr, w, h);
         if (segs.length) {
           ctx.strokeStyle = 'rgba(255,255,255,0.95)';
           ctx.lineWidth = 1.6;
@@ -924,7 +933,8 @@ window.Charts = (function () {
           for (const sg of segs) { ctx.moveTo(sg[0][0], sg[0][1]); ctx.lineTo(sg[1][0], sg[1][1]); }
           ctx.stroke();
           ctx.setLineDash([]);
-          // 线上不给文字（密集处会糊），只在左下角标一行说明
+          // 线上不给文字（密集处会糊），只在左下角标一行说明。
+          // ★ 用**画布坐标**（不随绘图区平移）：这一行起于左侧留白，只有尾端压在绘图区左下角。
           const pf = levelFraction * 100;
           ctx.fillStyle = 'rgba(255,255,255,0.9)';
           ctx.font = '11px system-ui, sans-serif';
@@ -934,15 +944,16 @@ window.Charts = (function () {
       }
     }
 
-    // 节面提示（填色模式下，把"空白"变成教学点）
+    // 节面提示（填色模式下，把"空白"变成教学点）—— 分两行居中，避开右边缘的 `x` 轴名
     if (nodalPlane) {
       ctx.fillStyle = 'rgba(255,170,90,0.95)';
       ctx.font = '13px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      fillMath(ctx, '本平面为节面 · |*ψ*|² ≈ 0', w / 2, h / 2 - 6);
+      fillMath(ctx, '本平面为节面', w / 2, h / 2 - 4);
+      fillMath(ctx, '|*ψ*|² ≈ 0', w / 2, h / 2 + 16);
       ctx.textAlign = 'left';
     }
-    // 颜色图例
+    // 颜色图例（画布右下角；视窗横向拉宽后，右侧那一片本来就是空白，不会压到轨道上）
     drawSectionLegend(ctx, w, h, sectionMode === 'phase', maxV);
   }
 
