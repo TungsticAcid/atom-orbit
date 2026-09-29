@@ -27,12 +27,6 @@ window.SceneBridge = (function () {
   const MIN_DWELL_MS = 350;
   const MAX_DWELL_MS = 6000;
   const AFTER_ANIMATED_MS = 450;       // 动画（扫描类）播完后的落点停顿（基准值，按节奏缩放）
-  // ★ auto（脚本批量播，见 applySequence 的 opts.auto）时，**批内**相邻动作之间只留这一点间隙。
-  //   理由：那一批动作是**同一句旁白**下的连续操作，学生要的是"连贯地看到它在变"。
-  //   以前它们各停一个 dwell（默认 2.4s）——《同一层里…》第 1 步有 5 个动作，实测从点击
-  //   到阈值真正落到 8% 花了约 12 秒，演示者和学生都以为卡住了。dwell 该由**步的边界**
-  //   承担（旁白是一整句，读完约 2.4s），不该摊到每个动作上、把同一句话的阅读时间重复五遍。
-  const AUTO_GAP_MS = 320;
   const MAX_QUEUE = 24;                // 播放队列上限（分几次下发时的累计步数）
 
   const DEFAULT_SWEEP_MS = 2000;
@@ -1352,7 +1346,7 @@ window.SceneBridge = (function () {
       noteSteps(okSteps, demoOrigin);
       bindPerAction(0, okSteps.length);
       try {
-        const r = await runQueue(gen, !opts.noPacing, false, 0, true);
+        const r = await runQueue(gen, !opts.noPacing, false, 0, opts.gapMs || 0);
         return Object.assign(r, {
           failed: failed.concat(r.failed || []), dropped: dropped,
           demoId: demoSeq, total: okSteps.length, perAction: perAction,
@@ -1426,7 +1420,7 @@ window.SceneBridge = (function () {
    * @param {number}  ffTo  快进到第几步（整改后"快进到改动点并停下"用，见 loadDemo）
    * @returns {Promise<{executed:Array, failed:Array, aborted:boolean}>}
    */
-  async function runQueue(gen, paced, parkImmediately, ffTo, tight) {
+  async function runQueue(gen, paced, parkImmediately, ffTo, tightGapMs) {
     const executed = [];
     const failed = [];
     const dead = () => gen !== generation;
@@ -1504,9 +1498,9 @@ window.SceneBridge = (function () {
 
       if (!manual && paced && qIndex < queue.length) {
         // 自动连播：动画自带时长，播完只需落点停顿；瞬时动作按"看一眼"的时长停留。
-        // ★ tight（= 脚本批量播，同一步里的一串子动作）时改用短间隙，理由见 AUTO_GAP_MS。
+        // ★ tightGapMs（脚本批量播时由 DemoMode 按该步旁白字数算出的间隙）优先于默认 dwell。
         const hold = st.holdMs
-          || (st.animated ? afterAnimMs() : (tight ? AUTO_GAP_MS : dwellMs()));
+          || (st.animated ? afterAnimMs() : (tightGapMs || dwellMs()));
         await wait(hold);
         if (dead()) return { executed, failed, aborted: true };
       }

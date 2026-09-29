@@ -372,7 +372,18 @@ window.DemoMode = (function () {
     if (st.actions && st.actions.length) {
       // auto:true —— 演示者在**脚本层面**已经点过「下一步」了，脚本内部的子动作
       // 应当连贯播完，不再逐个等他确认（否则每一步要点两次）
-      await window.SceneBridge.applySequence(st.actions, { auto: true });
+      //
+      // ★ 停留时长与**这一步的旁白字数**正相关：旁白长，画面就该走得慢些，
+      //   学生才来得及把话和画面对上。固定值两头不讨好 —— 2.4s 会让一步拖成十几秒，
+      //   320ms 又让近百字的长旁白配上 5 个连续变化的动作，画面像被快进。
+      //   先把"这一步总共该走多久"按字数算出来，再摊到各子动作上：
+      //   动作多说明变化密，每个间隔自然短些。
+      const chars = String(st.speech || '').length;
+      // 上限取 9000 而不是更小：脚本旁白普遍 80–140 字，上限压到 6500 会让
+      // 100 字以上**全部撞顶**，字数就白算了 —— 各步耗时只剩动作数在起作用。
+      const budget = Math.max(1400, Math.min(9000, chars * 60));   // 本步的时间预算(ms)
+      const gapMs = Math.max(280, Math.round(budget / st.actions.length));
+      await window.SceneBridge.applySequence(st.actions, { auto: true, gapMs: gapMs });
     }
     return { idx: idx, total: n };
   }
